@@ -1,10 +1,14 @@
-__pycache__/
-*.pyc
-*.db
-.env
+# Python cache
+**/__pycache__/
+*.py[cod]
+*$py.class
 .pytest_cache/
 
-# Environment Variables & Local Configs
+# Databases
+*.db
+*.sqlite3
+
+# Environment Variables
 .env
 .env.local
 .env.*.local
