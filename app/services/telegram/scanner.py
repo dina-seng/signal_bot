@@ -222,7 +222,7 @@ class AutomatedMarketScanner:
                                 )
                                 paper_trades_opened += 1
                                 logger.info(
-                                    f"AUTO-OPENED PAPER TRADE #{trade.id} on {trade.symbol} [{trade.timeframe}]"
+                                    f"AUTO-OPENED PAPER TRADE #{trade.id} on {trade.symbol} [{sig.timeframe}]"
                                 )
                             except Exception as e:
                                 logger.error(f"Paper trading failed for {sig.symbol}: {e}")

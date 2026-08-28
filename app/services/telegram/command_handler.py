@@ -127,16 +127,17 @@ class TelegramCommandHandler:
                     if sig.direction in (SignalDirection.BUY, SignalDirection.SELL):
                         reply = self.formatter.format_signal_alert(sig)
                     else:
+                        sym_code = self.formatter.escape_code(sig.symbol)
                         reply = (
                             f"⚪ *MARKET STATUS: WAIT (NO ACTIVE SETUP)*\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📊 *Pair:* `{sig.symbol}` (1h)\n"
+                            f"📊 *Pair:* `{sym_code}` (1h)\n"
                             f"⭐ *Setup Score:* `{sig.setup_score:.1f} / 100` (Min required: `{settings.MIN_SETUP_SCORE:.1f}`)\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"💡 *Current Market Analysis:*\n"
                         )
                         for r in sig.reasons:
-                            reply += f"  • {r}\n"
+                            reply += f"  • {self.formatter.escape_markdown(r)}\n"
 
         # -------------------------------------------------------------
         # 4. Economic News Calendar (/news)
@@ -178,7 +179,7 @@ class TelegramCommandHandler:
                     dir_icon = "🟢 BUY" if p.direction == SignalDirection.BUY else "🔴 SELL"
                     pnl_str = f"+${p.unrealized_pnl:,.2f}" if p.unrealized_pnl >= 0 else f"-${abs(p.unrealized_pnl):,.2f}"
                     lines.append(
-                        f"• *{p.symbol}* ({dir_icon} `{p.remaining_position_size} Lots`)\n"
+                        f"• *{self.formatter.escape_markdown(p.symbol)}* ({dir_icon} `{p.remaining_position_size} Lots`)\n"
                         f"  Entry: `{p.entry_price:.5f}` | Current: `{p.current_price:.5f}` | PnL: `{pnl_str}`\n"
                         f"  SL: `{p.stop_loss:.5f}` | TP1: `{p.take_profit_1:.5f}`"
                     )
@@ -215,7 +216,7 @@ class TelegramCommandHandler:
                 ).all()
             )
             if len(candles) < 30:
-                reply = f"❌ Insufficient candle data in database to backtest `{sym}`."
+                reply = f"❌ Insufficient candle data in database to backtest `{self.formatter.escape_code(sym)}`."
             else:
                 bt_res = self.backtest_service.engine.run_simulation(
                     candles=candles,
@@ -223,8 +224,9 @@ class TelegramCommandHandler:
                     timeframe="1h",
                 )
                 m = bt_res.metrics
+                sym_escaped = self.formatter.escape_markdown(sym)
                 reply = (
-                    f"📈 *HISTORICAL STRATEGY BACKTEST: {sym} [1h]* 📈\n"
+                    f"📈 *HISTORICAL STRATEGY BACKTEST: {sym_escaped} [1h]* 📈\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📊 *Total Trades:* `{m.total_trades}` ({m.winning_trades}W / {m.losing_trades}L)\n"
                     f"🎯 *Win Rate:* `{m.win_rate:.1f}%`\n"
@@ -236,7 +238,8 @@ class TelegramCommandHandler:
                 )
 
         else:
-            reply = f"❓ Unknown command `{raw_cmd}`. Type `/help` for available options."
+            raw_escaped = self.formatter.escape_code(raw_cmd)
+            reply = f"❓ Unknown command `{raw_escaped}`. Type `/help` for available options."
 
         # Send response to chat if requested
         if request.chat_id:

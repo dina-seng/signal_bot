@@ -446,6 +446,77 @@ async def test_paper_trading_safety_when_auto_trade_disabled(test_db_session):
     settings.SCANNER_AUTO_TRADE_PAPER = True
 
 
+@pytest.mark.asyncio
+async def test_paper_trading_when_enabled(test_db_session):
+    """Verify paper trading executes and logs properly when auto paper trading is enabled."""
+    _seed_candles(test_db_session, "EUR/USD", 40)
+    settings.PAPER_TRADING = True
+    settings.SCANNER_AUTO_TRADE_PAPER = True
+
+    mock_market = MockMarketDataProvider()
+    mock_news = MockNewsProvider()
+    mock_tg = MockTelegramClient()
+    scanner = AutomatedMarketScanner(
+        telegram_client=mock_tg,
+        market_provider=mock_market,
+        news_provider=mock_news,
+    )
+    scanner._broadcasted_fingerprints = {"existing_dummy_fp"}
+
+    db_sig = Signal(
+        symbol="EUR/USD",
+        timeframe="1h",
+        direction="BUY",
+        setup_score=95.0,
+        entry_price=1.1050,
+        stop_loss=1.1000,
+        take_profit_1=1.1150,
+        take_profit_2=1.1200,
+        risk_reward=2.0,
+        status="ACTIVE",
+        fingerprint="safety_test_fp_auto_enabled",
+        reasons=["High score confluence"],
+        timestamp=datetime.now(timezone.utc),
+    )
+    test_db_session.add(db_sig)
+    test_db_session.commit()
+    test_db_session.refresh(db_sig)
+
+    sig_resp = SignalResponse.model_validate(db_sig)
+
+    from unittest.mock import MagicMock
+    from app.schemas.signal import MarketScanResponse, MarketScanSymbolResult
+
+    mock_scan_res = MarketScanResponse(
+        timestamp=datetime.now(timezone.utc),
+        scanned_count=1,
+        actionable_count=1,
+        results=[
+            MarketScanSymbolResult(
+                symbol="EUR/USD",
+                timeframe="1h",
+                direction=SignalDirection.BUY,
+                setup_score=95.0,
+                is_actionable=True,
+                signal=sig_resp,
+                blackout_blocked=False,
+                reasons=["Test"],
+            )
+        ],
+    )
+    scanner.signal_generator.scan_all_symbols = MagicMock(return_value=mock_scan_res)
+
+    res = await scanner.run_scan_cycle(
+        db=test_db_session,
+        symbols=["EUR/USD"],
+        timeframes=["1h"],
+        broadcast_to_telegram=True,
+        auto_paper_trade=True,
+    )
+
+    assert res.paper_trades_opened_count == 1
+
+
 # =====================================================================
 # 7. Health API Schema & Values Test
 # =====================================================================

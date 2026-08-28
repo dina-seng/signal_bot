@@ -119,6 +119,58 @@ def test_telegram_message_formatter():
     assert "/news" in help_text
 
 
+def test_telegram_message_formatter_escaping():
+    """Verify sanitization of special characters (underscores, asterisks, brackets, dots)."""
+    formatter = TelegramMessageFormatter()
+
+    # Test escape_markdown v1
+    assert formatter.escape_markdown("USD_JPY") == r"USD\_JPY"
+    assert formatter.escape_markdown("[FVG] *Trigger*") == r"\[FVG\] \*Trigger\*"
+    assert formatter.escape_markdown(r"C:\test") == r"C:\\test"
+
+    # Test escape_markdown_v2
+    v2_escaped = formatter.escape_markdown_v2("Price > 20.5 (1.5%) - [Test] #1")
+    assert r"\>" in v2_escaped
+    assert r"\." in v2_escaped
+    assert r"\(" in v2_escaped
+    assert r"\)" in v2_escaped
+    assert r"\-" in v2_escaped
+    assert r"\[" in v2_escaped
+    assert r"\]" in v2_escaped
+    assert r"\#" in v2_escaped
+
+    # Test escape_code
+    assert formatter.escape_code("test`code`span") == "test'code'span"
+
+    # Test escape_html
+    assert formatter.escape_html("<b>Test & 'Score'</b>") == "&lt;b&gt;Test &amp; 'Score'&lt;/b&gt;"
+
+    # Test signal formatting with special characters in reasons and symbol
+    sig = SignalResponse(
+        symbol="USD_JPY",
+        timeframe="15m",
+        direction=SignalDirection.BUY,
+        setup_score=85.0,
+        entry_price=150.123,
+        stop_loss=149.500,
+        take_profit_1=151.369,
+        fingerprint="fp_special_123",
+        reasons=[
+            "Candlestick Trigger: BULLISH_PIN_BAR",
+            "Fair Value Gap [FVG] filled (150.00)",
+            "Price > 20 > 50 > 200 EMA *Bullish*",
+        ],
+        status=SignalStatus.ACTIVE,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    alert = formatter.format_signal_alert(sig)
+    assert r"BULLISH\_PIN\_BAR" in alert
+    assert r"\[FVG\]" in alert
+    assert r"\*Bullish\*" in alert
+    assert "`USD_JPY`" in alert  # symbol inside code span
+
+
 # -------------------------------------------------------------
 # 2. Mock Telegram Client Tests
 # -------------------------------------------------------------

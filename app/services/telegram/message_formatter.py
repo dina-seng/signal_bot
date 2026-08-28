@@ -1,7 +1,8 @@
-"""Telegram Message Formatting with rich emojis and Markdown styling."""
+"""Telegram Message Formatting with rich emojis, entity sanitization, and Markdown/HTML styling."""
 
 from datetime import datetime, timezone
-from typing import List, Optional
+import html
+from typing import Any, List, Optional
 
 from app.schemas.news import NewsEventResponse
 from app.schemas.paper_trading import PaperPortfolioPerformance, VirtualAccountResponse
@@ -9,27 +10,87 @@ from app.schemas.signal import MarketScanResponse, SignalDirection, SignalRespon
 
 
 class TelegramMessageFormatter:
-    """Formats market signals, position alerts, news summaries, and portfolio updates for Telegram."""
+    """Formats market signals, position alerts, news summaries, and portfolio updates for Telegram.
+    
+    Provides sanitization and escaping for dynamic user/market values to prevent Telegram entity parsing errors (400).
+    """
 
     @staticmethod
-    def format_signal_alert(sig: SignalResponse) -> str:
+    def escape_markdown(text: Any, version: int = 1) -> str:
+        """Sanitize/escape dynamic strings to prevent Telegram Markdown parsing errors.
+        
+        Version 1 escapes: \\, _, *, `, [, ]
+        Version 2 escapes: _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
+        """
+        if text is None:
+            return ""
+        s = str(text)
+        if version == 2:
+            escape_chars = r"\_*[]()~`>#+-=|{}.!"
+            return "".join(f"\\{c}" if c in escape_chars else c for c in s)
+        else:
+            # Markdown v1 special characters outside code spans
+            escape_chars = ("\\", "_", "*", "`", "[", "]")
+            for c in escape_chars:
+                s = s.replace(c, f"\\{c}")
+            return s
+
+    @staticmethod
+    def escape_markdown_v2(text: Any) -> str:
+        """Convenience method for MarkdownV2 escaping."""
+        return TelegramMessageFormatter.escape_markdown(text, version=2)
+
+    @staticmethod
+    def escape_code(text: Any) -> str:
+        """Sanitize dynamic values placed inside single-backtick inline code spans (`...`)."""
+        if text is None:
+            return ""
+        return str(text).replace("`", "'")
+
+    @staticmethod
+    def escape_html(text: Any) -> str:
+        """Escape dynamic strings for Telegram HTML parse_mode (&, <, >)."""
+        if text is None:
+            return ""
+        return html.escape(str(text), quote=False)
+
+    @classmethod
+    def format_signal_alert(cls, sig: SignalResponse) -> str:
         """Format an actionable trade setup alert."""
         dir_emoji = "🟢 *STRONG BUY (LONG)*" if sig.direction == SignalDirection.BUY else "🔴 *STRONG SELL (SHORT)*"
         rp = sig.risk_parameters
 
+        sym = cls.escape_code(sig.symbol)
+        tf = cls.escape_code(sig.timeframe)
+        score_str = f"{sig.setup_score:.1f}"
+
         lines = [
             f"⚡ *NEW FOREX TRADE SIGNAL* ⚡",
             f"━━━━━━━━━━━━━━━━━━━━",
-            f"📊 *Instrument:* `{sig.symbol}`",
-            f"⏱ *Timeframe:* `{sig.timeframe}`",
+            f"📊 *Instrument:* `{sym}`",
+            f"⏱ *Timeframe:* `{tf}`",
             f"🎯 *Direction:* {dir_emoji}",
-            f"⭐ *Confluence Score:* `{sig.setup_score:.1f} / 100`",
+            f"⭐ *Confluence Score:* `{score_str} / 100`",
             f"━━━━━━━━━━━━━━━━━━━━",
-            f"📍 *Entry Price:* `{sig.entry_price:.5f}`",
-            f"🛑 *Stop Loss:* `{sig.stop_loss:.5f}`" + (f" ({rp.risk_pips:.1f} pips)" if rp else ""),
-            f"🎯 *Take Profit 1 (TP1):* `{sig.take_profit_1:.5f}`" + (f" ({rp.reward_pips_tp1:.1f} pips | 2.0 R:R)" if rp else ""),
-            f"🏆 *Take Profit 2 (TP2):* `{sig.take_profit_2:.5f}`" + (f" ({rp.reward_pips_tp2:.1f} pips | 3.0 R:R)" if rp else ""),
         ]
+
+        if sig.entry_price is not None:
+            lines.append(f"📍 *Entry Price:* `{sig.entry_price:.5f}`")
+        if sig.stop_loss is not None:
+            sl_line = f"🛑 *Stop Loss:* `{sig.stop_loss:.5f}`"
+            if rp and rp.risk_pips is not None:
+                sl_line += f" ({rp.risk_pips:.1f} pips)"
+            lines.append(sl_line)
+        if sig.take_profit_1 is not None:
+            tp1_line = f"🎯 *Take Profit 1 (TP1):* `{sig.take_profit_1:.5f}`"
+            if rp and rp.reward_pips_tp1 is not None:
+                tp1_line += f" ({rp.reward_pips_tp1:.1f} pips | 2.0 R:R)"
+            lines.append(tp1_line)
+        if sig.take_profit_2 is not None:
+            tp2_line = f"🏆 *Take Profit 2 (TP2):* `{sig.take_profit_2:.5f}`"
+            if rp and rp.reward_pips_tp2 is not None:
+                tp2_line += f" ({rp.reward_pips_tp2:.1f} pips | 3.0 R:R)"
+            lines.append(tp2_line)
 
         if rp:
             lines.extend([
@@ -53,7 +114,7 @@ class TelegramMessageFormatter:
         if sig.reasons:
             lines.append(f"━━━━━━━━━━━━━━━━━━━━\n💡 *Key Confluence Catalysts:*")
             for r in sig.reasons[:4]:
-                lines.append(f"  ✓ {r}")
+                lines.append(f"  ✓ {cls.escape_markdown(r)}")
 
         lines.extend([
             f"━━━━━━━━━━━━━━━━━━━━",
@@ -64,13 +125,14 @@ class TelegramMessageFormatter:
 
         return "\n".join(lines)
 
-    @staticmethod
-    def format_tp1_hit(symbol: str, price: float, realized_pnl: float, new_sl: float) -> str:
+    @classmethod
+    def format_tp1_hit(cls, symbol: str, price: float, realized_pnl: float, new_sl: float) -> str:
         """Format a Take Profit 1 reached notification."""
+        sym = cls.escape_code(symbol)
         return (
             f"🎯 *TAKE PROFIT 1 REACHED!* 🎯\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 *Pair:* `{symbol}`\n"
+            f"📊 *Pair:* `{sym}`\n"
             f"💰 *Exit Price:* `{price:.5f}`\n"
             f"💵 *Locked-in Profit:* `+${realized_pnl:,.2f}`\n"
             f"🔒 *Action Taken:* `Closed 50% lots. Stop Loss moved to Break-Even ({new_sl:.5f})`\n"
@@ -78,13 +140,14 @@ class TelegramMessageFormatter:
             f"🕒 `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"
         )
 
-    @staticmethod
-    def format_tp2_hit(symbol: str, price: float, total_pnl: float, return_r: float) -> str:
+    @classmethod
+    def format_tp2_hit(cls, symbol: str, price: float, total_pnl: float, return_r: float) -> str:
         """Format a Take Profit 2 final target notification."""
+        sym = cls.escape_code(symbol)
         return (
             f"🏆 *TAKE PROFIT 2 TARGET HIT!* 🏆\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 *Pair:* `{symbol}`\n"
+            f"📊 *Pair:* `{sym}`\n"
             f"💰 *Exit Price:* `{price:.5f}`\n"
             f"💵 *Total Realized PnL:* `+${total_pnl:,.2f}`\n"
             f"📈 *Payoff Return:* `+{return_r:.2f} R-Multiple`\n"
@@ -92,23 +155,24 @@ class TelegramMessageFormatter:
             f"🕒 `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"
         )
 
-    @staticmethod
-    def format_sl_hit(symbol: str, price: float, loss_pnl: float, is_be: bool) -> str:
+    @classmethod
+    def format_sl_hit(cls, symbol: str, price: float, loss_pnl: float, is_be: bool) -> str:
         """Format Stop Loss / Break-Even alert."""
         tag = "⚡ *BREAK-EVEN STOP TRIGGERED*" if is_be else "🛑 *STOP LOSS HIT*"
         pnl_str = f"${loss_pnl:,.2f}" if loss_pnl >= 0 else f"-${abs(loss_pnl):,.2f}"
+        sym = cls.escape_code(symbol)
         return (
             f"{tag}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 *Pair:* `{symbol}`\n"
+            f"📊 *Pair:* `{sym}`\n"
             f"📍 *Exit Price:* `{price:.5f}`\n"
             f"💵 *Realized PnL:* `{pnl_str}`\n"
             f"🛡 *Capital Protected:* `Position closed per strict risk management rules.`\n"
             f"🕒 `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"
         )
 
-    @staticmethod
-    def format_market_scan_summary(scan_result: MarketScanResponse) -> str:
+    @classmethod
+    def format_market_scan_summary(cls, scan_result: MarketScanResponse) -> str:
         """Format full multi-symbol market scanner digest."""
         lines = [
             f"📡 *MULTI-MARKET SCANNER DIGEST* 📡",
@@ -120,11 +184,13 @@ class TelegramMessageFormatter:
 
         for r in scan_result.results:
             dir_icon = "🟢" if r.direction == SignalDirection.BUY else ("🔴" if r.direction == SignalDirection.SELL else "⚪")
-            status_text = f"*{r.direction.value}* (Score: `{r.setup_score:.0f}/100`)"
+            status_text = f"*{cls.escape_markdown(r.direction.value)}* (Score: `{r.setup_score:.0f}/100`)"
             if r.blackout_blocked:
                 status_text += " `[NEWS BLOCKED]`"
 
-            lines.append(f"{dir_icon} `{r.symbol:<8}` [{r.timeframe}] ➔ {status_text}")
+            sym = cls.escape_code(f"{r.symbol:<8}")
+            tf = cls.escape_code(r.timeframe)
+            lines.append(f"{dir_icon} `{sym}` [{tf}] ➔ {status_text}")
 
         lines.extend([
             f"━━━━━━━━━━━━━━━━━━━━",
@@ -132,8 +198,8 @@ class TelegramMessageFormatter:
         ])
         return "\n".join(lines)
 
-    @staticmethod
-    def format_economic_news_alert(events: List[NewsEventResponse]) -> str:
+    @classmethod
+    def format_economic_news_alert(cls, events: List[NewsEventResponse]) -> str:
         """Format scheduled economic news alerts."""
         lines = [
             f"📰 *ECONOMIC CALENDAR & NEWS MONITOR* 📰",
@@ -145,9 +211,13 @@ class TelegramMessageFormatter:
 
         for ev in events[:5]:
             impact_icon = "🔴" if ev.impact.upper() == "HIGH" else "🟡"
+            curr = cls.escape_markdown(ev.currency)
+            ev_name = cls.escape_code(ev.event_name)
+            fc = cls.escape_code(ev.forecast or 'N/A')
+            prev = cls.escape_code(ev.previous or 'N/A')
             lines.append(
-                f"{impact_icon} *[{ev.currency}]* `{ev.event_name}`\n"
-                f"   ⏰ `{ev.scheduled_time.strftime('%H:%M UTC')}` | Forecast: `{ev.forecast or 'N/A'}` | Prior: `{ev.previous or 'N/A'}`"
+                f"{impact_icon} *({curr})* `{ev_name}`\n"
+                f"   ⏰ `{ev.scheduled_time.strftime('%H:%M UTC')}` | Forecast: `{fc}` | Prior: `{prev}`"
             )
 
         lines.extend([
@@ -156,13 +226,14 @@ class TelegramMessageFormatter:
         ])
         return "\n".join(lines)
 
-    @staticmethod
-    def format_portfolio_summary(acc: VirtualAccountResponse, perf: PaperPortfolioPerformance) -> str:
+    @classmethod
+    def format_portfolio_summary(cls, acc: VirtualAccountResponse, perf: PaperPortfolioPerformance) -> str:
         """Format virtual account portfolio overview."""
+        acc_name = cls.escape_code(acc.name)
         return (
             f"💼 *VIRTUAL TRADING PORTFOLIO* 💼\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 *Account:* `{acc.name}`\n"
+            f"👤 *Account:* `{acc_name}`\n"
             f"💵 *Balance:* `${acc.balance:>10,.2f}`\n"
             f"📈 *Equity:*  `${acc.equity:>10,.2f}`\n"
             f"📊 *Floating PnL:* `${acc.floating_pnl:>+9,.2f}`\n"
