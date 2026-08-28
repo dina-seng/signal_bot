@@ -1,0 +1,82 @@
+"""Application configuration management using Pydantic Settings."""
+
+from typing import List, Optional
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
+
+
+class Settings(BaseSettings):
+    """Central configuration for the Forex Market Analysis & Signal Bot."""
+
+    # Project metadata
+    PROJECT_NAME: str = "Forex Market Analysis & Telegram Signal Bot"
+    APP_ENV: str = "development"
+    LOG_LEVEL: str = "INFO"
+
+    # Database
+    DATABASE_URL: str = "sqlite:///./trade.db"
+
+    # Market Instruments and Timeframes
+    SUPPORTED_SYMBOLS: List[str] = ["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]
+    SUPPORTED_TIMEFRAMES: List[str] = ["15m", "1h", "4h"]
+
+    # Market Structure & Analysis Strategy Config (Milestones 2-6)
+    SWING_LOOKBACK: int = Field(default=2, ge=1, description="Candle lookback for swing high/low")
+    SR_TOLERANCE_PERCENT: float = Field(default=0.1, ge=0.01, description="Support/Resistance grouping tolerance %")
+    EMA_FAST: int = 20
+    EMA_MID: int = 50
+    EMA_SLOW: int = 200
+    RSI_PERIOD: int = 14
+    ATR_PERIOD: int = 14
+
+    # Scoring & Risk Parameters
+    MIN_SETUP_SCORE: float = Field(default=75.0, ge=0.0, le=100.0)
+    MIN_RR: float = Field(default=2.0, ge=1.0)
+    MAX_RISK_PERCENT: float = Field(default=0.5, ge=0.1, le=5.0)
+
+    # Fundamental & News Blackout (Milestone 5)
+    NEWS_BLACKOUT_BEFORE_MINUTES: int = 30
+    NEWS_BLACKOUT_AFTER_MINUTES: int = 15
+
+    # Providers & External APIs
+    MARKET_DATA_PROVIDER: str = "yfinance"
+    TWELVE_DATA_API_KEY: Optional[str] = None
+    ALPHA_VANTAGE_API_KEY: Optional[str] = None
+    NEWS_API_KEY: Optional[str] = None
+
+    # Telegram Bot (Milestone 9)
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_CHAT_ID: Optional[str] = None
+
+    # Automated Background Scanner (Milestone 9)
+    SCANNER_ENABLED: bool = True
+    SCANNER_INTERVAL_MINUTES: int = 15
+    SCANNER_TIMEFRAMES: List[str] = ["1h", "15m"]
+    SCANNER_AUTO_TRADE_PAPER: bool = True
+
+    # Paper Trading mode
+    PAPER_TRADING: bool = True
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=True,
+    )
+
+    @field_validator("SUPPORTED_SYMBOLS", "SUPPORTED_TIMEFRAMES", "SCANNER_TIMEFRAMES", mode="before")
+    @classmethod
+    def parse_list_from_str(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            if value.startswith("[") and value.endswith("]"):
+                try:
+                    return json.loads(value)
+                except Exception:
+                    pass
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+
+settings = Settings()
