@@ -6,16 +6,23 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from app.core.config import settings
 from app.core.logging import logger
 
-# Configure connect_args for SQLite if applicable
-connect_args = {}
+# Build engine kwargs dynamically based on dialect
+engine_kwargs = {
+    "echo": (settings.LOG_LEVEL.upper() == "DEBUG"),
+    "pool_pre_ping": True,
+}
+
 if settings.DATABASE_URL.startswith("sqlite"):
-    connect_args["check_same_thread"] = False
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    # PostgreSQL cloud settings (Neon/Supabase) to handle idle sleep and reconnects
+    engine_kwargs["pool_recycle"] = 300
+    engine_kwargs["pool_size"] = 5
+    engine_kwargs["max_overflow"] = 10
 
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args=connect_args,
-    echo=(settings.LOG_LEVEL.upper() == "DEBUG"),
-    pool_pre_ping=True,
+    **engine_kwargs,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
