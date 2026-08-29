@@ -191,6 +191,11 @@ class LiquiditySMCConsensusEvaluator:
             elif any(p.pool_type == LiquidityEventType.EQUAL_LOWS for p in structure.liquidity_pools):
                 score += 5.0
                 catalysts.append("Equal Lows Liquidity Resting Below Price")
+            elif score == 0.0 and structure.trend == TrendDirection.BULLISH:
+                # Baseline structural liquidity in confirmed institutional trend
+                base_liq = round(8.0 * max(0.5, structure.trend_strength), 1)
+                score += base_liq
+                catalysts.append(f"Institutional Trend Liquidity Alignment ({base_liq} pts)")
         elif direction == SignalDirection.SELL:
             resistance_zones = [z for z in structure.sr_zones if z.zone_type == ZoneType.RESISTANCE and z.is_fresh]
             in_supply_zone = False
@@ -206,9 +211,14 @@ class LiquiditySMCConsensusEvaluator:
             elif any(p.pool_type == LiquidityEventType.EQUAL_HIGHS for p in structure.liquidity_pools):
                 score += 5.0
                 catalysts.append("Equal Highs Liquidity Resting Above Price")
+            elif score == 0.0 and structure.trend == TrendDirection.BEARISH:
+                # Baseline structural liquidity in confirmed institutional trend
+                base_liq = round(8.0 * max(0.5, structure.trend_strength), 1)
+                score += base_liq
+                catalysts.append(f"Institutional Trend Liquidity Alignment ({base_liq} pts)")
 
         final_score = min(self.MAX_POINTS, score)
-        pillar_dir = direction if final_score >= 10.0 else SignalDirection.WAIT
+        pillar_dir = direction if final_score >= 8.0 else SignalDirection.WAIT
         confidence = min(1.0, final_score / self.MAX_POINTS)
 
         return PillarEvaluation(
@@ -271,17 +281,21 @@ class MomentumIndicatorConsensusEvaluator:
             if bull_divs:
                 score += 10.0
                 catalysts.append(f"RSI Bullish Divergence ({bull_divs[-1].divergence_type.value})")
+            elif indicators.ema.ema_trend == "BULLISH_STACK" and indicators.rsi.rsi_value is not None and indicators.rsi.rsi_value >= 70.0:
+                # Strong trend momentum leg expansion
+                score += 6.0
+                catalysts.append(f"RSI Strong Trend Momentum ({indicators.rsi.rsi_value:.1f})")
             elif indicators.rsi.condition in ("BULLISH_ZONE", "OVERSOLD"):
                 score += 5.0
                 catalysts.append(f"RSI Bullish Momentum ({indicators.rsi.condition})")
 
-            # Check opposing divergences
-            bear_divs = [
-                d for d in indicators.divergences
+            # Check recent opposing divergences (latest 2 divergences only)
+            recent_bear_divs = [
+                d for d in indicators.divergences[-2:]
                 if d.divergence_type in (DivergenceType.REGULAR_BEARISH, DivergenceType.HIDDEN_BEARISH)
             ]
-            if bear_divs:
-                opposing.append(f"Opposing Bearish RSI Divergence ({bear_divs[-1].divergence_type.value})")
+            if recent_bear_divs:
+                opposing.append(f"Opposing Bearish RSI Divergence ({recent_bear_divs[-1].divergence_type.value})")
         elif direction == SignalDirection.SELL:
             bear_divs = [
                 d for d in indicators.divergences
@@ -290,17 +304,21 @@ class MomentumIndicatorConsensusEvaluator:
             if bear_divs:
                 score += 10.0
                 catalysts.append(f"RSI Bearish Divergence ({bear_divs[-1].divergence_type.value})")
+            elif indicators.ema.ema_trend == "BEARISH_STACK" and indicators.rsi.rsi_value is not None and indicators.rsi.rsi_value <= 30.0:
+                # Strong trend momentum leg expansion
+                score += 6.0
+                catalysts.append(f"RSI Strong Trend Momentum ({indicators.rsi.rsi_value:.1f})")
             elif indicators.rsi.condition in ("BEARISH_ZONE", "OVERBOUGHT"):
                 score += 5.0
                 catalysts.append(f"RSI Bearish Momentum ({indicators.rsi.condition})")
 
-            # Check opposing divergences
-            bull_divs = [
-                d for d in indicators.divergences
+            # Check recent opposing divergences (latest 2 divergences only)
+            recent_bull_divs = [
+                d for d in indicators.divergences[-2:]
                 if d.divergence_type in (DivergenceType.REGULAR_BULLISH, DivergenceType.HIDDEN_BULLISH)
             ]
-            if bull_divs:
-                opposing.append(f"Opposing Bullish RSI Divergence ({bull_divs[-1].divergence_type.value})")
+            if recent_bull_divs:
+                opposing.append(f"Opposing Bullish RSI Divergence ({recent_bull_divs[-1].divergence_type.value})")
 
         # 3. Fair Value Gaps (FVG) / Imbalances (Max 5.0 pts)
         if direction == SignalDirection.BUY:
@@ -349,42 +367,45 @@ class PriceActionConsensusEvaluator:
         catalysts: List[str] = []
         opposing: List[str] = []
 
+        # Check latest trigger patterns (last 2 candles for immediate entry context)
+        immediate_patterns = indicators.recent_patterns[-2:] if indicators.recent_patterns else []
+
         if direction == SignalDirection.BUY:
             bull_patterns = [
-                p for p in indicators.recent_patterns
+                p for p in immediate_patterns
                 if p.pattern_type in (PatternType.BULLISH_PIN_BAR, PatternType.BULLISH_ENGULFING)
             ]
             if bull_patterns:
                 best_pat = bull_patterns[-1]
                 score += 20.0 * best_pat.confidence
                 catalysts.append(f"Candlestick Trigger: {best_pat.pattern_type.value}")
-            elif any(p.pattern_type == PatternType.INSIDE_BAR for p in indicators.recent_patterns):
+            elif any(p.pattern_type == PatternType.INSIDE_BAR for p in immediate_patterns):
                 score += 10.0
                 catalysts.append("Inside Bar Volatility Compression")
 
-            # Check opposing patterns
+            # Check opposing patterns in immediate context (last 2 bars)
             bear_patterns = [
-                p for p in indicators.recent_patterns
+                p for p in immediate_patterns
                 if p.pattern_type in (PatternType.BEARISH_PIN_BAR, PatternType.BEARISH_ENGULFING)
             ]
             if bear_patterns:
                 opposing.append(f"Opposing Candlestick: {bear_patterns[-1].pattern_type.value}")
         elif direction == SignalDirection.SELL:
             bear_patterns = [
-                p for p in indicators.recent_patterns
+                p for p in immediate_patterns
                 if p.pattern_type in (PatternType.BEARISH_PIN_BAR, PatternType.BEARISH_ENGULFING)
             ]
             if bear_patterns:
                 best_pat = bear_patterns[-1]
                 score += 20.0 * best_pat.confidence
                 catalysts.append(f"Candlestick Trigger: {best_pat.pattern_type.value}")
-            elif any(p.pattern_type == PatternType.INSIDE_BAR for p in indicators.recent_patterns):
+            elif any(p.pattern_type == PatternType.INSIDE_BAR for p in immediate_patterns):
                 score += 10.0
                 catalysts.append("Inside Bar Volatility Compression")
 
-            # Check opposing patterns
+            # Check opposing patterns in immediate context (last 2 bars)
             bull_patterns = [
-                p for p in indicators.recent_patterns
+                p for p in immediate_patterns
                 if p.pattern_type in (PatternType.BULLISH_PIN_BAR, PatternType.BULLISH_ENGULFING)
             ]
             if bull_patterns:
@@ -445,8 +466,6 @@ class ConsensusFilter:
         fatal_conflict = False
 
         if all_opposing:
-            # 1 opposing signal = 15 points penalty
-            # 2+ opposing signals = 30 points penalty / invalidation
             if len(all_opposing) == 1:
                 penalty = 15.0
                 all_catalysts.append(f"⚠️ Directional Conflict Warning: {all_opposing[0]} (Penalty: -15.0 pts)")

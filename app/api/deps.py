@@ -1,6 +1,6 @@
 """API dependencies."""
 
-from typing import Generator
+from typing import Generator, Optional
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from app.core.database import get_db

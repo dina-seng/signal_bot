@@ -80,6 +80,8 @@ class LiquiditySweepDetector:
         active_highs: List[SwingPoint] = []
         active_lows: List[SwingPoint] = []
         swings_by_idx = {s.index: s for s in swings}
+        swept_high_indices = set()
+        swept_low_indices = set()
 
         for i in range(total_bars):
             ts, o, h, l, c = parsed_candles[i]
@@ -97,13 +99,21 @@ class LiquiditySweepDetector:
                 if i <= sh.index:
                     continue
 
+                # If candle body closed strictly above, it's a breakout/breach, not a sweep
+                if c > sh.price:
+                    active_highs.remove(sh)
+                    continue
+
                 # Condition: Price reached above swing high (h > sh.price)
                 # BUT closed back below or at the swing high (c <= sh.price)
                 if h > sh.price and c <= sh.price:
+                    if sh.index in swept_high_indices:
+                        continue
                     upper_wick = h - max(o, c)
                     wick_ratio = round(upper_wick / candle_range, 2)
 
                     if wick_ratio >= wick_threshold:
+                        swept_high_indices.add(sh.index)
                         pips_swept = round((h - sh.price) / pip_size, 1)
                         sweeps.append(
                             LiquiditySweep(
@@ -124,13 +134,21 @@ class LiquiditySweepDetector:
                 if i <= sl.index:
                     continue
 
+                # If candle body closed strictly below, it's a breakout/breach, not a sweep
+                if c < sl.price:
+                    active_lows.remove(sl)
+                    continue
+
                 # Condition: Price dipped below swing low (l < sl.price)
                 # BUT closed back above or at the swing low (c >= sl.price)
                 if l < sl.price and c >= sl.price:
+                    if sl.index in swept_low_indices:
+                        continue
                     lower_wick = min(o, c) - l
                     wick_ratio = round(lower_wick / candle_range, 2)
 
                     if wick_ratio >= wick_threshold:
+                        swept_low_indices.add(sl.index)
                         pips_swept = round((sl.price - l) / pip_size, 1)
                         sweeps.append(
                             LiquiditySweep(
