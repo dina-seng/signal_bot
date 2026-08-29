@@ -1,6 +1,4 @@
-"""Liquidity and Support/Resistance events model."""
-
-from sqlalchemy import Column, Integer, String, Float, DateTime, Index
+from sqlalchemy import Column, Integer, String, Float, DateTime, Index, UniqueConstraint
 from app.core.database import Base
 from app.models.base import utc_now
 
@@ -20,5 +18,6 @@ class LiquidityEvent(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     __table_args__ = (
+        UniqueConstraint("symbol", "timeframe", "event_type", "timestamp", name="uq_liquidity_symbol_tf_type_ts"),
         Index("ix_liquidity_symbol_tf", "symbol", "timeframe", "timestamp"),
     )

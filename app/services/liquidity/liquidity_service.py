@@ -273,9 +273,16 @@ class LiquidityService:
                 db.add_all(new_liquidity_events)
 
         if new_structure_events or new_liquidity_events:
-            db.commit()
-            logger.info(
-                f"Persisted {len(new_structure_events)} breakout events and {len(new_liquidity_events)} liquidity events for {symbol} [{timeframe}]."
-            )
+            try:
+                db.commit()
+                logger.info(
+                    f"Persisted {len(new_structure_events)} breakout events and {len(new_liquidity_events)} liquidity events for {symbol} [{timeframe}]."
+                )
+            except Exception as e:
+                db.rollback()
+                logger.warning(
+                    f"Liquidity events insertion conflict for {symbol} [{timeframe}]: {e}. Rolled back safely."
+                )
+                return 0, 0
 
         return len(new_structure_events), len(new_liquidity_events)

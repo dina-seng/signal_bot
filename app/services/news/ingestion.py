@@ -3,9 +3,11 @@
 from datetime import datetime, timezone
 from typing import List, Optional, Set
 from sqlalchemy.orm import Session
-from sqlalchemy import select, and_
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.logging import logger
+from app.core.normalization import normalize_utc_datetime
 from app.models.news import NewsEvent
 from app.schemas.news import NewsEventCreate, NewsSyncReport
 from app.services.news.base import BaseNewsProvider
@@ -19,7 +21,7 @@ class NewsIngestionService:
         self.db = db
 
     def ingest_events(self, events: List[NewsEventCreate]) -> NewsSyncReport:
-        """Process and persist economic calendar events with deduplication."""
+        """Process and persist economic calendar events with atomic deduplication and updates."""
         fetched_count = len(events)
         if not events:
             return NewsSyncReport(
@@ -28,38 +30,59 @@ class NewsIngestionService:
                 skipped_count=0,
             )
 
-        # Ensure all timestamps in UTC
+        # Ensure all timestamps in UTC and strings normalized
         for e in events:
-            if e.scheduled_time.tzinfo is None:
-                e.scheduled_time = e.scheduled_time.replace(tzinfo=timezone.utc)
-            else:
-                e.scheduled_time = e.scheduled_time.astimezone(timezone.utc)
+            e.scheduled_time = normalize_utc_datetime(e.scheduled_time)
+            e.currency = e.currency.upper().strip()
+            e.event_name = e.event_name.strip()
 
         min_time = min(e.scheduled_time for e in events)
         max_time = max(e.scheduled_time for e in events)
 
         # Query existing records in timestamp window
-        stmt = select(NewsEvent.currency, NewsEvent.event_name, NewsEvent.scheduled_time).where(
+        stmt = select(NewsEvent).where(
             NewsEvent.scheduled_time >= min_time,
             NewsEvent.scheduled_time <= max_time,
         )
-        existing_rows = self.db.execute(stmt).all()
-        existing_set: Set[tuple] = set()
+        existing_models = list(self.db.scalars(stmt).all())
+        existing_map = {}
 
-        for curr, name, sched_t in existing_rows:
-            st = sched_t.replace(tzinfo=timezone.utc) if sched_t.tzinfo is None else sched_t.astimezone(timezone.utc)
-            existing_set.add((curr, name, st))
+        for m in existing_models:
+            st = normalize_utc_datetime(m.scheduled_time)
+            key = (m.currency.upper().strip(), m.event_name.strip(), st)
+            existing_map[key] = m
 
         to_insert: List[NewsEvent] = []
         skipped_count = 0
+        updated_count = 0
+        seen_batch_keys = set()
 
         for e in events:
             key = (e.currency, e.event_name, e.scheduled_time)
-            if key in existing_set:
+            if key in seen_batch_keys:
                 skipped_count += 1
                 continue
+            seen_batch_keys.add(key)
 
-            existing_set.add(key)
+            if key in existing_map:
+                existing_m = existing_map[key]
+                # Update actual, forecast, or previous if newly available
+                changed = False
+                if e.actual is not None and existing_m.actual != e.actual:
+                    existing_m.actual = e.actual
+                    changed = True
+                if e.forecast is not None and existing_m.forecast != e.forecast:
+                    existing_m.forecast = e.forecast
+                    changed = True
+                if e.previous is not None and existing_m.previous != e.previous:
+                    existing_m.previous = e.previous
+                    changed = True
+                if changed:
+                    updated_count += 1
+                else:
+                    skipped_count += 1
+                continue
+
             to_insert.append(
                 NewsEvent(
                     currency=e.currency,
@@ -72,12 +95,17 @@ class NewsIngestionService:
                 )
             )
 
-        if to_insert:
-            self.db.add_all(to_insert)
+        try:
+            if to_insert:
+                self.db.add_all(to_insert)
             self.db.commit()
             logger.info(
-                f"Successfully persisted {len(to_insert)} new economic calendar events. Skipped {skipped_count} duplicates."
+                f"Economic calendar sync: Inserted {len(to_insert)}, Updated {updated_count}, "
+                f"Skipped {skipped_count} duplicate events."
             )
+        except IntegrityError:
+            self.db.rollback()
+            logger.warning("Concurrent news ingestion conflict detected. Rolled back safely.")
 
         return NewsSyncReport(
             fetched_count=fetched_count,

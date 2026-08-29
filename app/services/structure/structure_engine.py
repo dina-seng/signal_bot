@@ -348,10 +348,17 @@ class StructureEngine:
             new_events.append(model)
 
         if new_events:
-            db.add_all(new_events)
-            db.commit()
-            logger.info(
-                f"Persisted {len(new_events)} structure events for {symbol} [{timeframe}]."
-            )
+            try:
+                db.add_all(new_events)
+                db.commit()
+                logger.info(
+                    f"Persisted {len(new_events)} structure events for {symbol} [{timeframe}]."
+                )
+            except Exception as e:
+                db.rollback()
+                logger.warning(
+                    f"Structure events insertion conflict for {symbol} [{timeframe}]: {e}. Rolled back safely."
+                )
+                return 0
 
         return len(new_events)

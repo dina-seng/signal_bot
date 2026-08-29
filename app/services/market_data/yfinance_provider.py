@@ -165,15 +165,42 @@ class YahooFinanceProvider(BaseMarketDataProvider):
                     auto_adjust=False,
                 )
 
-        try:
-            logger.info(f"Fetching market data for {symbol} ({ticker_str}) - {timeframe} from Yahoo Finance")
-            df = await asyncio.to_thread(_fetch)
-            candles = self._parse_df_to_candles(df, symbol, timeframe, limit)
-            logger.info(f"Successfully retrieved {len(candles)} candles for {symbol} ({timeframe})")
-            return candles
-        except Exception as e:
-            logger.error(f"Error fetching candles for {symbol} ({timeframe}) from Yahoo Finance: {e}")
-            return []
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(
+                    f"Fetching market data for {symbol} ({ticker_str}) - {timeframe} "
+                    f"[Attempt {attempt}/{max_retries}]"
+                )
+                df = await asyncio.to_thread(_fetch)
+                candles = self._parse_df_to_candles(df, symbol, timeframe, limit)
+
+                if not candles:
+                    logger.warning(
+                        f"0 candles returned for {symbol} [{timeframe}] from Yahoo Finance "
+                        f"[Attempt {attempt}/{max_retries}]."
+                    )
+                    if attempt < max_retries:
+                        await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+                        continue
+                else:
+                    logger.info(f"Successfully retrieved {len(candles)} candles for {symbol} ({timeframe})")
+                    return candles
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"Error on attempt {attempt}/{max_retries} fetching {symbol} [{timeframe}]: {e}"
+                )
+                if attempt < max_retries:
+                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+
+        logger.error(
+            f"Failed to retrieve candles for {symbol} ({timeframe}) after {max_retries} attempts. "
+            f"Last error: {last_error}"
+        )
+        return []
 
     async def fetch_latest(
         self,

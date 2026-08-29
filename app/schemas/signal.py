@@ -65,6 +65,7 @@ class SignalBase(BaseModel):
     fingerprint: str
     reasons: List[str] = Field(default_factory=list)
     status: SignalStatus = SignalStatus.ACTIVE
+    is_broadcasted: bool = False
     timestamp: datetime
 
 

@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -81,6 +82,7 @@ class PaperTrade(Base):
     account = relationship("VirtualAccount", back_populates="trades")
 
     __table_args__ = (
+        UniqueConstraint("account_id", "signal_id", name="uq_paper_trade_account_signal"),
         Index("ix_paper_trade_sym_status", "symbol", "status", "opened_at"),
     )
 

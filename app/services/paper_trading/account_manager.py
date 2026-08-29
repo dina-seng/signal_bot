@@ -35,31 +35,35 @@ class VirtualAccountManager:
         stmt = select(VirtualAccount).where(VirtualAccount.is_active == True).order_by(VirtualAccount.id.asc())
         account = db.scalars(stmt).first()
         if not account:
-            account = VirtualAccount(
-                name="Primary Virtual Account",
-                initial_balance=10000.0,
-                balance=10000.0,
-                equity=10000.0,
-                margin_used=0.0,
-                free_margin=10000.0,
-                currency="USD",
-                leverage=100,
-                is_active=True,
-            )
-            db.add(account)
-            db.commit()
-            db.refresh(account)
+            try:
+                account = VirtualAccount(
+                    name="Primary Virtual Account",
+                    initial_balance=10000.0,
+                    balance=10000.0,
+                    equity=10000.0,
+                    margin_used=0.0,
+                    free_margin=10000.0,
+                    currency="USD",
+                    leverage=100,
+                    is_active=True,
+                )
+                db.add(account)
+                db.commit()
+                db.refresh(account)
 
-            tx = AccountTransaction(
-                account_id=account.id,
-                transaction_type="DEPOSIT",
-                amount=10000.0,
-                balance_after=10000.0,
-                description="Initial Account Deposit",
-            )
-            db.add(tx)
-            db.commit()
-            logger.info(f"Initialized Primary Virtual Account #{account.id} with $10,000.")
+                tx = AccountTransaction(
+                    account_id=account.id,
+                    transaction_type="DEPOSIT",
+                    amount=10000.0,
+                    balance_after=10000.0,
+                    description="Initial Account Deposit",
+                )
+                db.add(tx)
+                db.commit()
+                logger.info(f"Initialized Primary Virtual Account #{account.id} with $10,000.")
+            except Exception:
+                db.rollback()
+                account = db.scalars(stmt).first()
         return account
 
     def create_account(self, db: Session, request: VirtualAccountCreate) -> VirtualAccount:

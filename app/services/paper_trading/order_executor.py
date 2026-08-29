@@ -190,6 +190,23 @@ class PaperOrderExecutor:
         if not target_signal:
             raise ValueError(f"No active qualifying trading signal found for {request.symbol}.")
 
+        # 1. Idempotency Check: Return existing trade if already created for this signal
+        if target_signal.id:
+            existing_trade_stmt = select(PaperTrade).where(
+                PaperTrade.signal_id == target_signal.id
+            )
+            if request.account_id:
+                existing_trade_stmt = existing_trade_stmt.where(
+                    PaperTrade.account_id == request.account_id
+                )
+            existing_trade = db.scalars(existing_trade_stmt).first()
+            if existing_trade:
+                logger.info(
+                    f"Paper trade #{existing_trade.id} already exists for Signal #{target_signal.id}. "
+                    f"Returning existing position idempotently."
+                )
+                return existing_trade
+
         order = PaperOrderCreate(
             account_id=request.account_id,
             symbol=target_signal.symbol,

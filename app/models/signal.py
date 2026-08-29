@@ -1,6 +1,4 @@
-"""Trading Signal and Paper Trade models."""
-
-from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Index
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, JSON, Index
 from app.core.database import Base
 from app.models.base import utc_now
 
@@ -22,6 +20,7 @@ class Signal(Base):
     fingerprint = Column(String(128), unique=True, nullable=False, index=True)
     reasons = Column(JSON, nullable=False)
     status = Column(String(20), default="ACTIVE", nullable=False)  # "ACTIVE", "INVALIDATED", "TP1_HIT", "TP2_HIT", "SL_HIT", "EXPIRED"
+    is_broadcasted = Column(Boolean, default=False, nullable=False)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 

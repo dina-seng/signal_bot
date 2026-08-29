@@ -178,13 +178,21 @@ class IngestionService:
             to_insert.append(candle_model)
 
         # 5. Bulk insert new records
+        inserted_count = 0
         if to_insert:
-            self.db.add_all(to_insert)
-            self.db.commit()
-            logger.info(
-                f"Successfully inserted {len(to_insert)} new candles for {symbol} [{timeframe}]. "
-                f"Skipped {intra_duplicates + db_duplicates} duplicates."
-            )
+            try:
+                self.db.add_all(to_insert)
+                self.db.commit()
+                inserted_count = len(to_insert)
+                logger.info(
+                    f"Successfully inserted {inserted_count} new candles for {symbol} [{timeframe}]. "
+                    f"Skipped {intra_duplicates + db_duplicates} duplicates."
+                )
+            except Exception as e:
+                self.db.rollback()
+                logger.warning(
+                    f"Concurrent candle insertion conflict for {symbol} [{timeframe}]: {e}. Rolled back safely."
+                )
         else:
             logger.info(
                 f"No new candles to insert for {symbol} [{timeframe}]. All {fetched_count} candles already exist."
@@ -194,7 +202,7 @@ class IngestionService:
             symbol=symbol,
             timeframe=timeframe,
             fetched_count=fetched_count,
-            inserted_count=len(to_insert),
+            inserted_count=inserted_count,
             skipped_duplicates_count=intra_duplicates + db_duplicates,
             invalid_candles_count=0,
             gaps_detected=gaps,
@@ -210,12 +218,29 @@ class IngestionService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
     ) -> IngestionReport:
-        """Fetch candles from provider and ingest into database."""
-        candles = await self.provider.fetch_candles(
-            symbol=symbol,
-            timeframe=timeframe,
-            start_time=start_time,
-            end_time=end_time,
-            limit=limit,
-        )
-        return self.ingest_candles(candles, symbol, timeframe)
+        """Fetch candles from provider and ingest into database with defensive 0-candle handling."""
+        try:
+            candles = await self.provider.fetch_candles(
+                symbol=symbol,
+                timeframe=timeframe,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+            )
+            if not candles:
+                logger.warning(
+                    f"Market data provider returned 0 candles for {symbol} [{timeframe}]. "
+                    f"Ingestion cycle skipped defensively."
+                )
+            return self.ingest_candles(candles, symbol, timeframe)
+        except Exception as e:
+            logger.error(f"Ingestion sync failed for {symbol} [{timeframe}]: {e}", exc_info=True)
+            return IngestionReport(
+                symbol=symbol,
+                timeframe=timeframe,
+                fetched_count=0,
+                inserted_count=0,
+                skipped_duplicates_count=0,
+                invalid_candles_count=0,
+                gaps_detected=[],
+            )
