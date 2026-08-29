@@ -24,6 +24,7 @@ from app.schemas.signal import (
 from app.services.indicators import IndicatorService
 from app.services.liquidity import LiquidityService
 from app.services.news import NewsFilterEngine
+from app.services.signals.confluence_engine import ConfluenceEngine
 from app.services.signals.risk_manager import RiskManager
 from app.services.signals.scoring_engine import SignalScoringEngine
 from app.services.structure import MultiTimeframeStructureEngine, StructureEngine
@@ -34,6 +35,7 @@ class SignalGenerator:
 
     def __init__(
         self,
+        confluence_engine: Optional[ConfluenceEngine] = None,
         liquidity_service: Optional[LiquidityService] = None,
         mtf_engine: Optional[MultiTimeframeStructureEngine] = None,
         indicator_service: Optional[IndicatorService] = None,
@@ -41,12 +43,19 @@ class SignalGenerator:
         scoring_engine: Optional[SignalScoringEngine] = None,
         risk_manager: Optional[RiskManager] = None,
     ):
-        self.liquidity_service = liquidity_service or LiquidityService()
-        self.mtf_engine = mtf_engine or MultiTimeframeStructureEngine()
-        self.indicator_service = indicator_service or IndicatorService()
-        self.news_filter = news_filter or NewsFilterEngine()
+        self.confluence_engine = confluence_engine or ConfluenceEngine(
+            liquidity_service=liquidity_service,
+            mtf_engine=mtf_engine,
+            indicator_service=indicator_service,
+            news_filter=news_filter,
+            risk_manager=risk_manager,
+        )
+        self.liquidity_service = self.confluence_engine.liquidity_service
+        self.mtf_engine = self.confluence_engine.mtf_engine
+        self.indicator_service = self.confluence_engine.indicator_service
+        self.news_filter = self.confluence_engine.news_filter
         self.scoring_engine = scoring_engine or SignalScoringEngine()
-        self.risk_manager = risk_manager or RiskManager()
+        self.risk_manager = self.confluence_engine.risk_manager
 
     @staticmethod
     def generate_fingerprint(
@@ -58,9 +67,14 @@ class SignalGenerator:
         timestamp: datetime,
     ) -> str:
         """Generate unique SHA-256 fingerprint for deduplication."""
-        ts_str = timestamp.isoformat()
-        payload = f"{symbol}_{timeframe}_{direction.value}_{entry_price:.5f}_{stop_loss:.5f}_{ts_str}"
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return ConfluenceEngine.generate_fingerprint(
+            symbol=symbol,
+            timeframe=timeframe,
+            direction=direction,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            timestamp=timestamp,
+        )
 
     def evaluate_market_signal(
         self,
@@ -74,108 +88,17 @@ class SignalGenerator:
         risk_percent: float = 0.5,
     ) -> SignalResponse:
         """Run full evaluation pipeline on candles and generate SignalResponse."""
-        # 1. SMC Advanced Structure
-        structure_analysis = self.liquidity_service.analyze_liquidity_and_structure(
-            candles=candles_primary,
+        return self.confluence_engine.evaluate(
             symbol=symbol,
+            candles_primary=candles_primary,
             timeframe=timeframe,
-        )
-
-        # 2. Indicators & Price Action
-        indicator_analysis = self.indicator_service.analyze_indicators(
-            candles=candles_primary,
-            symbol=symbol,
-            timeframe=timeframe,
-        )
-
-        # 3. Multi-Timeframe Alignment
-        mtf_analysis = None
-        if candles_4h and candles_15m:
-            mtf_analysis = self.mtf_engine.analyze_multi_timeframe(
-                symbol=symbol,
-                timeframe_candles={
-                    "4h": candles_4h,
-                    "1h": candles_primary if timeframe == "1h" else candles_4h,
-                    "15m": candles_15m,
-                },
-            )
-
-
-        # 4. Scoring Engine
-        direction, total_score, breakdown, reasons = self.scoring_engine.evaluate_setup(
-            symbol=symbol,
-            timeframe=timeframe,
-            structure=structure_analysis,
-            indicators=indicator_analysis,
-            mtf=mtf_analysis,
+            candles_4h=candles_4h,
+            candles_15m=candles_15m,
             news_check=news_check,
+            account_balance=account_balance,
+            risk_percent=risk_percent,
         )
 
-        current_price = indicator_analysis.current_price
-        latest_ts = indicator_analysis.timestamp
-
-        # 5. Risk Management & Levels
-        risk_params: Optional[RiskParameters] = None
-        entry_p: Optional[float] = None
-        sl_p: Optional[float] = None
-        tp1_p: Optional[float] = None
-        tp2_p: Optional[float] = None
-        rr_p: Optional[float] = None
-
-        if direction in (SignalDirection.BUY, SignalDirection.SELL):
-            # Extract key levels from structure
-            supp_low = structure_analysis.base_structure.key_support
-            res_high = structure_analysis.base_structure.key_resistance
-
-
-            risk_params = self.risk_manager.calculate_trade_risk(
-                symbol=symbol,
-                direction=direction,
-                entry_price=current_price,
-                atr_value=indicator_analysis.atr.atr_value,
-                key_support_low=supp_low,
-                key_resistance_high=res_high,
-                account_balance=account_balance,
-                risk_percent=risk_percent,
-            )
-            entry_p = risk_params.entry_price
-            sl_p = risk_params.stop_loss
-            tp1_p = risk_params.take_profit_1
-            tp2_p = risk_params.take_profit_2
-            rr_p = risk_params.risk_reward_tp1
-        else:
-            entry_p = current_price
-            sl_p = current_price
-            tp1_p = current_price
-            tp2_p = current_price
-            rr_p = 0.0
-
-        fingerprint = self.generate_fingerprint(
-            symbol=symbol,
-            timeframe=timeframe,
-            direction=direction,
-            entry_price=entry_p,
-            stop_loss=sl_p,
-            timestamp=latest_ts,
-        )
-
-        return SignalResponse(
-            symbol=symbol,
-            timeframe=timeframe,
-            direction=direction,
-            setup_score=total_score,
-            entry_price=entry_p,
-            stop_loss=sl_p,
-            take_profit_1=tp1_p,
-            take_profit_2=tp2_p,
-            risk_reward=rr_p,
-            fingerprint=fingerprint,
-            reasons=reasons,
-            status=SignalStatus.ACTIVE,
-            timestamp=latest_ts,
-            score_breakdown=breakdown,
-            risk_parameters=risk_params,
-        )
 
     def persist_signal_if_qualified(self, db: Session, signal_resp: SignalResponse) -> Optional[Signal]:
         """Save qualified actionable BUY/SELL signals into the database if not already present."""

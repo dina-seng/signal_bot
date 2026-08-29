@@ -85,9 +85,12 @@ def get_news_filter_engine() -> NewsFilterEngine:
     )
 
 
-from app.services.signals import RiskManager, SignalScoringEngine, SignalGenerator
-
-
+from app.services.signals import (
+    ConfluenceEngine,
+    RiskManager,
+    SignalGenerator,
+    SignalScoringEngine,
+)
 
 
 def get_risk_manager() -> RiskManager:
@@ -100,22 +103,32 @@ def get_scoring_engine() -> SignalScoringEngine:
     return SignalScoringEngine(min_score_threshold=settings.MIN_SETUP_SCORE)
 
 
-def get_signal_generator(
+def get_confluence_engine(
     liquidity_service: LiquidityService = Depends(get_liquidity_service),
     mtf_engine: MultiTimeframeStructureEngine = Depends(get_mtf_structure_engine),
     indicator_service: IndicatorService = Depends(get_indicator_service),
     news_filter: NewsFilterEngine = Depends(get_news_filter_engine),
-    scoring_engine: SignalScoringEngine = Depends(get_scoring_engine),
     risk_manager: RiskManager = Depends(get_risk_manager),
-) -> SignalGenerator:
-    """Dependency for signal generator and market scanner service."""
-    return SignalGenerator(
+) -> ConfluenceEngine:
+    """Dependency for unified multi-strategy consensus engine."""
+    return ConfluenceEngine(
         liquidity_service=liquidity_service,
         mtf_engine=mtf_engine,
         indicator_service=indicator_service,
         news_filter=news_filter,
-        scoring_engine=scoring_engine,
         risk_manager=risk_manager,
+        min_score_threshold=settings.MIN_SETUP_SCORE,
+    )
+
+
+def get_signal_generator(
+    confluence_engine: ConfluenceEngine = Depends(get_confluence_engine),
+    scoring_engine: SignalScoringEngine = Depends(get_scoring_engine),
+) -> SignalGenerator:
+    """Dependency for signal generator and market scanner service."""
+    return SignalGenerator(
+        confluence_engine=confluence_engine,
+        scoring_engine=scoring_engine,
     )
 
 

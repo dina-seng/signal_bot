@@ -263,3 +263,161 @@ def test_signal_generator_fingerprint_and_persistence(test_db_session):
     )
     assert fp1 == fp2
     assert len(fp1) == 64
+
+
+def test_confluence_engine_modular_weights_and_pillars():
+    """Verify the 4 modular pillars adhere strictly to 30%, 25%, 25%, 20% weights."""
+    from app.services.signals.evaluators import (
+        StructureConsensusEvaluator,
+        LiquiditySMCConsensusEvaluator,
+        MomentumIndicatorConsensusEvaluator,
+        PriceActionConsensusEvaluator,
+    )
+
+    struct_eval = StructureConsensusEvaluator()
+    liq_eval = LiquiditySMCConsensusEvaluator()
+    ind_eval = MomentumIndicatorConsensusEvaluator()
+    pa_eval = PriceActionConsensusEvaluator()
+
+    assert struct_eval.MAX_POINTS == 30.0
+    assert struct_eval.WEIGHT == 30.0
+
+    assert liq_eval.MAX_POINTS == 25.0
+    assert liq_eval.WEIGHT == 25.0
+
+    assert ind_eval.MAX_POINTS == 25.0
+    assert ind_eval.WEIGHT == 25.0
+
+    assert pa_eval.MAX_POINTS == 20.0
+    assert pa_eval.WEIGHT == 20.0
+
+    total_weight = struct_eval.WEIGHT + liq_eval.WEIGHT + ind_eval.WEIGHT + pa_eval.WEIGHT
+    assert total_weight == 100.0
+
+
+def test_directional_conflict_penalty_and_invalidation():
+    """Test that opposing directional signals trigger penalty (-15 pts) or invalidation (-30 pts/WAIT)."""
+    from app.services.signals.evaluators import ConsensusFilter, PillarEvaluation
+
+    filter_engine = ConsensusFilter(min_score_threshold=75.0)
+
+    # 1. Full Agreement (BUY) -> No Penalty
+    unanimous_evals = {
+        "structure": PillarEvaluation("Structure", SignalDirection.BUY, 25.0, 30.0, 30.0, 0.83, ["Bullish BOS"], []),
+        "liquidity": PillarEvaluation("Liquidity", SignalDirection.BUY, 20.0, 25.0, 25.0, 0.80, ["Demand Zone"], []),
+        "indicators": PillarEvaluation("Indicators", SignalDirection.BUY, 20.0, 25.0, 25.0, 0.80, ["EMA Stack"], []),
+        "price_action": PillarEvaluation("Price Action", SignalDirection.BUY, 15.0, 20.0, 20.0, 0.75, ["Bullish Pin Bar"], []),
+    }
+    score, breakdown, catalysts, fatal = filter_engine.synthesize(unanimous_evals, SignalDirection.BUY)
+    assert score == 80.0
+    assert breakdown.is_qualified is True
+    assert fatal is False
+
+    # 2. Single Opposing Conflict (e.g. Bearish RSI Divergence while other 3 pillars are Bullish)
+    single_conflict_evals = {
+        "structure": PillarEvaluation("Structure", SignalDirection.BUY, 25.0, 30.0, 30.0, 0.83, ["Bullish BOS"], []),
+        "liquidity": PillarEvaluation("Liquidity", SignalDirection.BUY, 20.0, 25.0, 25.0, 0.80, ["Demand Zone"], []),
+        "indicators": PillarEvaluation("Indicators", SignalDirection.BUY, 15.0, 25.0, 25.0, 0.60, ["EMA Stack"], ["Opposing Bearish RSI Divergence"]),
+        "price_action": PillarEvaluation("Price Action", SignalDirection.BUY, 15.0, 20.0, 20.0, 0.75, ["Bullish Pin Bar"], []),
+    }
+    score, breakdown, catalysts, fatal = filter_engine.synthesize(single_conflict_evals, SignalDirection.BUY)
+    # Raw total = 75.0, Penalty = -15.0 -> Final = 60.0
+    assert score == 60.0
+    assert breakdown.is_qualified is False
+    assert any("Directional Conflict Warning" in c for c in catalysts)
+
+    # 3. Severe Dual Conflict (e.g. Bearish RSI Divergence + Bearish Engulfing Candlestick)
+    dual_conflict_evals = {
+        "structure": PillarEvaluation("Structure", SignalDirection.BUY, 25.0, 30.0, 30.0, 0.83, ["Bullish BOS"], []),
+        "liquidity": PillarEvaluation("Liquidity", SignalDirection.BUY, 20.0, 25.0, 25.0, 0.80, ["Demand Zone"], []),
+        "indicators": PillarEvaluation("Indicators", SignalDirection.BUY, 15.0, 25.0, 25.0, 0.60, [], ["Opposing Bearish RSI Divergence"]),
+        "price_action": PillarEvaluation("Price Action", SignalDirection.BUY, 0.0, 20.0, 20.0, 0.0, [], ["Opposing Candlestick: BEARISH_ENGULFING"]),
+    }
+    score, breakdown, catalysts, fatal = filter_engine.synthesize(dual_conflict_evals, SignalDirection.BUY)
+    assert fatal is True
+    assert breakdown.is_qualified is False
+    assert any("Severe Directional Conflict" in c for c in catalysts)
+
+
+def test_confluence_engine_evaluate_dict():
+    """Test ConfluenceEngine.evaluate with candles_dict."""
+    from datetime import timedelta
+    from app.models.candle import Candle
+    from app.services.signals import ConfluenceEngine
+
+    engine = ConfluenceEngine(min_score_threshold=70.0)
+    base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+    base_p = 1.1000
+
+    candles_1h = []
+    for i in range(50):
+        t = base_time + timedelta(hours=i)
+        p = base_p + (i * 0.0005)
+        candles_1h.append(
+            Candle(
+                symbol="EUR/USD",
+                timeframe="1h",
+                timestamp=t,
+                open=p,
+                high=p + 0.0010,
+                low=p - 0.0003,
+                close=p + 0.0008,
+                volume=1000.0,
+            )
+        )
+
+    candles_4h = []
+    for i in range(30):
+        t = base_time + timedelta(hours=i * 4)
+        p = base_p + (i * 0.0020)
+        candles_4h.append(
+            Candle(
+                symbol="EUR/USD",
+                timeframe="4h",
+                timestamp=t,
+                open=p,
+                high=p + 0.0030,
+                low=p - 0.0010,
+                close=p + 0.0025,
+                volume=4000.0,
+            )
+        )
+
+    candles_15m = []
+    for i in range(50):
+        t = base_time + timedelta(minutes=i * 15)
+        p = base_p + (i * 0.0002)
+        candles_15m.append(
+            Candle(
+                symbol="EUR/USD",
+                timeframe="15m",
+                timestamp=t,
+                open=p,
+                high=p + 0.0005,
+                low=p - 0.0002,
+                close=p + 0.0004,
+                volume=250.0,
+            )
+        )
+
+    candles_dict = {
+        "1h": candles_1h,
+        "4h": candles_4h,
+        "15m": candles_15m,
+    }
+
+    signal_resp = engine.evaluate(
+        symbol="EUR/USD",
+        candles_dict=candles_dict,
+        timeframe="1h",
+        account_balance=10000.0,
+        risk_percent=0.5,
+    )
+
+    assert signal_resp.symbol == "EUR/USD"
+    assert signal_resp.direction in (SignalDirection.BUY, SignalDirection.SELL, SignalDirection.WAIT)
+    assert 0.0 <= signal_resp.setup_score <= 100.0
+    assert signal_resp.score_breakdown is not None
+    assert len(signal_resp.reasons) > 0
+    assert signal_resp.fingerprint is not None
+
