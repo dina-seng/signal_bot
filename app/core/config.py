@@ -49,11 +49,12 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_CHAT_ID: Optional[str] = None
 
-    # Automated Background Scanner (Milestone 9)
+    # Automated Background Scanner & Signal Dispatching (Milestone 9)
     SCANNER_ENABLED: bool = True
     SCANNER_INTERVAL_MINUTES: int = 15
     SCANNER_TIMEFRAMES: List[str] = ["1h", "15m"]
     SCANNER_AUTO_TRADE_PAPER: bool = True
+    SIGNAL_COOLDOWN_HOURS: int = Field(default=2, ge=0, description="Cooldown window in hours to suppress duplicate signals")
 
     # Paper Trading mode
     PAPER_TRADING: bool = True

@@ -10,9 +10,11 @@ from sqlalchemy import select, desc
 from app.core.config import settings
 from app.core.logging import logger
 from app.models.candle import Candle
+from app.models.paper import PaperTrade
 from app.models.signal import Signal
+from app.models.structure import StructureEvent
 from app.schemas.paper_trading import AutoTradeSignalRequest
-from app.schemas.signal import SignalDirection
+from app.schemas.signal import SignalDirection, SignalResponse
 from app.schemas.telegram import ScannerStatusResponse, ScannerTriggerResponse
 from app.services.market_data import (
     BaseMarketDataProvider,
@@ -73,6 +75,150 @@ class AutomatedMarketScanner:
                 self._broadcasted_fingerprints.update(recent_fps)
             except Exception as e:
                 logger.debug(f"Could not preload signal fingerprints from DB: {e}")
+
+    def has_active_position(self, db: Session, symbol: str) -> bool:
+        """Check if an active or pending paper trade exists in the database for the given symbol."""
+        stmt = (
+            select(PaperTrade.id)
+            .where(
+                PaperTrade.symbol == symbol,
+                PaperTrade.status.in_(["OPEN", "PARTIALLY_CLOSED", "PENDING"]),
+            )
+            .limit(1)
+        )
+        return db.scalars(stmt).first() is not None
+
+    def has_opposing_structural_break(
+        self,
+        db: Session,
+        symbol: str,
+        direction: Union[SignalDirection, str],
+        since_timestamp: datetime,
+    ) -> bool:
+        """Check if price structure has initiated an opposing structural break since previous signal.
+
+        An opposing structural break indicates market structure shift/reversal:
+        - For BUY signals: A BEARISH structure break (e.g. BEARISH_BOS, BEARISH_CHOCH, BEARISH_MSS)
+          or opposing SELL signal recorded after the previous signal.
+        - For SELL signals: A BULLISH structure break (e.g. BULLISH_BOS, BULLISH_CHOCH, BULLISH_MSS)
+          or opposing BUY signal recorded after the previous signal.
+        """
+        if since_timestamp.tzinfo is None:
+            since_ts = since_timestamp.replace(tzinfo=timezone.utc)
+        else:
+            since_ts = since_timestamp.astimezone(timezone.utc)
+
+        dir_str = direction.value if isinstance(direction, SignalDirection) else str(direction).upper()
+        opposing_prefix = "BEARISH" if dir_str == "BUY" else "BULLISH"
+        opposing_dir = "SELL" if dir_str == "BUY" else "BUY"
+
+        # 1. Check StructureEvent table for opposing events
+        try:
+            stmt_struct = select(StructureEvent).where(
+                StructureEvent.symbol == symbol,
+                StructureEvent.timestamp >= since_ts,
+            )
+            events = db.scalars(stmt_struct).all()
+            for ev in events:
+                ev_type = ev.event_type.upper()
+                if opposing_prefix in ev_type:
+                    logger.info(
+                        f"Opposing structural break found for {symbol} ({ev.event_type} at {ev.timestamp}) "
+                        f"since previous signal at {since_ts}."
+                    )
+                    return True
+        except Exception as e:
+            logger.debug(f"Could not query StructureEvent for opposing break: {e}")
+
+        # 2. Check Signals table for opposing signal generated since
+        try:
+            stmt_sig = (
+                select(Signal)
+                .where(
+                    Signal.symbol == symbol,
+                    Signal.direction == opposing_dir,
+                    Signal.timestamp >= since_ts,
+                )
+                .limit(1)
+            )
+            if db.scalars(stmt_sig).first() is not None:
+                logger.info(
+                    f"Opposing signal ({opposing_dir}) found for {symbol} "
+                    f"since previous signal at {since_ts}."
+                )
+                return True
+        except Exception as e:
+            logger.debug(f"Could not query Signal for opposing break: {e}")
+
+        return False
+
+    def is_signal_in_cooldown(
+        self,
+        db: Session,
+        signal_resp: SignalResponse,
+        cooldown_hours: Optional[int] = None,
+    ) -> bool:
+        """Check if an actionable signal is within the cooldown window for the same symbol and direction.
+
+        Returns True if the signal should be suppressed (is in cooldown and no opposing break occurred).
+        """
+        cd_hours = cooldown_hours if cooldown_hours is not None else settings.SIGNAL_COOLDOWN_HOURS
+        if cd_hours <= 0:
+            return False
+
+        dir_str = signal_resp.direction.value if isinstance(signal_resp.direction, SignalDirection) else str(signal_resp.direction).upper()
+        current_ts = signal_resp.timestamp or datetime.now(timezone.utc)
+        if current_ts.tzinfo is None:
+            current_ts = current_ts.replace(tzinfo=timezone.utc)
+        else:
+            current_ts = current_ts.astimezone(timezone.utc)
+
+        # Query the most recent previous signal for this symbol & direction
+        stmt = (
+            select(Signal)
+            .where(
+                Signal.symbol == signal_resp.symbol,
+                Signal.direction == dir_str,
+            )
+            .order_by(desc(Signal.timestamp))
+        )
+
+        # Exclude the current signal if it was already persisted
+        if signal_resp.id:
+            stmt = stmt.where(Signal.id != signal_resp.id)
+        elif signal_resp.fingerprint:
+            stmt = stmt.where(Signal.fingerprint != signal_resp.fingerprint)
+
+        prev_signal = db.scalars(stmt).first()
+        if not prev_signal:
+            return False
+
+        prev_ts = prev_signal.timestamp or prev_signal.created_at
+        if prev_ts.tzinfo is None:
+            prev_ts = prev_ts.replace(tzinfo=timezone.utc)
+        else:
+            prev_ts = prev_ts.astimezone(timezone.utc)
+
+        elapsed_seconds = (current_ts - prev_ts).total_seconds()
+        elapsed_hours = max(0.0, elapsed_seconds / 3600.0)
+
+        if elapsed_hours < cd_hours:
+            # Check if an opposing structural break occurred that resets the cooldown
+            has_opposing = self.has_opposing_structural_break(
+                db=db,
+                symbol=signal_resp.symbol,
+                direction=signal_resp.direction,
+                since_timestamp=prev_ts,
+            )
+            if not has_opposing:
+                logger.info(
+                    f"Suppressing duplicate signal alert for {signal_resp.symbol} [{dir_str}]: "
+                    f"Recent signal exists from {prev_ts.strftime('%Y-%m-%d %H:%M UTC')} "
+                    f"({elapsed_hours:.1f}h ago < {cd_hours}h cooldown window)."
+                )
+                return True
+
+        return False
 
     async def run_scan_cycle(
         self,
@@ -182,56 +328,68 @@ class AutomatedMarketScanner:
 
                     signals_found += 1
 
-                    # Check deduplication
-                    if sig.fingerprint not in self._broadcasted_fingerprints:
-                        self._broadcasted_fingerprints.add(sig.fingerprint)
+                    # 1. Active Position Check: Skip if position is already open/active for this symbol
+                    if self.has_active_position(db, sig.symbol):
+                        logger.info(f"Skipping signal alert for {sig.symbol}: Position already active.")
+                        continue
 
-                        # Broadcast to Telegram
-                        if broadcast_to_telegram:
-                            try:
-                                msg_text = self.formatter.format_signal_alert(sig)
-                                send_res = await self.telegram_client.send_message(text=msg_text)
-                                if send_res.success:
-                                    signals_broadcast += 1
-                                    logger.info(
-                                        f"BROADCASTED NEW SIGNAL: [{sig.direction.value}] {sig.symbol} "
-                                        f"[{tf}] (Score: {sig.setup_score:.1f})"
-                                    )
-                                else:
-                                    logger.error(
-                                        f"Telegram delivery failed for {sig.symbol}: {send_res.error}"
-                                    )
-                            except Exception as e:
-                                logger.error(f"Telegram delivery failed for {sig.symbol}: {e}")
+                    # 2. Signal Cooldown Period Check (Deduping)
+                    if self.is_signal_in_cooldown(db, sig):
+                        continue
 
-                        # Paper Trading Safety Check
-                        if (
-                            auto_paper_trade
-                            and settings.PAPER_TRADING
-                            and settings.SCANNER_AUTO_TRADE_PAPER
-                        ):
-                            try:
-                                trade = self.paper_service.trade_from_signal(
-                                    db=db,
-                                    request=AutoTradeSignalRequest(
-                                        signal_id=sig.id,
-                                        symbol=sig.symbol,
-                                        timeframe=sig.timeframe,
-                                        risk_percent=0.5,
-                                    ),
-                                )
-                                paper_trades_opened += 1
+                    # 3. In-memory Fingerprint Deduplication Check
+                    if sig.fingerprint in self._broadcasted_fingerprints:
+                        logger.debug(f"Skipping signal alert for {sig.symbol}: Fingerprint already broadcasted.")
+                        continue
+
+                    self._broadcasted_fingerprints.add(sig.fingerprint)
+
+                    # 4. Standalone Broadcast to Telegram
+                    if broadcast_to_telegram:
+                        try:
+                            msg_text = self.formatter.format_signal_alert(sig)
+                            send_res = await self.telegram_client.send_message(text=msg_text)
+                            if send_res.success:
+                                signals_broadcast += 1
                                 logger.info(
-                                    f"AUTO-OPENED PAPER TRADE #{trade.id} on {trade.symbol} [{sig.timeframe}]"
+                                    f"BROADCASTED NEW SIGNAL: [{sig.direction.value}] {sig.symbol} "
+                                    f"[{tf}] (Score: {sig.setup_score:.1f})"
                                 )
-                            except Exception as e:
-                                logger.error(f"Paper trading failed for {sig.symbol}: {e}")
-                        else:
-                            logger.debug(
-                                f"Paper trade skipped for {sig.symbol} (auto_trade={auto_paper_trade}, "
-                                f"PAPER_TRADING={settings.PAPER_TRADING}, "
-                                f"SCANNER_AUTO_TRADE_PAPER={settings.SCANNER_AUTO_TRADE_PAPER})"
+                            else:
+                                logger.error(
+                                    f"Telegram delivery failed for {sig.symbol}: {send_res.error}"
+                                )
+                        except Exception as e:
+                            logger.error(f"Telegram delivery failed for {sig.symbol}: {e}")
+
+                    # 5. Paper Trading Safety Check & Auto-execution
+                    if (
+                        auto_paper_trade
+                        and settings.PAPER_TRADING
+                        and settings.SCANNER_AUTO_TRADE_PAPER
+                    ):
+                        try:
+                            trade = self.paper_service.trade_from_signal(
+                                db=db,
+                                request=AutoTradeSignalRequest(
+                                    signal_id=sig.id,
+                                    symbol=sig.symbol,
+                                    timeframe=sig.timeframe,
+                                    risk_percent=0.5,
+                                ),
                             )
+                            paper_trades_opened += 1
+                            logger.info(
+                                f"AUTO-OPENED PAPER TRADE #{trade.id} on {trade.symbol} [{sig.timeframe}]"
+                            )
+                        except Exception as e:
+                            logger.error(f"Paper trading failed for {sig.symbol}: {e}")
+                    else:
+                        logger.debug(
+                            f"Paper trade skipped for {sig.symbol} (auto_trade={auto_paper_trade}, "
+                            f"PAPER_TRADING={settings.PAPER_TRADING}, "
+                            f"SCANNER_AUTO_TRADE_PAPER={settings.SCANNER_AUTO_TRADE_PAPER})"
+                        )
 
             # 4. Synchronize Open Paper Trading Positions & Trigger TP/SL Alerts
             updated_pos_count = 0

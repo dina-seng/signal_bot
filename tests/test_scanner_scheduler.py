@@ -7,7 +7,9 @@ import pytest
 
 from app.core.config import settings
 from app.models.candle import Candle
+from app.models.paper import PaperTrade, VirtualAccount
 from app.models.signal import Signal
+from app.models.structure import StructureEvent
 from app.schemas.candle import CandleCreate
 from app.schemas.signal import SignalDirection, SignalResponse, SignalStatus
 from app.services.market_data.base import BaseMarketDataProvider
@@ -518,7 +520,372 @@ async def test_paper_trading_when_enabled(test_db_session):
 
 
 # =====================================================================
-# 7. Health API Schema & Values Test
+# 7. Duplicate Signal Suppression & Cooldown Tests
+# =====================================================================
+
+@pytest.mark.asyncio
+async def test_active_position_suppresses_signal_alert_and_paper_trade(test_db_session):
+    """Verify that an active OPEN paper trade on a symbol suppresses Telegram alert and new trade."""
+    mock_tg = MockTelegramClient()
+    mock_market = MockMarketDataProvider()
+    mock_news = MockNewsProvider()
+    paper_svc = PaperTradingService()
+    scanner = AutomatedMarketScanner(
+        paper_service=paper_svc,
+        telegram_client=mock_tg,
+        market_provider=mock_market,
+        news_provider=mock_news,
+    )
+
+    # 1. Create default account and an active OPEN position for EUR/USD
+    acc = paper_svc.account_manager.get_or_create_default_account(test_db_session)
+    active_trade = PaperTrade(
+        account_id=acc.id,
+        symbol="EUR/USD",
+        direction="BUY",
+        order_type="MARKET",
+        status="OPEN",
+        entry_price=1.1000,
+        current_price=1.1020,
+        stop_loss=1.0950,
+        take_profit_1=1.1100,
+        initial_position_size=1.0,
+        remaining_position_size=1.0,
+        opened_at=datetime.now(timezone.utc),
+    )
+    test_db_session.add(active_trade)
+    test_db_session.commit()
+
+    assert scanner.has_active_position(test_db_session, "EUR/USD") is True
+
+    # 2. Mock a high confluence BUY signal for EUR/USD
+    sig_resp = SignalResponse(
+        symbol="EUR/USD",
+        timeframe="1h",
+        direction=SignalDirection.BUY,
+        setup_score=92.0,
+        entry_price=1.1020,
+        stop_loss=1.0970,
+        take_profit_1=1.1120,
+        take_profit_2=1.1170,
+        risk_reward=2.0,
+        fingerprint="active_pos_test_fp",
+        reasons=["High confluence"],
+        status=SignalStatus.ACTIVE,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    from unittest.mock import MagicMock
+    from app.schemas.signal import MarketScanResponse, MarketScanSymbolResult
+
+    mock_scan_res = MarketScanResponse(
+        timestamp=datetime.now(timezone.utc),
+        scanned_count=1,
+        actionable_count=1,
+        results=[
+            MarketScanSymbolResult(
+                symbol="EUR/USD",
+                timeframe="1h",
+                direction=SignalDirection.BUY,
+                setup_score=92.0,
+                is_actionable=True,
+                signal=sig_resp,
+                blackout_blocked=False,
+                reasons=["High confluence"],
+            )
+        ],
+    )
+    scanner.signal_generator.scan_all_symbols = MagicMock(return_value=mock_scan_res)
+
+    res = await scanner.run_scan_cycle(
+        db=test_db_session,
+        symbols=["EUR/USD"],
+        timeframes=["1h"],
+        broadcast_to_telegram=True,
+        auto_paper_trade=True,
+    )
+
+    # Both Telegram broadcast and paper trade opening must be suppressed
+    assert res.signals_broadcast_count == 0
+    assert res.paper_trades_opened_count == 0
+    assert not any("NEW FOREX TRADE SIGNAL" in m["text"] for m in mock_tg.sent_messages)
+
+
+@pytest.mark.asyncio
+async def test_signal_cooldown_suppresses_duplicate_alert(test_db_session):
+    """Verify that a signal generated within SIGNAL_COOLDOWN_HOURS is suppressed."""
+    mock_tg = MockTelegramClient()
+    mock_market = MockMarketDataProvider()
+    mock_news = MockNewsProvider()
+    scanner = AutomatedMarketScanner(
+        telegram_client=mock_tg,
+        market_provider=mock_market,
+        news_provider=mock_news,
+    )
+    settings.SIGNAL_COOLDOWN_HOURS = 2
+
+    now = datetime.now(timezone.utc)
+
+    # 1. Insert a prior BUY signal for EUR/USD from 30 minutes ago
+    prior_sig = Signal(
+        symbol="EUR/USD",
+        timeframe="1h",
+        direction="BUY",
+        setup_score=85.0,
+        entry_price=1.1000,
+        stop_loss=1.0950,
+        take_profit_1=1.1100,
+        take_profit_2=1.1150,
+        risk_reward=2.0,
+        status="ACTIVE",
+        fingerprint="cooldown_prior_sig_fp",
+        reasons=["Prior confluence"],
+        timestamp=now - timedelta(minutes=30),
+    )
+    test_db_session.add(prior_sig)
+    test_db_session.commit()
+
+    # 2. Current candidate BUY signal (30 mins after prior)
+    cand_sig = SignalResponse(
+        symbol="EUR/USD",
+        timeframe="1h",
+        direction=SignalDirection.BUY,
+        setup_score=88.0,
+        entry_price=1.1010,
+        stop_loss=1.0960,
+        take_profit_1=1.1110,
+        take_profit_2=1.1160,
+        risk_reward=2.0,
+        fingerprint="cooldown_new_candidate_fp",
+        reasons=["New candle confluence"],
+        status=SignalStatus.ACTIVE,
+        timestamp=now,
+    )
+
+    assert scanner.is_signal_in_cooldown(test_db_session, cand_sig) is True
+
+    from unittest.mock import MagicMock
+    from app.schemas.signal import MarketScanResponse, MarketScanSymbolResult
+
+    mock_scan_res = MarketScanResponse(
+        timestamp=now,
+        scanned_count=1,
+        actionable_count=1,
+        results=[
+            MarketScanSymbolResult(
+                symbol="EUR/USD",
+                timeframe="1h",
+                direction=SignalDirection.BUY,
+                setup_score=88.0,
+                is_actionable=True,
+                signal=cand_sig,
+                blackout_blocked=False,
+                reasons=["New candle confluence"],
+            )
+        ],
+    )
+    scanner.signal_generator.scan_all_symbols = MagicMock(return_value=mock_scan_res)
+
+    res = await scanner.run_scan_cycle(
+        db=test_db_session,
+        symbols=["EUR/USD"],
+        timeframes=["1h"],
+        broadcast_to_telegram=True,
+        auto_paper_trade=False,
+    )
+
+    assert res.signals_broadcast_count == 0
+    assert len(mock_tg.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_signal_cooldown_expired_allows_broadcast(test_db_session):
+    """Verify that a signal generated after cooldown window (e.g. 3 hours > 2h) is allowed."""
+    mock_tg = MockTelegramClient()
+    mock_market = MockMarketDataProvider()
+    mock_news = MockNewsProvider()
+    scanner = AutomatedMarketScanner(
+        telegram_client=mock_tg,
+        market_provider=mock_market,
+        news_provider=mock_news,
+    )
+    settings.SIGNAL_COOLDOWN_HOURS = 2
+
+    now = datetime.now(timezone.utc)
+
+    # 1. Insert a prior BUY signal for GBP/USD from 3 hours ago
+    prior_sig = Signal(
+        symbol="GBP/USD",
+        timeframe="1h",
+        direction="BUY",
+        setup_score=85.0,
+        entry_price=1.2500,
+        stop_loss=1.2450,
+        take_profit_1=1.2600,
+        take_profit_2=1.2650,
+        risk_reward=2.0,
+        status="ACTIVE",
+        fingerprint="cooldown_expired_prior_fp",
+        reasons=["Old confluence"],
+        timestamp=now - timedelta(hours=3),
+    )
+    test_db_session.add(prior_sig)
+    test_db_session.commit()
+
+    # 2. Current candidate BUY signal (3 hours later)
+    cand_sig = SignalResponse(
+        symbol="GBP/USD",
+        timeframe="1h",
+        direction=SignalDirection.BUY,
+        setup_score=90.0,
+        entry_price=1.2520,
+        stop_loss=1.2470,
+        take_profit_1=1.2620,
+        take_profit_2=1.2670,
+        risk_reward=2.0,
+        fingerprint="cooldown_expired_new_fp",
+        reasons=["Fresh confluence"],
+        status=SignalStatus.ACTIVE,
+        timestamp=now,
+    )
+
+    assert scanner.is_signal_in_cooldown(test_db_session, cand_sig) is False
+
+    from unittest.mock import MagicMock
+    from app.schemas.signal import MarketScanResponse, MarketScanSymbolResult
+
+    mock_scan_res = MarketScanResponse(
+        timestamp=now,
+        scanned_count=1,
+        actionable_count=1,
+        results=[
+            MarketScanSymbolResult(
+                symbol="GBP/USD",
+                timeframe="1h",
+                direction=SignalDirection.BUY,
+                setup_score=90.0,
+                is_actionable=True,
+                signal=cand_sig,
+                blackout_blocked=False,
+                reasons=["Fresh confluence"],
+            )
+        ],
+    )
+    scanner.signal_generator.scan_all_symbols = MagicMock(return_value=mock_scan_res)
+
+    res = await scanner.run_scan_cycle(
+        db=test_db_session,
+        symbols=["GBP/USD"],
+        timeframes=["1h"],
+        broadcast_to_telegram=True,
+        auto_paper_trade=False,
+    )
+
+    assert res.signals_broadcast_count == 1
+    assert len(mock_tg.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_opposing_structural_break_resets_cooldown(test_db_session):
+    """Verify that an opposing structural break (BEARISH_CHOCH) resets the BUY signal cooldown."""
+    mock_tg = MockTelegramClient()
+    mock_market = MockMarketDataProvider()
+    mock_news = MockNewsProvider()
+    scanner = AutomatedMarketScanner(
+        telegram_client=mock_tg,
+        market_provider=mock_market,
+        news_provider=mock_news,
+    )
+    settings.SIGNAL_COOLDOWN_HOURS = 2
+
+    now = datetime.now(timezone.utc)
+    sig_time_1 = now - timedelta(minutes=45)
+    break_time = now - timedelta(minutes=20)
+
+    # 1. Prior BUY signal 45 mins ago
+    prior_sig = Signal(
+        symbol="USD/JPY",
+        timeframe="1h",
+        direction="BUY",
+        setup_score=80.0,
+        entry_price=150.00,
+        stop_loss=149.50,
+        take_profit_1=151.00,
+        risk_reward=2.0,
+        status="ACTIVE",
+        fingerprint="prior_uj_buy_fp",
+        reasons=["Prior buy"],
+        timestamp=sig_time_1,
+    )
+    test_db_session.add(prior_sig)
+
+    # 2. Opposing structure event: BEARISH_CHOCH 20 mins ago
+    choch_event = StructureEvent(
+        symbol="USD/JPY",
+        timeframe="1h",
+        event_type="BEARISH_CHOCH",
+        price=149.80,
+        timestamp=break_time,
+    )
+    test_db_session.add(choch_event)
+    test_db_session.commit()
+
+    # 3. New candidate BUY signal at current time
+    cand_sig = SignalResponse(
+        symbol="USD/JPY",
+        timeframe="1h",
+        direction=SignalDirection.BUY,
+        setup_score=92.0,
+        entry_price=150.20,
+        stop_loss=149.70,
+        take_profit_1=151.20,
+        risk_reward=2.0,
+        fingerprint="new_uj_buy_fp_after_break",
+        reasons=["Re-break confluence"],
+        status=SignalStatus.ACTIVE,
+        timestamp=now,
+    )
+
+    # Structural break occurred after previous signal, so cooldown should be reset (not in cooldown)
+    assert scanner.has_opposing_structural_break(test_db_session, "USD/JPY", SignalDirection.BUY, sig_time_1) is True
+    assert scanner.is_signal_in_cooldown(test_db_session, cand_sig) is False
+
+    from unittest.mock import MagicMock
+    from app.schemas.signal import MarketScanResponse, MarketScanSymbolResult
+
+    mock_scan_res = MarketScanResponse(
+        timestamp=now,
+        scanned_count=1,
+        actionable_count=1,
+        results=[
+            MarketScanSymbolResult(
+                symbol="USD/JPY",
+                timeframe="1h",
+                direction=SignalDirection.BUY,
+                setup_score=92.0,
+                is_actionable=True,
+                signal=cand_sig,
+                blackout_blocked=False,
+                reasons=["Re-break confluence"],
+            )
+        ],
+    )
+    scanner.signal_generator.scan_all_symbols = MagicMock(return_value=mock_scan_res)
+
+    res = await scanner.run_scan_cycle(
+        db=test_db_session,
+        symbols=["USD/JPY"],
+        timeframes=["1h"],
+        broadcast_to_telegram=True,
+        auto_paper_trade=False,
+    )
+
+    assert res.signals_broadcast_count == 1
+    assert len(mock_tg.sent_messages) == 1
+
+
+# =====================================================================
+# 8. Health API Schema & Values Test
 # =====================================================================
 
 def test_health_check_contains_scanner_fields(client):
@@ -530,4 +897,5 @@ def test_health_check_contains_scanner_fields(client):
     assert "scanner_running" in data
     assert "scanner_interval_minutes" in data
     assert data["status"] == "healthy"
+
 

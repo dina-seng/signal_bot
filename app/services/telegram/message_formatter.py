@@ -17,11 +17,7 @@ class TelegramMessageFormatter:
 
     @staticmethod
     def escape_markdown(text: Any, version: int = 1) -> str:
-        """Sanitize/escape dynamic strings to prevent Telegram Markdown parsing errors.
-        
-        Version 1 escapes: \\, _, *, `, [, ]
-        Version 2 escapes: _, *, [, ], (, ), ~, `, >, #, +, -, =, |, {, }, ., !
-        """
+        """Sanitize/escape dynamic strings to prevent Telegram Markdown parsing errors."""
         if text is None:
             return ""
         s = str(text)
@@ -29,7 +25,6 @@ class TelegramMessageFormatter:
             escape_chars = r"\_*[]()~`>#+-=|{}.!"
             return "".join(f"\\{c}" if c in escape_chars else c for c in s)
         else:
-            # Markdown v1 special characters outside code spans
             escape_chars = ("\\", "_", "*", "`", "[", "]")
             for c in escape_chars:
                 s = s.replace(c, f"\\{c}")
@@ -54,13 +49,41 @@ class TelegramMessageFormatter:
             return ""
         return html.escape(str(text), quote=False)
 
+    @staticmethod
+    def format_price(price: Optional[float], symbol: str) -> str:
+        """Format price string with appropriate decimal precision per instrument."""
+        if price is None:
+            return "N/A"
+        sym = symbol.upper().replace("/", "")
+        if "XAU" in sym or "GOLD" in sym:
+            return f"{price:.2f}"
+        elif "JPY" in sym:
+            return f"{price:.3f}"
+        return f"{price:.5f}"
+
+    @staticmethod
+    def calculate_pips(entry: float, target: float, symbol: str) -> float:
+        """Calculate standard pip distance adjusted for asset class."""
+        diff = abs(entry - target)
+        sym = symbol.upper().replace("/", "")
+        if "XAU" in sym or "GOLD" in sym:
+            # For Gold: 1 pip = $0.10 (10 cents)
+            return round(diff / 0.10, 1)
+        elif "JPY" in sym:
+            # For JPY: 1 pip = 0.01
+            return round(diff / 0.01, 1)
+        else:
+            # Standard Forex: 1 pip = 0.0001
+            return round(diff / 0.0001, 1)
+
     @classmethod
     def format_signal_alert(cls, sig: SignalResponse) -> str:
         """Format an actionable trade setup alert."""
         dir_emoji = "🟢 *STRONG BUY (LONG)*" if sig.direction == SignalDirection.BUY else "🔴 *STRONG SELL (SHORT)*"
         rp = sig.risk_parameters
 
-        sym = cls.escape_code(sig.symbol)
+        sym_clean = sig.symbol
+        sym = cls.escape_code(sym_clean)
         tf = cls.escape_code(sig.timeframe)
         score_str = f"{sig.setup_score:.1f}"
 
@@ -75,22 +98,23 @@ class TelegramMessageFormatter:
         ]
 
         if sig.entry_price is not None:
-            lines.append(f"📍 *Entry Price:* `{sig.entry_price:.5f}`")
-        if sig.stop_loss is not None:
-            sl_line = f"🛑 *Stop Loss:* `{sig.stop_loss:.5f}`"
-            if rp and rp.risk_pips is not None:
-                sl_line += f" ({rp.risk_pips:.1f} pips)"
-            lines.append(sl_line)
-        if sig.take_profit_1 is not None:
-            tp1_line = f"🎯 *Take Profit 1 (TP1):* `{sig.take_profit_1:.5f}`"
-            if rp and rp.reward_pips_tp1 is not None:
-                tp1_line += f" ({rp.reward_pips_tp1:.1f} pips | 2.0 R:R)"
-            lines.append(tp1_line)
-        if sig.take_profit_2 is not None:
-            tp2_line = f"🏆 *Take Profit 2 (TP2):* `{sig.take_profit_2:.5f}`"
-            if rp and rp.reward_pips_tp2 is not None:
-                tp2_line += f" ({rp.reward_pips_tp2:.1f} pips | 3.0 R:R)"
-            lines.append(tp2_line)
+            formatted_entry = cls.format_price(sig.entry_price, sym_clean)
+            lines.append(f"📍 *Entry Price:* `{formatted_entry}`")
+
+        if sig.stop_loss is not None and sig.entry_price is not None:
+            formatted_sl = cls.format_price(sig.stop_loss, sym_clean)
+            sl_pips = cls.calculate_pips(sig.entry_price, sig.stop_loss, sym_clean)
+            lines.append(f"🛑 *Stop Loss:* `{formatted_sl}` ({sl_pips:.1f} pips)")
+
+        if sig.take_profit_1 is not None and sig.entry_price is not None:
+            formatted_tp1 = cls.format_price(sig.take_profit_1, sym_clean)
+            tp1_pips = cls.calculate_pips(sig.entry_price, sig.take_profit_1, sym_clean)
+            lines.append(f"🎯 *Take Profit 1 (TP1):* `{formatted_tp1}` ({tp1_pips:.1f} pips | 2.0 R:R)")
+
+        if sig.take_profit_2 is not None and sig.entry_price is not None:
+            formatted_tp2 = cls.format_price(sig.take_profit_2, sym_clean)
+            tp2_pips = cls.calculate_pips(sig.entry_price, sig.take_profit_2, sym_clean)
+            lines.append(f"🏆 *Take Profit 2 (TP2):* `{formatted_tp2}` ({tp2_pips:.1f} pips | 3.0 R:R)")
 
         if rp:
             lines.extend([
@@ -129,13 +153,15 @@ class TelegramMessageFormatter:
     def format_tp1_hit(cls, symbol: str, price: float, realized_pnl: float, new_sl: float) -> str:
         """Format a Take Profit 1 reached notification."""
         sym = cls.escape_code(symbol)
+        formatted_price = cls.format_price(price, symbol)
+        formatted_sl = cls.format_price(new_sl, symbol)
         return (
             f"🎯 *TAKE PROFIT 1 REACHED!* 🎯\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 *Pair:* `{sym}`\n"
-            f"💰 *Exit Price:* `{price:.5f}`\n"
+            f"💰 *Exit Price:* `{formatted_price}`\n"
             f"💵 *Locked-in Profit:* `+${realized_pnl:,.2f}`\n"
-            f"🔒 *Action Taken:* `Closed 50% lots. Stop Loss moved to Break-Even ({new_sl:.5f})`\n"
+            f"🔒 *Action Taken:* `Closed 50% lots. Stop Loss moved to Break-Even ({formatted_sl})`\n"
             f"🏃 *Runner:* `50% position remaining active for TP2 target.`\n"
             f"🕒 `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"
         )
@@ -144,11 +170,12 @@ class TelegramMessageFormatter:
     def format_tp2_hit(cls, symbol: str, price: float, total_pnl: float, return_r: float) -> str:
         """Format a Take Profit 2 final target notification."""
         sym = cls.escape_code(symbol)
+        formatted_price = cls.format_price(price, symbol)
         return (
             f"🏆 *TAKE PROFIT 2 TARGET HIT!* 🏆\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 *Pair:* `{sym}`\n"
-            f"💰 *Exit Price:* `{price:.5f}`\n"
+            f"💰 *Exit Price:* `{formatted_price}`\n"
             f"💵 *Total Realized PnL:* `+${total_pnl:,.2f}`\n"
             f"📈 *Payoff Return:* `+{return_r:.2f} R-Multiple`\n"
             f"🎉 *Status:* `Trade fully completed with maximum target profit!`\n"
@@ -161,11 +188,12 @@ class TelegramMessageFormatter:
         tag = "⚡ *BREAK-EVEN STOP TRIGGERED*" if is_be else "🛑 *STOP LOSS HIT*"
         pnl_str = f"${loss_pnl:,.2f}" if loss_pnl >= 0 else f"-${abs(loss_pnl):,.2f}"
         sym = cls.escape_code(symbol)
+        formatted_price = cls.format_price(price, symbol)
         return (
             f"{tag}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 *Pair:* `{sym}`\n"
-            f"📍 *Exit Price:* `{price:.5f}`\n"
+            f"📍 *Exit Price:* `{formatted_price}`\n"
             f"💵 *Realized PnL:* `{pnl_str}`\n"
             f"🛡 *Capital Protected:* `Position closed per strict risk management rules.`\n"
             f"🕒 `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"

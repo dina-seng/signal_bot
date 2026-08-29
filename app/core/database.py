@@ -42,6 +42,16 @@ def get_db() -> Generator[Session, None, None]:
 def init_db():
     """Create all database tables defined in the models."""
     from sqlalchemy import inspect, text
+    
+    # 1. IMPORT ALL MODELS SO SQLALCHEMY REGISTERS THEIR TABLES
+    import app.models.candle
+    import app.models.paper
+    import app.models.news
+    import app.models.signal
+    import app.models.structure
+    import app.models.liquidity
+    import app.models.backtest
+
     logger.info("Initializing database tables...")
     try:
         insp = inspect(engine)
@@ -55,5 +65,6 @@ def init_db():
     except Exception as e:
         logger.debug(f"Table inspection note: {e}")
 
+    # 2. CREATE TABLES
     Base.metadata.create_all(bind=engine)
-    logger.info("Database tables initialized successfully.")
+    logger.info(f"Database tables initialized successfully. Created tables: {list(Base.metadata.tables.keys())}")
