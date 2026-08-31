@@ -124,16 +124,25 @@ class SignalGenerator:
             fingerprint=signal_resp.fingerprint,
             reasons=signal_resp.reasons,
             status=signal_resp.status.value,
+            is_broadcasted=signal_resp.is_broadcasted,
             timestamp=signal_resp.timestamp,
         )
-        db.add(db_signal)
-        db.commit()
-        db.refresh(db_signal)
-        logger.info(
-            f"PERSISTED QUALIFIED SIGNAL: [{db_signal.direction}] {db_signal.symbol} "
-            f"(Score: {db_signal.setup_score:.1f}, SL: {db_signal.stop_loss}, TP1: {db_signal.take_profit_1})"
-        )
-        return db_signal
+        try:
+            db.add(db_signal)
+            db.commit()
+            db.refresh(db_signal)
+            logger.info(
+                f"PERSISTED QUALIFIED SIGNAL: [{db_signal.direction}] {db_signal.symbol} "
+                f"(Score: {db_signal.setup_score:.1f}, SL: {db_signal.stop_loss}, TP1: {db_signal.take_profit_1})"
+            )
+            return db_signal
+        except Exception as e:
+            db.rollback()
+            existing_after_collision = db.scalars(stmt).first()
+            if existing_after_collision:
+                return existing_after_collision
+            logger.warning(f"Could not persist signal {signal_resp.fingerprint}: {e}")
+            return None
 
     def scan_all_symbols(
         self,

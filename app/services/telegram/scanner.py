@@ -70,8 +70,9 @@ class AutomatedMarketScanner:
             try:
                 recent_fps = db.scalars(
                     select(Signal.fingerprint)
+                    .where(Signal.is_broadcasted == True)
                     .order_by(desc(Signal.timestamp))
-                    .limit(100)
+                    .limit(200)
                 ).all()
                 self._broadcasted_fingerprints.update(recent_fps)
             except Exception as e:
@@ -174,11 +175,12 @@ class AutomatedMarketScanner:
         else:
             current_ts = current_ts.astimezone(timezone.utc)
 
-        # Query the most recent previous signal for this symbol & direction
+        # Query the most recent previous signal for this symbol, timeframe & direction
         stmt = (
             select(Signal)
             .where(
                 Signal.symbol == signal_resp.symbol,
+                Signal.timeframe == signal_resp.timeframe,
                 Signal.direction == dir_str,
             )
             .order_by(desc(Signal.timestamp))
@@ -352,6 +354,11 @@ class AutomatedMarketScanner:
                             send_res = await self.telegram_client.send_message(text=msg_text)
                             if send_res.success:
                                 signals_broadcast += 1
+                                if sig.id:
+                                    db_sig = db.get(Signal, sig.id)
+                                    if db_sig:
+                                        db_sig.is_broadcasted = True
+                                        db.commit()
                                 logger.info(
                                     f"BROADCASTED NEW SIGNAL: [{sig.direction.value}] {sig.symbol} "
                                     f"[{tf}] (Score: {sig.setup_score:.1f})"

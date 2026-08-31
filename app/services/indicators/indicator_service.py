@@ -104,9 +104,15 @@ class IndicatorService:
         elif rsi_condition == "BEARISH_ZONE":
             score -= 15.0
         elif rsi_condition == "OVERSOLD":
-            score += 20.0  # Mean reversion upside potential
+            if ema_trend == "BEARISH_STACK":
+                score -= 10.0  # Strong bearish trend momentum
+            else:
+                score += 20.0  # Mean reversion upside potential
         elif rsi_condition == "OVERBOUGHT":
-            score -= 20.0  # Mean reversion downside potential
+            if ema_trend == "BULLISH_STACK":
+                score += 10.0  # Strong bullish trend momentum
+            else:
+                score -= 20.0  # Mean reversion downside potential
 
         # 3. RSI Divergence Factor (most recent divergence)
         if divergences:

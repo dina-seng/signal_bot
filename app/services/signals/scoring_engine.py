@@ -1,6 +1,6 @@
 """Deterministic Multi-Pillar Signal Scoring Engine (0-100 Points)."""
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from app.core.config import settings
 from app.schemas.indicators import IndicatorAnalysisResponse
 from app.schemas.liquidity import AdvancedStructureAnalysisResponse
@@ -17,10 +17,19 @@ from app.services.signals.evaluators import (
 
 
 class SignalScoringEngine:
-    """Scores trading opportunities deterministically across Market Structure, Liquidity, Indicators, and Price Action."""
+    """Unified Signal Scoring Engine (Single Source of Truth).
+    
+    Provides deterministic scoring across Market Structure, Liquidity, Indicators,
+    and Price Action, delegating to the unified ConsensusFilter and evaluators.
+    """
 
-    def __init__(self, min_score_threshold: Optional[float] = None):
+    def __init__(
+        self,
+        min_score_threshold: Optional[float] = None,
+        confluence_engine: Optional[Any] = None,
+    ):
         self.min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
+        self.confluence_engine = confluence_engine
         self.structure_evaluator = StructureConsensusEvaluator()
         self.liquidity_evaluator = LiquiditySMCConsensusEvaluator()
         self.indicator_evaluator = MomentumIndicatorConsensusEvaluator()
@@ -36,11 +45,7 @@ class SignalScoringEngine:
         mtf: Optional[MultiTimeframeStructureResponse] = None,
         news_check: Optional[NewsBlackoutCheckResponse] = None,
     ) -> Tuple[SignalDirection, float, ScoreBreakdown, List[str]]:
-        """Evaluate market data and compute composite score (0 to 100) for BUY and SELL setups.
-
-        Returns:
-            Tuple of (SignalDirection, total_score, ScoreBreakdown, list_of_reasons)
-        """
+        """Evaluate market data and compute composite score (0 to 100) for BUY and SELL setups."""
         # If trading is blocked by news blackout, immediately return WAIT
         if news_check and news_check.is_blackout:
             reasons = [
@@ -57,30 +62,34 @@ class SignalScoringEngine:
             )
             return SignalDirection.WAIT, 0.0, breakdown, reasons
 
-        # Score BUY and SELL candidate setups
-        buy_score, buy_breakdown, buy_reasons = self._score_direction(
+        # Score BUY and SELL candidate setups using unified evaluators
+        buy_score, buy_breakdown, buy_reasons, buy_fatal = self._score_direction(
             direction=SignalDirection.BUY,
             structure=structure,
             indicators=indicators,
             mtf=mtf,
         )
 
-        sell_score, sell_breakdown, sell_reasons = self._score_direction(
+        sell_score, sell_breakdown, sell_reasons, sell_fatal = self._score_direction(
             direction=SignalDirection.SELL,
             structure=structure,
             indicators=indicators,
             mtf=mtf,
         )
 
-        if buy_score >= sell_score and buy_score >= self.min_score_threshold and buy_breakdown.is_qualified:
+        if buy_score >= sell_score and buy_score >= self.min_score_threshold and not buy_fatal:
             return SignalDirection.BUY, buy_score, buy_breakdown, buy_reasons
-        elif sell_score > buy_score and sell_score >= self.min_score_threshold and sell_breakdown.is_qualified:
+        elif sell_score > buy_score and sell_score >= self.min_score_threshold and not sell_fatal:
             return SignalDirection.SELL, sell_score, sell_breakdown, sell_reasons
         else:
             best_score = max(buy_score, sell_score)
             best_breakdown = buy_breakdown if buy_score >= sell_score else sell_breakdown
+            conflict_note = ""
+            if buy_fatal or sell_fatal:
+                conflict_note = "Directional contradiction between pillars detected. "
+
             reasons = [
-                f"INSUFFICIENT CONFLUENCE: Score {best_score:.1f}/100 is below minimum threshold ({self.min_score_threshold:.1f}).",
+                f"INSUFFICIENT CONFLUENCE: Score {best_score:.1f}/100 is below minimum threshold ({self.min_score_threshold:.1f}). {conflict_note}".strip(),
                 f"Market State: {structure.market_state}",
                 f"Technical Bias: {indicators.confluence_bias} (Score: {indicators.confluence_score:+.0f})",
             ]
@@ -92,8 +101,8 @@ class SignalScoringEngine:
         structure: AdvancedStructureAnalysisResponse,
         indicators: IndicatorAnalysisResponse,
         mtf: Optional[MultiTimeframeStructureResponse] = None,
-    ) -> Tuple[float, ScoreBreakdown, List[str]]:
-        """Score a specific direction (BUY or SELL) from 0 to 100."""
+    ) -> Tuple[float, ScoreBreakdown, List[str], bool]:
+        """Score a specific direction (BUY or SELL) from 0 to 100 via ConsensusFilter."""
         evals = {
             "structure": self.structure_evaluator.evaluate(direction, structure, mtf),
             "liquidity": self.liquidity_evaluator.evaluate(direction, structure, indicators.current_price),
@@ -101,6 +110,7 @@ class SignalScoringEngine:
             "price_action": self.price_action_evaluator.evaluate(direction, indicators),
         }
 
-        final_score, breakdown, catalysts, _ = self.consensus_filter.synthesize(evals, direction)
-        return final_score, breakdown, catalysts
+        final_score, breakdown, catalysts, fatal_conflict = self.consensus_filter.synthesize(evals, direction)
+        return final_score, breakdown, catalysts, fatal_conflict
+
 

@@ -1,6 +1,4 @@
-"""Economic news event model."""
-
-from sqlalchemy import Column, Integer, String, DateTime, Index
+from sqlalchemy import Column, Integer, String, DateTime, Index, UniqueConstraint
 from app.core.database import Base
 from app.models.base import utc_now
 
@@ -20,5 +18,6 @@ class NewsEvent(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     __table_args__ = (
+        UniqueConstraint("currency", "event_name", "scheduled_time", name="uq_news_currency_name_time"),
         Index("ix_news_currency_time", "currency", "scheduled_time"),
     )

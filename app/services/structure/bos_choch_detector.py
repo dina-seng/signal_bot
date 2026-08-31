@@ -71,7 +71,7 @@ class BOSCHOCHDetector:
         active_highs: List[SwingPoint] = []
         active_lows: List[SwingPoint] = []
 
-        # Map swing start indices to swings for efficient lookahead processing
+        # Map swing start indices to swings
         swings_by_idx = {s.index: s for s in swings}
 
         # Track broken swing prices to avoid duplicate events on same swing
