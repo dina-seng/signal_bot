@@ -31,10 +31,6 @@ def test_news_ingestion_service_deduplication(test_db_session):
     service = NewsIngestionService(provider=provider, db=test_db_session)
 
     # First pass
-    events = [
-        provider.fetch_events.__wrapped__(provider) if hasattr(provider.fetch_events, "__wrapped__") else None
-    ]
-    # Use sync helper
     import asyncio
     events = asyncio.run(provider.fetch_events())
 
@@ -50,6 +46,53 @@ def test_news_ingestion_service_deduplication(test_db_session):
     report2 = service.ingest_events(events)
     assert report2.inserted_count == 0
     assert report2.skipped_count == len(events)
+
+
+@pytest.mark.asyncio
+async def test_forexfactory_provider_no_mock_fallback_on_error(monkeypatch):
+    """Test that ForexFactoryProvider returns empty list and does NOT inject mock data on HTTP failure."""
+    from app.services.news.forexfactory_provider import ForexFactoryProvider
+    import httpx
+
+    class MockFailingAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def get(self, url):
+            # Simulate 429 Rate Limited or 500 error
+            request = httpx.Request("GET", url)
+            return httpx.Response(status_code=429, request=request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", MockFailingAsyncClient)
+
+    provider = ForexFactoryProvider(timeout_seconds=1.0)
+    events = await provider.fetch_events()
+
+    # Must return empty list, NOT 14 synthetic mock events!
+    assert events == []
+
+
+def test_deterministic_mock_timestamps():
+    """Test that MockNewsProvider generates identical timestamps across instantiations."""
+    ref = datetime(2026, 8, 28, 12, 0, 0, tzinfo=timezone.utc)
+    p1 = MockNewsProvider(reference_time=ref)
+    p2 = MockNewsProvider(reference_time=ref)
+
+    import asyncio
+    ev1 = asyncio.run(p1.fetch_events())
+    ev2 = asyncio.run(p2.fetch_events())
+
+    assert len(ev1) == len(ev2)
+    for e1, e2 in zip(ev1, ev2):
+        assert e1.currency == e2.currency
+        assert e1.event_name == e2.event_name
+        assert e1.scheduled_time == e2.scheduled_time
 
 
 def test_news_filter_blackout_window():

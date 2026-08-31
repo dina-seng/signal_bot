@@ -41,6 +41,7 @@ class Settings(BaseSettings):
 
     # Providers & External APIs
     MARKET_DATA_PROVIDER: str = "yfinance"
+    NEWS_PROVIDER: str = "forexfactory"
     TWELVE_DATA_API_KEY: Optional[str] = None
     ALPHA_VANTAGE_API_KEY: Optional[str] = None
     NEWS_API_KEY: Optional[str] = None

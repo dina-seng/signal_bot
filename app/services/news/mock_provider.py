@@ -10,7 +10,12 @@ class MockNewsProvider(BaseNewsProvider):
     """Deterministic synthetic economic calendar generator."""
 
     def __init__(self, reference_time: Optional[datetime] = None):
-        self.reference_time = reference_time or datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
+        ref = reference_time or datetime(2026, 8, 28, 12, 0, 0, tzinfo=timezone.utc)
+        if ref.tzinfo is None:
+            ref = ref.replace(tzinfo=timezone.utc)
+        else:
+            ref = ref.astimezone(timezone.utc)
+        self.reference_time = ref.replace(microsecond=0)
 
     async def fetch_events(
         self,
@@ -20,8 +25,6 @@ class MockNewsProvider(BaseNewsProvider):
     ) -> List[NewsEventCreate]:
         """Generate synthetic economic calendar events."""
         base = self.reference_time
-        if base.tzinfo is None:
-            base = base.replace(tzinfo=timezone.utc)
 
         # Standard schedule of realistic major macro events
         event_templates = [

@@ -25,6 +25,7 @@ from app.services.news import (
     BaseNewsProvider,
     ForexFactoryProvider,
     NewsIngestionService,
+    get_news_provider,
 )
 from app.services.paper_trading import PaperTradingService
 from app.services.signals import SignalGenerator
@@ -49,7 +50,7 @@ class AutomatedMarketScanner:
         self.paper_service = paper_service or PaperTradingService()
         self.telegram_client = telegram_client or get_telegram_client()
         self.market_provider = market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
-        self.news_provider = news_provider or ForexFactoryProvider()
+        self.news_provider = news_provider or get_news_provider(getattr(settings, "NEWS_PROVIDER", "forexfactory"))
         self.market_ingestion = market_ingestion
         self.news_ingestion = news_ingestion
         self.formatter = TelegramMessageFormatter()

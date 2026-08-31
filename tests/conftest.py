@@ -10,9 +10,10 @@ from app.models.base import Base
 from app.core.database import get_db
 from app.services.market_data.mock_provider import MockMarketDataProvider
 from app.services.market_data.ingestion import IngestionService
+from app.services.news.mock_provider import MockNewsProvider
 from app.services.telegram.client import MockTelegramClient
 from app.core.config import settings
-from app.api.deps import get_provider, get_telegram_client_dep
+from app.api.deps import get_provider, get_news_provider, get_telegram_client_dep
 from app.services.telegram.scheduler import stop_scanner_scheduler
 from app.main import app
 
@@ -53,6 +54,12 @@ def mock_provider():
 
 
 @pytest.fixture(scope="function")
+def mock_news_provider():
+    """Return a mock economic news provider."""
+    return MockNewsProvider()
+
+
+@pytest.fixture(scope="function")
 def mock_telegram_client():
     """Return a mock Telegram client."""
     return MockTelegramClient()
@@ -65,7 +72,7 @@ def ingestion_service(test_db_session, mock_provider):
 
 
 @pytest.fixture(scope="function")
-def client(test_db_session, mock_provider, mock_telegram_client):
+def client(test_db_session, mock_provider, mock_news_provider, mock_telegram_client):
     """FastAPI TestClient with overridden database, provider, and telegram dependencies."""
     def override_get_db():
         try:
@@ -76,11 +83,15 @@ def client(test_db_session, mock_provider, mock_telegram_client):
     def override_get_provider():
         return mock_provider
 
+    def override_get_news_provider():
+        return mock_news_provider
+
     def override_get_telegram_client():
         return mock_telegram_client
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_provider] = override_get_provider
+    app.dependency_overrides[get_news_provider] = override_get_news_provider
     app.dependency_overrides[get_telegram_client_dep] = override_get_telegram_client
 
     with TestClient(app) as test_client:

@@ -21,6 +21,7 @@ from app.services.news import (
     MockNewsProvider,
     NewsFilterEngine,
     NewsIngestionService,
+    get_news_provider as get_news_provider_instance,
 )
 
 
@@ -66,7 +67,7 @@ def get_indicator_service() -> IndicatorService:
 
 def get_news_provider() -> BaseNewsProvider:
     """Dependency for economic calendar news provider."""
-    return ForexFactoryProvider()
+    return get_news_provider_instance(settings.NEWS_PROVIDER)
 
 
 def get_news_ingestion_service(
