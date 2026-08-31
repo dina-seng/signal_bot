@@ -30,20 +30,11 @@ class NewsIngestionService:
                 skipped_count=0,
             )
 
-<<<<<<< HEAD
-        # Ensure all timestamps in UTC with microseconds stripped
-        for e in events:
-            if e.scheduled_time.tzinfo is None:
-                e.scheduled_time = e.scheduled_time.replace(tzinfo=timezone.utc, microsecond=0)
-            else:
-                e.scheduled_time = e.scheduled_time.astimezone(timezone.utc).replace(microsecond=0)
-=======
         # Ensure all timestamps in UTC and strings normalized
         for e in events:
             e.scheduled_time = normalize_utc_datetime(e.scheduled_time)
             e.currency = e.currency.upper().strip()
             e.event_name = e.event_name.strip()
->>>>>>> 21e941ad997d90ca91056ed5ed23cc52dfdc6f87
 
         min_time = min(e.scheduled_time for e in events)
         max_time = max(e.scheduled_time for e in events)
@@ -56,16 +47,10 @@ class NewsIngestionService:
         existing_models = list(self.db.scalars(stmt).all())
         existing_map = {}
 
-<<<<<<< HEAD
-        for curr, name, sched_t in existing_rows:
-            st = sched_t.replace(tzinfo=timezone.utc, microsecond=0) if sched_t.tzinfo is None else sched_t.astimezone(timezone.utc).replace(microsecond=0)
-            existing_set.add((curr.upper().strip(), name.strip(), st))
-=======
         for m in existing_models:
             st = normalize_utc_datetime(m.scheduled_time)
             key = (m.currency.upper().strip(), m.event_name.strip(), st)
             existing_map[key] = m
->>>>>>> 21e941ad997d90ca91056ed5ed23cc52dfdc6f87
 
         to_insert: List[NewsEvent] = []
         skipped_count = 0
@@ -73,15 +58,8 @@ class NewsIngestionService:
         seen_batch_keys = set()
 
         for e in events:
-<<<<<<< HEAD
-            curr_clean = e.currency.upper().strip()
-            name_clean = e.event_name.strip()
-            key = (curr_clean, name_clean, e.scheduled_time)
-            if key in existing_set:
-=======
             key = (e.currency, e.event_name, e.scheduled_time)
             if key in seen_batch_keys:
->>>>>>> 21e941ad997d90ca91056ed5ed23cc52dfdc6f87
                 skipped_count += 1
                 continue
             seen_batch_keys.add(key)
@@ -107,9 +85,9 @@ class NewsIngestionService:
 
             to_insert.append(
                 NewsEvent(
-                    currency=curr_clean,
-                    event_name=name_clean,
-                    impact=e.impact.value,
+                    currency=e.currency,
+                    event_name=e.event_name,
+                    impact=e.impact.value if hasattr(e.impact, "value") else str(e.impact),
                     scheduled_time=e.scheduled_time,
                     previous=e.previous,
                     forecast=e.forecast,
