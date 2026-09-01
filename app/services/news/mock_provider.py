@@ -17,6 +17,10 @@ class MockNewsProvider(BaseNewsProvider):
             ref = ref.astimezone(timezone.utc)
         self.reference_time = ref.replace(microsecond=0)
 
+    @property
+    def is_live_provider(self) -> bool:
+        return False
+
     async def fetch_events(
         self,
         start_time: Optional[datetime] = None,

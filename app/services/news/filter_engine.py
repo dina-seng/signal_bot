@@ -47,6 +47,7 @@ class NewsFilterEngine:
         before_minutes: Optional[int] = None,
         after_minutes: Optional[int] = None,
         min_impact: str = "HIGH",
+        is_news_unavailable: bool = False,
     ) -> NewsBlackoutCheckResponse:
         """Evaluate blackout status for a symbol against a list of economic news events.
 
@@ -57,6 +58,7 @@ class NewsFilterEngine:
             before_minutes: Pre-news blackout buffer minutes.
             after_minutes: Post-news blackout buffer minutes.
             min_impact: Minimum impact level to trigger blackout ('HIGH' or 'MEDIUM').
+            is_news_unavailable: Whether live economic news feed is unreachable/failed.
 
         Returns:
             NewsBlackoutCheckResponse.
@@ -66,6 +68,23 @@ class NewsFilterEngine:
             ref_time = ref_time.replace(tzinfo=timezone.utc)
         else:
             ref_time = ref_time.astimezone(timezone.utc)
+
+        # Fail-Safe: If news data is unavailable, block new trade generation immediately
+        if is_news_unavailable:
+            return NewsBlackoutCheckResponse(
+                symbol=symbol,
+                checked_time=ref_time,
+                is_blackout=False,
+                trading_allowed=False,
+                is_news_unavailable=True,
+                is_fail_safe=True,
+                calendar_stale=True,
+                reason="NEWS DATA UNAVAILABLE: Live economic calendar could not be verified. Fail-safe active - trading paused until news feed restored.",
+                blackout_events=[],
+                next_event=None,
+                minutes_to_next_event=None,
+                minutes_since_last_event=None,
+            )
 
         b_min = before_minutes if before_minutes is not None else self.before_minutes
         a_min = after_minutes if after_minutes is not None else self.after_minutes
@@ -171,6 +190,9 @@ class NewsFilterEngine:
             is_blackout=is_blackout,
             trading_allowed=trading_allowed,
             reason=reason,
+            is_news_unavailable=False,
+            is_fail_safe=False,
+            calendar_stale=False,
             blackout_events=active_blackout_events,
             next_event=next_event_resp,
             minutes_to_next_event=minutes_to_next,
@@ -185,6 +207,7 @@ class NewsFilterEngine:
         before_minutes: Optional[int] = None,
         after_minutes: Optional[int] = None,
         min_impact: str = "HIGH",
+        fail_safe_on_unavailable: bool = False,
     ) -> NewsBlackoutCheckResponse:
         """Query news events from database within a +/- 24h window and evaluate blackout status."""
         ref_time = target_time or datetime.now(timezone.utc)
@@ -211,6 +234,22 @@ class NewsFilterEngine:
         )
 
         db_events = list(db.scalars(stmt).all())
+
+        if fail_safe_on_unavailable and not db_events:
+            return NewsBlackoutCheckResponse(
+                symbol=symbol,
+                checked_time=ref_time,
+                is_blackout=False,
+                trading_allowed=False,
+                is_news_unavailable=True,
+                is_fail_safe=True,
+                calendar_stale=True,
+                reason="NEWS DATA UNAVAILABLE: Live economic calendar could not be verified. Fail-safe active - trading paused until news feed restored.",
+                blackout_events=[],
+                next_event=None,
+                minutes_to_next_event=None,
+                minutes_since_last_event=None,
+            )
 
         return self.is_trading_allowed(
             symbol=symbol,

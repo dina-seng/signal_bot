@@ -27,3 +27,8 @@ class BaseNewsProvider(ABC):
             List of validated NewsEventCreate objects sorted chronologically.
         """
         pass
+
+    @property
+    def is_live_provider(self) -> bool:
+        """Whether this provider represents a live external market feed."""
+        return True

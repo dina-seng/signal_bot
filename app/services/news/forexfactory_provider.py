@@ -1,5 +1,4 @@
-"""ForexFactory & Live Economic Calendar Provider."""
-
+import hashlib
 from datetime import datetime, timezone
 import httpx
 from typing import List, Optional
@@ -17,6 +16,10 @@ class ForexFactoryProvider(BaseNewsProvider):
     def __init__(self, timeout_seconds: float = 10.0):
         self.timeout_seconds = timeout_seconds
 
+    @property
+    def is_live_provider(self) -> bool:
+        return True
+
     @staticmethod
     def _parse_impact(raw_impact: str) -> NewsImpact:
         """Parse raw impact string to NewsImpact enum."""
@@ -26,6 +29,16 @@ class ForexFactoryProvider(BaseNewsProvider):
         elif "medium" in imp or "orange" in imp:
             return NewsImpact.MEDIUM
         return NewsImpact.LOW
+
+    @staticmethod
+    def generate_fingerprint(currency: str, event_name: str, scheduled_time: datetime) -> str:
+        """Generate deterministic SHA-256 fingerprint for event deduplication."""
+        c = currency.upper().strip()
+        name = event_name.strip().lower()
+        ts = normalize_utc_datetime(scheduled_time)
+        ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
+        payload = f"{c}:{name}:{ts_str}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     async def fetch_events(
         self,
@@ -74,6 +87,7 @@ class ForexFactoryProvider(BaseNewsProvider):
                         if end_time and dt > end_time:
                             continue
 
+                        fp = self.generate_fingerprint(curr, title, dt)
                         events.append(
                             NewsEventCreate(
                                 currency=curr,
@@ -83,6 +97,7 @@ class ForexFactoryProvider(BaseNewsProvider):
                                 previous=item.get("previous"),
                                 forecast=item.get("forecast"),
                                 actual=item.get("actual"),
+                                fingerprint=fp,
                             )
                         )
                     logger.info(f"Successfully fetched {len(events)} economic events from ForexFactory feed.")

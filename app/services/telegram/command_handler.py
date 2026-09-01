@@ -1,6 +1,6 @@
 """Interactive Telegram Bot Commands Processor."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
@@ -21,7 +21,12 @@ from app.services.market_data import (
     get_market_data_provider,
     log_latest_candle,
 )
-from app.services.news import NewsFilterEngine
+from app.services.news import (
+    BaseNewsProvider,
+    NewsFilterEngine,
+    NewsIngestionService,
+    get_news_provider,
+)
 from app.services.paper_trading import PaperTradingService
 from app.services.signals import SignalGenerator
 from app.services.telegram.client import BaseTelegramClient, get_telegram_client
@@ -40,6 +45,8 @@ class TelegramCommandHandler:
         telegram_client: Optional[BaseTelegramClient] = None,
         market_provider: Optional[BaseMarketDataProvider] = None,
         market_ingestion: Optional[IngestionService] = None,
+        news_provider: Optional[BaseNewsProvider] = None,
+        news_ingestion: Optional[NewsIngestionService] = None,
     ):
         self.signal_generator = signal_generator or SignalGenerator()
         self.paper_service = paper_service or PaperTradingService()
@@ -48,6 +55,8 @@ class TelegramCommandHandler:
         self.telegram_client = telegram_client or get_telegram_client()
         self.market_provider = market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
         self.market_ingestion = market_ingestion
+        self.news_provider = news_provider or get_news_provider(settings.NEWS_PROVIDER)
+        self.news_ingestion = news_ingestion
         self.formatter = TelegramMessageFormatter()
 
     def _normalize_symbol(self, raw: str) -> str:
@@ -189,17 +198,36 @@ class TelegramCommandHandler:
         # 4. Economic News Calendar (/news)
         # -------------------------------------------------------------
         elif cmd_name == "/news":
+            # 1. Attempt on-demand refresh from configured news provider
+            live_failed = False
+            if self.news_provider:
+                news_ingest = self.news_ingestion or NewsIngestionService(
+                    provider=self.news_provider, db=db
+                )
+                news_ingest.db = db
+                try:
+                    report = await news_ingest.sync_calendar()
+                    if report.status in ("UNAVAILABLE", "ERROR") or (getattr(self.news_provider, "is_live_provider", False) and report.fetched_count == 0):
+                        live_failed = True
+                except Exception as e:
+                    logger.warning(f"Error syncing economic news in /news command: {e}")
+                    live_failed = True
+
             now = datetime.now(timezone.utc)
             events = list(
                 db.scalars(
                     select(NewsEvent)
-                    .where(NewsEvent.scheduled_time >= now)
+                    .where(NewsEvent.scheduled_time >= (now - timedelta(minutes=15)))
                     .order_by(NewsEvent.scheduled_time.asc())
                     .limit(5)
                 ).all()
             )
             event_resps = [NewsEventResponse.model_validate(e) for e in events]
-            reply = self.formatter.format_economic_news_alert(event_resps)
+
+            if not event_resps and (live_failed or getattr(self.news_provider, "is_live_provider", False)):
+                reply = self.formatter.format_news_unavailable_alert()
+            else:
+                reply = self.formatter.format_economic_news_alert(event_resps)
 
         # -------------------------------------------------------------
         # 5. Virtual Paper Account (/account, /paper)

@@ -255,6 +255,19 @@ class TelegramMessageFormatter:
         return "\n".join(lines)
 
     @classmethod
+    def format_news_unavailable_alert(cls, reason: Optional[str] = None) -> str:
+        """Format structured alert when live economic news feed is unreachable."""
+        lines = [
+            f"⚠️ *NEWS DATA UNAVAILABLE* ⚠️",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"❌ *Live economic calendar feed is currently unreachable.*",
+            f"🛡 *FAIL-SAFE ACTIVATED:* New trade generation is safely paused to protect capital until economic news feed is restored.",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"⚡ _Institutional Capital Protection Rule_",
+        ]
+        return "\n".join(lines)
+
+    @classmethod
     def format_portfolio_summary(cls, acc: VirtualAccountResponse, perf: PaperPortfolioPerformance) -> str:
         """Format virtual account portfolio overview."""
         acc_name = cls.escape_code(acc.name)

@@ -148,12 +148,19 @@ class ConfluenceEngine:
         if staleness.is_stale:
             logger.warning(staleness.message)
 
-        # 3. Check News Blackout (Immediate rejection if active)
-        if news_check and news_check.is_blackout:
+        # 3. Check News Blackout / News Data Unavailable Fail-Safe (Immediate rejection if active)
+        if news_check and (news_check.is_blackout or not news_check.trading_allowed or news_check.is_news_unavailable or news_check.is_fail_safe):
             now_utc = datetime.now(timezone.utc)
+            if news_check.is_blackout:
+                prefix = "NEWS BLACKOUT ACTIVE:"
+            elif news_check.is_news_unavailable or news_check.is_fail_safe:
+                prefix = "NEWS DATA UNAVAILABLE:"
+            else:
+                prefix = "NEWS PROTECTION ACTIVE:"
+
             reasons = [
-                f"NEWS BLACKOUT ACTIVE: {news_check.reason}",
-                "Trading suspended to prevent slippage during high-impact economic releases.",
+                f"{prefix} {news_check.reason}",
+                "Trading suspended to prevent slippage or capital loss during high-impact economic releases or unverified news data.",
             ]
             breakdown = ScoreBreakdown(
                 structure_score=0.0,

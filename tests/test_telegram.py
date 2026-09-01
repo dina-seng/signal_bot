@@ -188,6 +188,9 @@ async def test_mock_telegram_client():
     assert status.total_messages_sent == 1
 
 
+from app.services.news.mock_provider import MockNewsProvider
+
+
 # -------------------------------------------------------------
 # 3. Command Handler Tests
 # -------------------------------------------------------------
@@ -196,7 +199,11 @@ async def test_telegram_command_handler(test_db_session):
     """Verify handling interactive bot commands (/help, /scan, /news, /account)."""
     _seed_candles(test_db_session, symbol="EUR/USD", count=40)
     mock_client = MockTelegramClient()
-    handler = TelegramCommandHandler(telegram_client=mock_client)
+    mock_news = MockNewsProvider(reference_time=datetime.now(timezone.utc))
+    handler = TelegramCommandHandler(
+        telegram_client=mock_client,
+        news_provider=mock_news,
+    )
 
     # 1. /help
     res_help = await handler.handle_command(test_db_session, TelegramCommandRequest(command="/help"))

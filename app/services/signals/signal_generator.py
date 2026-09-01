@@ -263,7 +263,7 @@ class SignalGenerator:
                     setup_score=sig.setup_score,
                     is_actionable=is_act,
                     signal=sig,
-                    blackout_blocked=news_res.is_blackout,
+                    blackout_blocked=news_res.is_blackout or not news_res.trading_allowed or news_res.is_news_unavailable,
                     reasons=sig.reasons,
                 )
             )
