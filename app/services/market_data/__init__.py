@@ -7,6 +7,22 @@ from app.services.market_data.mock_provider import MockMarketDataProvider
 from app.services.market_data.ingestion import IngestionService
 
 
+from app.services.market_data.freshness import (
+    DEFAULT_STALENESS_THRESHOLDS,
+    TIMEFRAME_DELTAS,
+    StalenessCheckResult,
+    check_data_staleness,
+    ensure_utc_datetime,
+    filter_closed_candles,
+    format_candle_log_line,
+    get_latest_closed_candle,
+    get_timeframe_delta,
+    is_candle_closed,
+    is_forex_weekend,
+    log_latest_candle,
+)
+
+
 def get_market_data_provider(provider_name: str = "yfinance") -> BaseMarketDataProvider:
     """Factory to retrieve configured market data provider instance."""
     name = provider_name.lower().strip()
@@ -28,4 +44,16 @@ __all__ = [
     "MockMarketDataProvider",
     "IngestionService",
     "get_market_data_provider",
+    "DEFAULT_STALENESS_THRESHOLDS",
+    "TIMEFRAME_DELTAS",
+    "StalenessCheckResult",
+    "check_data_staleness",
+    "ensure_utc_datetime",
+    "filter_closed_candles",
+    "format_candle_log_line",
+    "get_latest_closed_candle",
+    "get_timeframe_delta",
+    "is_candle_closed",
+    "is_forex_weekend",
+    "log_latest_candle",
 ]

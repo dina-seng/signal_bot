@@ -224,6 +224,7 @@ def get_telegram_bot_service(
             paper_service=paper_service,
             news_filter=news_filter,
             telegram_client=telegram_client,
+            market_provider=market_provider,
         )
         scanner = get_shared_scanner()
         scanner.signal_generator = signal_generator

@@ -13,6 +13,14 @@ from app.schemas.news import NewsEventResponse
 from app.schemas.signal import SignalDirection
 from app.schemas.telegram import TelegramCommandRequest, TelegramCommandResponse
 from app.services.backtesting import BacktestService
+from app.services.market_data import (
+    BaseMarketDataProvider,
+    IngestionService,
+    check_data_staleness,
+    filter_closed_candles,
+    get_market_data_provider,
+    log_latest_candle,
+)
 from app.services.news import NewsFilterEngine
 from app.services.paper_trading import PaperTradingService
 from app.services.signals import SignalGenerator
@@ -30,12 +38,16 @@ class TelegramCommandHandler:
         backtest_service: Optional[BacktestService] = None,
         news_filter: Optional[NewsFilterEngine] = None,
         telegram_client: Optional[BaseTelegramClient] = None,
+        market_provider: Optional[BaseMarketDataProvider] = None,
+        market_ingestion: Optional[IngestionService] = None,
     ):
         self.signal_generator = signal_generator or SignalGenerator()
         self.paper_service = paper_service or PaperTradingService()
         self.backtest_service = backtest_service or BacktestService()
         self.news_filter = news_filter or NewsFilterEngine()
         self.telegram_client = telegram_client or get_telegram_client()
+        self.market_provider = market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
+        self.market_ingestion = market_ingestion
         self.formatter = TelegramMessageFormatter()
 
     def _normalize_symbol(self, raw: str) -> str:
@@ -80,7 +92,21 @@ class TelegramCommandHandler:
                 reply = "⚠️ *Usage:* `/signal <symbol>`\n_Example:_ `/signal EUR/USD` or `/signal XAU/USD`"
             else:
                 sym = self._normalize_symbol(parts[1])
-                c1h = list(
+
+                # 1. Provider <-> DB Synchronization: Refresh fresh candle data from provider
+                if self.market_provider:
+                    ingest_svc = self.market_ingestion or IngestionService(
+                        provider=self.market_provider, db=db
+                    )
+                    ingest_svc.db = db
+                    for tf in ["1h", "4h", "15m"]:
+                        try:
+                            await ingest_svc.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
+                        except Exception as e:
+                            logger.warning(f"Failed to refresh market data for {sym} [{tf}] via provider: {e}")
+
+                # 2. Query and filter for verified closed candles from DB
+                c1h_raw = list(
                     db.scalars(
                         select(Candle)
                         .where(Candle.symbol == sym, Candle.timeframe == "1h")
@@ -88,12 +114,13 @@ class TelegramCommandHandler:
                         .limit(200)
                     ).all()
                 )
-                c1h.reverse()
+                c1h_raw.reverse()
+                c1h = filter_closed_candles(c1h_raw, timeframe="1h")
 
                 if not c1h:
                     reply = f"❌ No candle data found in database for `{sym}`. Ingest data first."
                 else:
-                    c4h = list(
+                    c4h_raw = list(
                         db.scalars(
                             select(Candle)
                             .where(Candle.symbol == sym, Candle.timeframe == "4h")
@@ -101,9 +128,10 @@ class TelegramCommandHandler:
                             .limit(100)
                         ).all()
                     )
-                    c4h.reverse()
+                    c4h_raw.reverse()
+                    c4h = filter_closed_candles(c4h_raw, timeframe="4h")
 
-                    c15m = list(
+                    c15m_raw = list(
                         db.scalars(
                             select(Candle)
                             .where(Candle.symbol == sym, Candle.timeframe == "15m")
@@ -111,7 +139,21 @@ class TelegramCommandHandler:
                             .limit(100)
                         ).all()
                     )
-                    c15m.reverse()
+                    c15m_raw.reverse()
+                    c15m = filter_closed_candles(c15m_raw, timeframe="15m")
+
+                    # 3. Data Staleness Detection & Explicit Latest Candle Logging
+                    staleness = check_data_staleness(c1h, symbol=sym, timeframe="1h")
+                    latest_c1h = c1h[-1]
+                    log_latest_candle(
+                        latest_c1h,
+                        symbol=sym,
+                        timeframe="1h",
+                        context="/signal",
+                        is_fresh=not staleness.is_stale,
+                    )
+                    if staleness.is_stale:
+                        logger.warning(staleness.message)
 
                     news_check = self.news_filter.check_from_db(db=db, symbol=sym, target_time=datetime.now(timezone.utc))
 
@@ -126,6 +168,8 @@ class TelegramCommandHandler:
 
                     if sig.direction in (SignalDirection.BUY, SignalDirection.SELL):
                         reply = self.formatter.format_signal_alert(sig)
+                        if staleness.is_stale:
+                            reply += f"\n\n⚠️ *DATA FRESHNESS WARNING:* Market data is {staleness.age_hours:.1f}h old (last candle: {staleness.latest_candle_time.strftime('%Y-%m-%d %H:%M UTC')})."
                     else:
                         sym_code = self.formatter.escape_code(sig.symbol)
                         reply = (
@@ -138,6 +182,8 @@ class TelegramCommandHandler:
                         )
                         for r in sig.reasons:
                             reply += f"  • {self.formatter.escape_markdown(r)}\n"
+                        if staleness.is_stale:
+                            reply += f"\n⚠️ *Data Freshness:* Last closed candle is from {staleness.latest_candle_time.strftime('%Y-%m-%d %H:%M UTC')} ({staleness.age_hours:.1f}h ago).\n"
 
         # -------------------------------------------------------------
         # 4. Economic News Calendar (/news)

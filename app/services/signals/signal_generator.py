@@ -23,6 +23,12 @@ from app.schemas.signal import (
 )
 from app.services.indicators import IndicatorService
 from app.services.liquidity import LiquidityService
+from app.services.market_data import (
+    check_data_staleness,
+    ensure_utc_datetime,
+    filter_closed_candles,
+    log_latest_candle,
+)
 from app.services.news import NewsFilterEngine
 from app.services.signals.confluence_engine import ConfluenceEngine
 from app.services.signals.risk_manager import RiskManager
@@ -160,8 +166,8 @@ class SignalGenerator:
         now_utc = datetime.now(timezone.utc)
 
         for sym in target_symbols:
-            # Query 1h, 4h, 15m candles from DB
-            c1h = list(
+            # Query 1h, 4h, 15m candles from DB and filter to closed verified candles
+            c1h_raw = list(
                 db.scalars(
                     select(Candle)
                     .where(Candle.symbol == sym, Candle.timeframe == timeframe)
@@ -169,9 +175,10 @@ class SignalGenerator:
                     .limit(200)
                 ).all()
             )
-            c1h.reverse()
+            c1h_raw.reverse()
+            c1h = filter_closed_candles(c1h_raw, timeframe=timeframe)
 
-            c4h = list(
+            c4h_raw = list(
                 db.scalars(
                     select(Candle)
                     .where(Candle.symbol == sym, Candle.timeframe == "4h")
@@ -179,9 +186,10 @@ class SignalGenerator:
                     .limit(100)
                 ).all()
             )
-            c4h.reverse()
+            c4h_raw.reverse()
+            c4h = filter_closed_candles(c4h_raw, timeframe="4h")
 
-            c15m = list(
+            c15m_raw = list(
                 db.scalars(
                     select(Candle)
                     .where(Candle.symbol == sym, Candle.timeframe == "15m")
@@ -189,7 +197,8 @@ class SignalGenerator:
                     .limit(100)
                 ).all()
             )
-            c15m.reverse()
+            c15m_raw.reverse()
+            c15m = filter_closed_candles(c15m_raw, timeframe="15m")
 
             if not c1h:
                 results.append(
@@ -205,6 +214,19 @@ class SignalGenerator:
                     )
                 )
                 continue
+
+            # Check Data Staleness & Explicit Latest Candle Logging for scanned symbol
+            staleness = check_data_staleness(c1h, symbol=sym, timeframe=timeframe)
+            latest_c1h = c1h[-1]
+            log_latest_candle(
+                latest_c1h,
+                symbol=sym,
+                timeframe=timeframe,
+                context="MARKET SCAN",
+                is_fresh=not staleness.is_stale,
+            )
+            if staleness.is_stale:
+                logger.warning(staleness.message)
 
             # Check News Blackout
             news_res = self.news_filter.check_from_db(

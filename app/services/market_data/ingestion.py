@@ -1,38 +1,36 @@
-"""Market data ingestion service with validation, deduplication, and gap detection."""
+"""Market data ingestion service with validation, deduplication, gap detection, and freshness verification."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from app.core.logging import logger
 from app.models.candle import Candle
 from app.schemas.candle import CandleCreate, GapInfo, IngestionReport
 from app.services.market_data.base import BaseMarketDataProvider
+from app.services.market_data.freshness import (
+    TIMEFRAME_DELTAS,
+    check_data_staleness,
+    ensure_utc_datetime,
+    filter_closed_candles,
+    get_latest_closed_candle,
+    get_timeframe_delta,
+    is_forex_weekend,
+    log_latest_candle,
+)
 
 
 class IngestionService:
     """Service for validating, cleaning, deduplicating, and persisting OHLCV candle streams."""
 
-    TIMEFRAME_DELTAS: Dict[str, timedelta] = {
-        "1m": timedelta(minutes=1),
-        "5m": timedelta(minutes=5),
-        "15m": timedelta(minutes=15),
-        "30m": timedelta(minutes=30),
-        "1h": timedelta(hours=1),
-        "4h": timedelta(hours=4),
-        "1d": timedelta(days=1),
-    }
+    TIMEFRAME_DELTAS: Dict[str, timedelta] = TIMEFRAME_DELTAS
 
     def __init__(self, provider: BaseMarketDataProvider, db: Session):
         self.provider = provider
         self.db = db
 
     def get_timeframe_delta(self, timeframe: str) -> timedelta:
-        tf = timeframe.lower()
-        delta = self.TIMEFRAME_DELTAS.get(tf)
-        if not delta:
-            raise ValueError(f"Unknown timeframe '{timeframe}'")
-        return delta
+        return get_timeframe_delta(timeframe)
 
     def clean_and_sort_candles(
         self, candles: List[CandleCreate]
@@ -48,13 +46,8 @@ class IngestionService:
 
         for candle in candles:
             # Ensure timestamp is UTC aware
-            ts = candle.timestamp
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-                candle.timestamp = ts
-            else:
-                ts = ts.astimezone(timezone.utc)
-                candle.timestamp = ts
+            ts = ensure_utc_datetime(candle.timestamp)
+            candle.timestamp = ts
 
             if ts in seen_timestamps:
                 intra_duplicates += 1
@@ -81,8 +74,8 @@ class IngestionService:
         gaps: List[GapInfo] = []
 
         for i in range(len(candles) - 1):
-            curr_ts = candles[i].timestamp
-            next_ts = candles[i + 1].timestamp
+            curr_ts = ensure_utc_datetime(candles[i].timestamp)
+            next_ts = ensure_utc_datetime(candles[i + 1].timestamp)
             diff = next_ts - curr_ts
 
             # If difference is larger than 1.5x expected interval
@@ -149,12 +142,9 @@ class IngestionService:
         existing_ts_set = set(self.db.scalars(stmt).all())
 
         # Normalize existing timestamps to UTC for comparison
-        existing_ts_utc: Set[datetime] = set()
-        for ts in existing_ts_set:
-            if ts.tzinfo is None:
-                existing_ts_utc.add(ts.replace(tzinfo=timezone.utc))
-            else:
-                existing_ts_utc.add(ts.astimezone(timezone.utc))
+        existing_ts_utc: Set[datetime] = {
+            ensure_utc_datetime(ts) for ts in existing_ts_set if ts is not None
+        }
 
         # 4. Filter out DB duplicates and prepare new candle models
         to_insert: List[Candle] = []
@@ -197,6 +187,20 @@ class IngestionService:
             logger.info(
                 f"No new candles to insert for {symbol} [{timeframe}]. All {fetched_count} candles already exist."
             )
+
+        # 6. Explicitly log latest candle and verify staleness
+        if cleaned_candles:
+            latest_c = cleaned_candles[-1]
+            staleness = check_data_staleness(cleaned_candles, symbol=symbol, timeframe=timeframe)
+            log_latest_candle(
+                latest_c,
+                symbol=symbol,
+                timeframe=timeframe,
+                context="INGESTION",
+                is_fresh=not staleness.is_stale,
+            )
+            if staleness.is_stale:
+                logger.warning(staleness.message)
 
         return IngestionReport(
             symbol=symbol,
@@ -244,3 +248,43 @@ class IngestionService:
                 invalid_candles_count=0,
                 gaps_detected=[],
             )
+
+    def get_fresh_candles_from_db(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int = 200,
+        only_closed: bool = True,
+        as_of: Optional[datetime] = None,
+    ) -> List[Candle]:
+        """Query fresh candles from the database, selecting verified closed bars and validating staleness."""
+        ref_time = ensure_utc_datetime(as_of) or datetime.now(timezone.utc)
+        stmt = (
+            select(Candle)
+            .where(Candle.symbol == symbol, Candle.timeframe == timeframe.lower())
+            .order_by(desc(Candle.timestamp))
+            .limit(limit + 5)
+        )
+        records = list(self.db.scalars(stmt).all())
+        records.reverse()
+
+        if only_closed and records:
+            records = filter_closed_candles(records, timeframe=timeframe, as_of=ref_time)
+
+        if len(records) > limit:
+            records = records[-limit:]
+
+        if records:
+            latest = records[-1]
+            staleness = check_data_staleness(records, symbol=symbol, timeframe=timeframe, as_of=ref_time)
+            log_latest_candle(
+                latest,
+                symbol=symbol,
+                timeframe=timeframe,
+                context="DB CANDLE RETRIEVAL",
+                is_fresh=not staleness.is_stale,
+            )
+            if staleness.is_stale:
+                logger.warning(staleness.message)
+
+        return records

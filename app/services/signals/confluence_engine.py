@@ -18,6 +18,12 @@ from app.schemas.signal import (
 from app.services.indicators import IndicatorService
 from app.services.liquidity import LiquidityService
 from app.services.news import NewsFilterEngine
+from app.services.market_data import (
+    check_data_staleness,
+    ensure_utc_datetime,
+    filter_closed_candles,
+    log_latest_candle,
+)
 from app.services.signals.evaluators import (
     ConsensusFilter,
     LiquiditySMCConsensusEvaluator,
@@ -70,7 +76,8 @@ class ConfluenceEngine:
         timestamp: datetime,
     ) -> str:
         """Generate unique SHA-256 fingerprint for deduplication."""
-        ts_str = timestamp.isoformat()
+        ts_utc = ensure_utc_datetime(timestamp) or datetime.now(timezone.utc)
+        ts_str = ts_utc.isoformat()
         payload = f"{symbol}_{timeframe}_{direction.value}_{entry_price:.5f}_{stop_loss:.5f}_{ts_str}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -89,13 +96,18 @@ class ConfluenceEngine:
         """Run all analytical models together on candle datasets and produce a single composite SignalResponse."""
         # 1. Resolve primary and multi-timeframe candle datasets
         if candles_dict:
-            c_prim = candles_dict.get(timeframe) or candles_dict.get("1h") or list(candles_dict.values())[0]
-            c_4h = candles_dict.get("4h") or candles_4h
-            c_15m = candles_dict.get("15m") or candles_15m
+            raw_prim = candles_dict.get(timeframe) or candles_dict.get("1h") or list(candles_dict.values())[0]
+            raw_4h = candles_dict.get("4h") or candles_4h
+            raw_15m = candles_dict.get("15m") or candles_15m
         else:
-            c_prim = candles_primary or []
-            c_4h = candles_4h
-            c_15m = candles_15m
+            raw_prim = candles_primary or []
+            raw_4h = candles_4h
+            raw_15m = candles_15m
+
+        # Filter for verified closed candles
+        c_prim = filter_closed_candles(raw_prim, timeframe=timeframe) if raw_prim else []
+        c_4h = filter_closed_candles(raw_4h, timeframe="4h") if raw_4h else None
+        c_15m = filter_closed_candles(raw_15m, timeframe="15m") if raw_15m else None
 
         if not c_prim:
             now_utc = datetime.now(timezone.utc)
@@ -110,7 +122,7 @@ class ConfluenceEngine:
                 take_profit_2=0.0,
                 risk_reward=0.0,
                 fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
-                reasons=["No candle dataset provided for analysis."],
+                reasons=["No closed verified candle dataset provided for analysis."],
                 status=SignalStatus.ACTIVE,
                 timestamp=now_utc,
                 score_breakdown=ScoreBreakdown(
@@ -123,7 +135,20 @@ class ConfluenceEngine:
                 ),
             )
 
-        # 2. Check News Blackout (Immediate rejection if active)
+        # 2. Check Data Staleness & Explicit Latest Candle Logging
+        staleness = check_data_staleness(c_prim, symbol=symbol, timeframe=timeframe)
+        latest_c = c_prim[-1]
+        log_latest_candle(
+            latest_c,
+            symbol=symbol,
+            timeframe=timeframe,
+            context="SIGNAL EVALUATION",
+            is_fresh=not staleness.is_stale,
+        )
+        if staleness.is_stale:
+            logger.warning(staleness.message)
+
+        # 3. Check News Blackout (Immediate rejection if active)
         if news_check and news_check.is_blackout:
             now_utc = datetime.now(timezone.utc)
             reasons = [

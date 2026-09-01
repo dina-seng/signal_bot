@@ -66,11 +66,15 @@ def get_supported_symbols():
     ]
 
 
+from app.services.market_data import filter_closed_candles
+
+
 @router.get("/{symbol:path}/candles", response_model=List[CandleResponse])
 def get_candles(
     symbol: str,
     timeframe: str = Query("15m", description="Timeframe e.g. 15m, 1h, 4h"),
     limit: int = Query(200, ge=1, le=5000, description="Max candles to retrieve"),
+    only_closed: bool = Query(False, description="Filter for closed candles only"),
     start_time: Optional[datetime] = Query(None, description="Start timestamp UTC"),
     end_time: Optional[datetime] = Query(None, description="End timestamp UTC"),
     db: Session = Depends(get_db),
@@ -96,9 +100,14 @@ def get_candles(
         stmt = stmt.where(Candle.timestamp <= end_time)
 
     # Order descending to get latest limit, then return sorted ascending
-    stmt = stmt.order_by(desc(Candle.timestamp)).limit(limit)
+    stmt = stmt.order_by(desc(Candle.timestamp)).limit(limit + (5 if only_closed else 0))
     records = list(db.scalars(stmt).all())
     records.reverse()
+
+    if only_closed and records:
+        records = filter_closed_candles(records, timeframe=timeframe)
+        if len(records) > limit:
+            records = records[-limit:]
 
     return records
 
