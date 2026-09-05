@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -8,6 +9,8 @@ from app.core.normalization import normalize_utc_datetime
 from app.schemas.news import NewsEventCreate, NewsImpact
 from app.services.news.base import BaseNewsProvider
 
+from app.services.news.mock_provider import MockNewsProvider
+
 
 class ForexFactoryProvider(BaseNewsProvider):
     """Fetches real-time economic calendar events from public JSON feeds."""
@@ -16,6 +19,7 @@ class ForexFactoryProvider(BaseNewsProvider):
 
     def __init__(self, timeout_seconds: float = 10.0):
         self.timeout_seconds = timeout_seconds
+        self.mock_fallback = MockNewsProvider() # ✅ Initialize fallback
 
     @property
     def is_live_provider(self) -> bool:
@@ -58,14 +62,15 @@ class ForexFactoryProvider(BaseNewsProvider):
                         data = response.json()
                         events: List[NewsEventCreate] = []
 
+                        # ✅ FIX: All processing logic is now correctly INSIDE the for loop
                         for item in data:
                             curr = item.get("country", "").upper().strip()
                             title = item.get("title", "").strip()
                             raw_impact = item.get("impact", "")
                             date_str = item.get("date", "")
 
-                        if not title or not date_str:
-                            continue
+                            if not title or not date_str:
+                                continue
 
                             # Parse ISO timestamp
                             try:
@@ -77,14 +82,14 @@ class ForexFactoryProvider(BaseNewsProvider):
                             except Exception:
                                 continue
 
-                        impact = self._parse_impact(raw_impact)
+                            impact = self._parse_impact(raw_impact)
 
-                        if currencies and curr not in currencies:
-                            continue
-                        if start_time and dt < start_time:
-                            continue
-                        if end_time and dt > end_time:
-                            continue
+                            if currencies and curr not in currencies:
+                                continue
+                            if start_time and dt < start_time:
+                                continue
+                            if end_time and dt > end_time:
+                                continue
 
                             events.append(
                                 NewsEventCreate(
@@ -108,7 +113,7 @@ class ForexFactoryProvider(BaseNewsProvider):
                     logger.warning(f"ForexFactory attempt {attempt}/{max_retries} failed: {e}")
                 
                 if attempt < max_retries:
-                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+                    await asyncio.sleep(0.5 * (2 ** (attempt - 1))) # ✅ Now works because asyncio is imported
 
         logger.warning("ForexFactory live feed unreachable after retries. Using deterministic mock fallback.")
         return await self.mock_fallback.fetch_events(
