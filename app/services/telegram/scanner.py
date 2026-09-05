@@ -77,6 +77,8 @@ class AutomatedMarketScanner:
                 self._broadcasted_fingerprints.update(recent_fps)
             except Exception as e:
                 logger.debug(f"Could not preload signal fingerprints from DB: {e}")
+            finally:
+                db.rollback()
 
     def has_active_position(self, db: Session, symbol: str) -> bool:
         """Check if an active or pending paper trade exists in the database for the given symbol."""
@@ -151,6 +153,7 @@ class AutomatedMarketScanner:
                 return True
         except Exception as e:
             logger.debug(f"Could not query Signal for opposing break: {e}")
+            db.rollback()
 
         return False
 
@@ -306,6 +309,7 @@ class AutomatedMarketScanner:
                 logger.info("News check completed")
             except Exception as e:
                 logger.error(f"News ingestion failed: {e}")
+                db.rollback()
 
             # 3. Run Strategy Signal Evaluation across symbols & timeframes
             for tf in target_timeframes:
