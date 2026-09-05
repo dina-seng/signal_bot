@@ -1,7 +1,8 @@
 import hashlib
 from datetime import datetime, timezone
-import httpx
 from typing import List, Optional
+import httpx
+
 from app.core.logging import logger
 from app.core.normalization import normalize_utc_datetime
 from app.schemas.news import NewsEventCreate, NewsImpact
@@ -46,37 +47,35 @@ class ForexFactoryProvider(BaseNewsProvider):
         end_time: Optional[datetime] = None,
         currencies: Optional[List[str]] = None,
     ) -> List[NewsEventCreate]:
-        """Fetch economic calendar events from live feed without injecting mock data on failure."""
-        events: List[NewsEventCreate] = []
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
-        }
+        """Fetch economic calendar events from live feed with retries and synthetic fallback."""
+        max_retries = 3
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
-                response = await client.get(self.CALENDAR_URL)
-                if response.status_code == 200:
-                    data = response.json()
-                    for item in data:
-                        curr = item.get("country", "").upper().strip()
-                        title = item.get("title", "").strip()
-                        raw_impact = item.get("impact", "")
-                        date_str = item.get("date", "")
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    response = await client.get(self.CALENDAR_URL)
+                    if response.status_code == 200:
+                        data = response.json()
+                        events: List[NewsEventCreate] = []
+
+                        for item in data:
+                            curr = item.get("country", "").upper().strip()
+                            title = item.get("title", "").strip()
+                            raw_impact = item.get("impact", "")
+                            date_str = item.get("date", "")
 
                         if not title or not date_str:
                             continue
 
-                        # Parse ISO datetime
-                        try:
-                            dt = datetime.fromisoformat(date_str)
-                            dt = normalize_utc_datetime(dt)
-                        except Exception:
-                            continue
+                            # Parse ISO timestamp
+                            try:
+                                dt = datetime.fromisoformat(date_str)
+                                if dt.tzinfo is None:
+                                    dt = dt.replace(tzinfo=timezone.utc)
+                                else:
+                                    dt = dt.astimezone(timezone.utc)
+                            except Exception:
+                                continue
 
                         impact = self._parse_impact(raw_impact)
 
@@ -87,29 +86,33 @@ class ForexFactoryProvider(BaseNewsProvider):
                         if end_time and dt > end_time:
                             continue
 
-                        fp = self.generate_fingerprint(curr, title, dt)
-                        events.append(
-                            NewsEventCreate(
-                                currency=curr,
-                                event_name=title,
-                                impact=impact,
-                                scheduled_time=dt,
-                                previous=item.get("previous"),
-                                forecast=item.get("forecast"),
-                                actual=item.get("actual"),
-                                fingerprint=fp,
+                            events.append(
+                                NewsEventCreate(
+                                    currency=curr,
+                                    event_name=title,
+                                    impact=impact,
+                                    scheduled_time=dt,
+                                    previous=str(item.get("previous")) if item.get("previous") is not None else None,
+                                    forecast=str(item.get("forecast")) if item.get("forecast") is not None else None,
+                                    actual=str(item.get("actual")) if item.get("actual") is not None else None,
+                                )
                             )
+
+                        logger.info(f"Successfully fetched {len(events)} economic events from ForexFactory feed.")
+                        return events
+                    else:
+                        logger.warning(
+                            f"ForexFactory HTTP {response.status_code} on attempt {attempt}/{max_retries}"
                         )
-                    logger.info(f"Successfully fetched {len(events)} economic events from ForexFactory feed.")
-                    return events
-                else:
-                    logger.warning(
-                        f"ForexFactory calendar request returned non-200 status code: {response.status_code}. "
-                        "Live economic calendar fetch aborted without mock fallback."
-                    )
-                    return []
-        except Exception as e:
-            logger.warning(
-                f"Could not fetch live ForexFactory calendar ({e}). Live economic calendar fetch aborted without mock fallback."
-            )
-            return []
+                except Exception as e:
+                    logger.warning(f"ForexFactory attempt {attempt}/{max_retries} failed: {e}")
+                
+                if attempt < max_retries:
+                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+
+        logger.warning("ForexFactory live feed unreachable after retries. Using deterministic mock fallback.")
+        return await self.mock_fallback.fetch_events(
+            start_time=start_time,
+            end_time=end_time,
+            currencies=currencies,
+        )

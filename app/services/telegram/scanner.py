@@ -291,6 +291,7 @@ class AutomatedMarketScanner:
                         )
                     except Exception as e:
                         logger.error(f"Market data ingestion failed for {sym} [{tf}]: {e}")
+                        db.rollback()
 
             logger.info("Market data ingestion completed")
 
@@ -320,6 +321,7 @@ class AutomatedMarketScanner:
                     )
                 except Exception as e:
                     logger.error(f"Signal analysis failed for timeframe [{tf}]: {e}")
+                    db.rollback()
                     continue
 
                 logger.info(f"Signal analysis completed for timeframe [{tf}]")
