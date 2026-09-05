@@ -2,10 +2,14 @@ services:
   - type: web
     name: trade-api
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    # 1. Install dependencies AND run database migrations
+    buildCommand: |
+      pip install -r requirements.txt
+      alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.8
+      # 2. Ensure this is overridden by your actual Neon URL in the Render Dashboard!
       - key: DATABASE_URL
-        value: sqlite:///./trade.db
+        sync: false # <-- Add this to prevent Render from overwriting your Dashboard secret
