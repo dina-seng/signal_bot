@@ -118,52 +118,33 @@ class RSICalculator:
         swing_highs = [s for s in swings if s.swing_type == SwingType.SWING_HIGH]
         swing_lows = [s for s in swings if s.swing_type == SwingType.SWING_LOW]
 
-        # 1. Highs Divergence (Bearish Reversal / Hidden Bearish Continuation)
+               # 1. Highs Divergence
         for i in range(1, len(swing_highs)):
-            prev_sh = swing_highs[i - 1]
             curr_sh = swing_highs[i]
+            
+            # ✅ FIX: Look back up to 3 previous swings to catch wider divergences
+            start_idx = max(0, i - 3)
+            for j in range(i - 1, start_idx - 1, -1):
+                prev_sh = swing_highs[j]
+                
+                rsi_prev = rsi_series[prev_sh.index] if prev_sh.index < len(rsi_series) else None
+                rsi_curr = rsi_series[curr_sh.index] if curr_sh.index < len(rsi_series) else None
 
-            rsi_prev = rsi_series[prev_sh.index] if prev_sh.index < len(rsi_series) else None
-            rsi_curr = rsi_series[curr_sh.index] if curr_sh.index < len(rsi_series) else None
+                if rsi_prev is None or rsi_curr is None:
+                    continue
 
-            if rsi_prev is None or rsi_curr is None:
-                continue
+                price_diff = curr_sh.price - prev_sh.price
+                rsi_diff = rsi_curr - rsi_prev
 
-            price_diff = curr_sh.price - prev_sh.price
-            rsi_diff = rsi_curr - rsi_prev
-
-            # Regular Bearish Divergence: Price HH, RSI LH
-            if price_diff > 0 and rsi_diff < -min_divergence_delta:
-                divergences.append(
-                    RSIDivergence(
-                        divergence_type=DivergenceType.REGULAR_BEARISH,
-                        start_index=prev_sh.index,
-                        end_index=curr_sh.index,
-                        start_timestamp=prev_sh.timestamp,
-                        end_timestamp=curr_sh.timestamp,
-                        price_start=prev_sh.price,
-                        price_end=curr_sh.price,
-                        rsi_start=round(rsi_prev, 2),
-                        rsi_end=round(rsi_curr, 2),
-                        strength=round(min(1.0, abs(rsi_diff) / 10.0), 2),
-                    )
-                )
-            # Hidden Bearish Divergence: Price LH, RSI HH
-            elif price_diff < 0 and rsi_diff > min_divergence_delta:
-                divergences.append(
-                    RSIDivergence(
-                        divergence_type=DivergenceType.HIDDEN_BEARISH,
-                        start_index=prev_sh.index,
-                        end_index=curr_sh.index,
-                        start_timestamp=prev_sh.timestamp,
-                        end_timestamp=curr_sh.timestamp,
-                        price_start=prev_sh.price,
-                        price_end=curr_sh.price,
-                        rsi_start=round(rsi_prev, 2),
-                        rsi_end=round(rsi_curr, 2),
-                        strength=round(min(1.0, abs(rsi_diff) / 10.0), 2),
-                    )
-                )
+                # Regular Bearish Divergence: Price HH, RSI LH
+                if price_diff > 0 and rsi_diff < -min_divergence_delta:
+                    divergences.append(...)
+                    break # ✅ Stop looking back once we find the most recent valid divergence for this swing
+                
+                # Hidden Bearish Divergence: Price LH, RSI HH
+                elif price_diff < 0 and rsi_diff > min_divergence_delta:
+                    divergences.append(...)
+                    break
 
         # 2. Lows Divergence (Bullish Reversal / Hidden Bullish Continuation)
         for i in range(1, len(swing_lows)):
