@@ -417,6 +417,7 @@ class AutomatedMarketScanner:
                                 logger.error(f"Telegram delivery failed for position update: {e}")
             except Exception as e:
                 logger.error(f"Paper position sync failed: {e}")
+                db.rollback()
 
             # 5. Update internal metrics & logging
             elapsed = round(time.time() - start_time, 2)
