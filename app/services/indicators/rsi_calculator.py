@@ -11,21 +11,11 @@ class RSICalculator:
 
     @staticmethod
     def calculate_rsi_series(closes: Sequence[float], period: int = 14) -> List[Optional[float]]:
-        """Calculate Wilder's Smoothed Relative Strength Index series.
-
-        Args:
-            closes: Sequence of closing prices.
-            period: RSI period (standard: 14).
-
-        Returns:
-            List of RSI values (0 to 100), with None for initial warmup periods.
-        """
         n = len(closes)
         if n <= period or period < 1:
             return [None] * n
 
         rsi_series: List[Optional[float]] = [None] * n
-
         gains = [0.0] * n
         losses = [0.0] * n
 
@@ -36,7 +26,6 @@ class RSICalculator:
             elif diff < 0:
                 losses[i] = -diff
 
-        # Initial Average Gain & Loss via Simple Average of first 'period' deltas
         avg_gain = sum(gains[1 : period + 1]) / period
         avg_loss = sum(losses[1 : period + 1]) / period
 
@@ -46,7 +35,6 @@ class RSICalculator:
             rs = avg_gain / avg_loss
             rsi_series[period] = 100.0 - (100.0 / (1.0 + rs))
 
-        # Wilder's Smoothing for subsequent values
         for i in range(period + 1, n):
             avg_gain = ((avg_gain * (period - 1)) + gains[i]) / period
             avg_loss = ((avg_loss * (period - 1)) + losses[i]) / period
@@ -64,7 +52,6 @@ class RSICalculator:
         closes: Sequence[float],
         period: int = 14,
     ) -> tuple[RSISnapshot, List[Optional[float]]]:
-        """Calculate current RSISnapshot and full RSI series."""
         rsi_series = self.calculate_rsi_series(closes, period=period)
 
         if not rsi_series or rsi_series[-1] is None:
@@ -100,98 +87,117 @@ class RSICalculator:
         rsi_series: List[Optional[float]],
         min_divergence_delta: float = 1.5,
     ) -> List[RSIDivergence]:
-        """Detect Regular and Hidden RSI Divergences by comparing consecutive swing points.
-
-        Args:
-            swings: Labeled SwingPoints.
-            rsi_series: Full calculated RSI series corresponding to candle indices.
-            min_divergence_delta: Minimum RSI difference threshold to confirm divergence.
-
-        Returns:
-            List of detected RSIDivergence objects.
-        """
         if len(swings) < 2 or not rsi_series:
             return []
 
         divergences: List[RSIDivergence] = []
-
         swing_highs = [s for s in swings if s.swing_type == SwingType.SWING_HIGH]
         swing_lows = [s for s in swings if s.swing_type == SwingType.SWING_LOW]
 
-               # 1. Highs Divergence
+        # 1. Highs Divergence
         for i in range(1, len(swing_highs)):
             curr_sh = swing_highs[i]
-            
-            # ✅ FIX: Look back up to 3 previous swings to catch wider divergences
+            rsi_curr = rsi_series[curr_sh.index] if curr_sh.index < len(rsi_series) else None
+            if rsi_curr is None:
+                continue
+
+            # Look back up to 3 previous swings to catch wider divergences
             start_idx = max(0, i - 3)
             for j in range(i - 1, start_idx - 1, -1):
                 prev_sh = swing_highs[j]
-                
                 rsi_prev = rsi_series[prev_sh.index] if prev_sh.index < len(rsi_series) else None
-                rsi_curr = rsi_series[curr_sh.index] if curr_sh.index < len(rsi_series) else None
-
-                if rsi_prev is None or rsi_curr is None:
+                
+                if rsi_prev is None:
                     continue
 
                 price_diff = curr_sh.price - prev_sh.price
                 rsi_diff = rsi_curr - rsi_prev
 
-                # Regular Bearish Divergence: Price HH, RSI LH
                 if price_diff > 0 and rsi_diff < -min_divergence_delta:
-                    divergences.append(...)
-                    break # ✅ Stop looking back once we find the most recent valid divergence for this swing
+                    divergences.append(
+                        RSIDivergence(
+                            divergence_type=DivergenceType.REGULAR_BEARISH,
+                            start_index=prev_sh.index,
+                            end_index=curr_sh.index,
+                            start_timestamp=prev_sh.timestamp,
+                            end_timestamp=curr_sh.timestamp,
+                            price_start=prev_sh.price,
+                            price_end=curr_sh.price,
+                            rsi_start=round(rsi_prev, 2),
+                            rsi_end=round(rsi_curr, 2),
+                            strength=round(min(1.0, abs(rsi_diff) / 10.0), 2),
+                        )
+                    )
+                    break # Stop looking back once we find the most recent valid divergence
                 
-                # Hidden Bearish Divergence: Price LH, RSI HH
                 elif price_diff < 0 and rsi_diff > min_divergence_delta:
-                    divergences.append(...)
+                    divergences.append(
+                        RSIDivergence(
+                            divergence_type=DivergenceType.HIDDEN_BEARISH,
+                            start_index=prev_sh.index,
+                            end_index=curr_sh.index,
+                            start_timestamp=prev_sh.timestamp,
+                            end_timestamp=curr_sh.timestamp,
+                            price_start=prev_sh.price,
+                            price_end=curr_sh.price,
+                            rsi_start=round(rsi_prev, 2),
+                            rsi_end=round(rsi_curr, 2),
+                            strength=round(min(1.0, abs(rsi_diff) / 10.0), 2),
+                        )
+                    )
                     break
 
-        # 2. Lows Divergence (Bullish Reversal / Hidden Bullish Continuation)
+        # 2. Lows Divergence
         for i in range(1, len(swing_lows)):
-            prev_sl = swing_lows[i - 1]
             curr_sl = swing_lows[i]
-
-            rsi_prev = rsi_series[prev_sl.index] if prev_sl.index < len(rsi_series) else None
             rsi_curr = rsi_series[curr_sl.index] if curr_sl.index < len(rsi_series) else None
-
-            if rsi_prev is None or rsi_curr is None:
+            if rsi_curr is None:
                 continue
 
-            price_diff = curr_sl.price - prev_sl.price
-            rsi_diff = rsi_curr - rsi_prev
+            start_idx = max(0, i - 3)
+            for j in range(i - 1, start_idx - 1, -1):
+                prev_sl = swing_lows[j]
+                rsi_prev = rsi_series[prev_sl.index] if prev_sl.index < len(rsi_series) else None
+                
+                if rsi_prev is None:
+                    continue
 
-            # Regular Bullish Divergence: Price LL, RSI HL
-            if price_diff < 0 and rsi_diff > min_divergence_delta:
-                divergences.append(
-                    RSIDivergence(
-                        divergence_type=DivergenceType.REGULAR_BULLISH,
-                        start_index=prev_sl.index,
-                        end_index=curr_sl.index,
-                        start_timestamp=prev_sl.timestamp,
-                        end_timestamp=curr_sl.timestamp,
-                        price_start=prev_sl.price,
-                        price_end=curr_sl.price,
-                        rsi_start=round(rsi_prev, 2),
-                        rsi_end=round(rsi_curr, 2),
-                        strength=round(min(1.0, abs(rsi_diff) / 10.0), 2),
+                price_diff = curr_sl.price - prev_sl.price
+                rsi_diff = rsi_curr - rsi_prev
+
+                if price_diff < 0 and rsi_diff > min_divergence_delta:
+                    divergences.append(
+                        RSIDivergence(
+                            divergence_type=DivergenceType.REGULAR_BULLISH,
+                            start_index=prev_sl.index,
+                            end_index=curr_sl.index,
+                            start_timestamp=prev_sl.timestamp,
+                            end_timestamp=curr_sl.timestamp,
+                            price_start=prev_sl.price,
+                            price_end=curr_sl.price,
+                            rsi_start=round(rsi_prev, 2),
+                            rsi_end=round(rsi_curr, 2),
+                            strength=round(min(1.0, abs(rsi_diff) / 10.0), 2),
+                        )
                     )
-                )
-            # Hidden Bullish Divergence: Price HL, RSI LL
-            elif price_diff > 0 and rsi_diff < -min_divergence_delta:
-                divergences.append(
-                    RSIDivergence(
-                        divergence_type=DivergenceType.HIDDEN_BULLISH,
-                        start_index=prev_sl.index,
-                        end_index=curr_sl.index,
-                        start_timestamp=prev_sl.timestamp,
-                        end_timestamp=curr_sl.timestamp,
-                        price_start=prev_sl.price,
-                        price_end=curr_sl.price,
-                        rsi_start=round(rsi_prev, 2),
-                        rsi_end=round(rsi_curr, 2),
-                        strength=round(min(1.0, abs(rsi_diff) / 10.0), 2),
+                    break
+                
+                elif price_diff > 0 and rsi_diff < -min_divergence_delta:
+                    divergences.append(
+                        RSIDivergence(
+                            divergence_type=DivergenceType.HIDDEN_BULLISH,
+                            start_index=prev_sl.index,
+                            end_index=curr_sl.index,
+                            start_timestamp=prev_sl.timestamp,
+                            end_timestamp=curr_sl.timestamp,
+                            price_start=prev_sl.price,
+                            price_end=curr_sl.price,
+                            rsi_start=round(rsi_prev, 2),
+                            rsi_end=round(rsi_curr, 2),
+                            strength=round(min(1.0, abs(rsi_diff) / 10.0), 2),
+                        )
                     )
-                )
+                    break
 
         divergences.sort(key=lambda d: d.end_timestamp)
         return divergences
