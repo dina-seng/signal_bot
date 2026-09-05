@@ -15,6 +15,8 @@ from app.schemas.signal import (
     SignalResponse,
     SignalStatus,
 )
+from app.schemas.structure import TrendDirection 
+from app.services.structure.ltf_confirmation import LTFConfirmationEngine
 from app.services.indicators import IndicatorService
 from app.services.liquidity import LiquidityService
 from app.services.news import NewsFilterEngine
@@ -59,7 +61,10 @@ class ConfluenceEngine:
         self.risk_manager = risk_manager or RiskManager()
         self.min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
 
+        self.ltf_confirmation_engine = LTFConfirmationEngine()
+
         # Sub-strategy modular evaluators
+
         self.structure_evaluator = StructureConsensusEvaluator()
         self.liquidity_evaluator = LiquiditySMCConsensusEvaluator()
         self.indicator_evaluator = MomentumIndicatorConsensusEvaluator()
@@ -214,6 +219,13 @@ class ConfluenceEngine:
                 },
             )
 
+        ltf_confirmed = True
+        ltf_reason = "N/A (LTF not required)"
+
+        if timeframe in ["1h", "4h"] and c_15m:
+            ltf_confirmed = True  # Will be validated per-direction below
+            ltf_reason = "Pending directional check"
+
         current_price = indicator_analysis.current_price
         latest_ts = indicator_analysis.timestamp
 
@@ -239,21 +251,53 @@ class ConfluenceEngine:
             sell_evals, SignalDirection.SELL
         )
 
+        # ✅ NEW: LTF CONFIRMATION FILTER (Penalize scores if 15m doesn't confirm 1H/4H)
+        final_buy_score = buy_score
+        final_sell_score = sell_score
+
+        if timeframe in ["1h", "4h"] and c_15m:
+            # Check BUY LTF Confirmation
+            is_buy_confirmed, buy_ltf_reason = self.ltf_confirmation_engine.check_ltf_confirmation(
+                primary_timeframe=timeframe,
+                primary_direction=TrendDirection.BULLISH,
+                primary_candles=c_prim,
+                ltf_candles=c_15m,
+                max_bars_ago=5,
+            )
+            if not is_buy_confirmed:
+                final_buy_score = buy_score * 0.3  # Penalize by 70%
+                buy_reasons.append(f"⚠️ LTF Confirmation Missing (BUY): {buy_ltf_reason}")
+                logger.info(f"LTF confirmation failed for BUY {symbol} [{timeframe}]: {buy_ltf_reason}")
+
+            # Check SELL LTF Confirmation
+            is_sell_confirmed, sell_ltf_reason = self.ltf_confirmation_engine.check_ltf_confirmation(
+                primary_timeframe=timeframe,
+                primary_direction=TrendDirection.BEARISH,
+                primary_candles=c_prim,
+                ltf_candles=c_15m,
+                max_bars_ago=5,
+            )
+            if not is_sell_confirmed:
+                final_sell_score = sell_score * 0.3  # Penalize by 70%
+                sell_reasons.append(f"⚠️ LTF Confirmation Missing (SELL): {sell_ltf_reason}")
+                logger.info(f"LTF confirmation failed for SELL {symbol} [{timeframe}]: {sell_ltf_reason}")
+
         # 5. Determine Composite Direction & Filter Directional Conflict
-        if buy_score >= sell_score and buy_score >= self.min_score_threshold and not buy_fatal:
+        # Note: We now use final_buy_score and final_sell_score
+        if final_buy_score >= final_sell_score and final_buy_score >= self.min_score_threshold and not buy_fatal:
             direction = SignalDirection.BUY
-            total_score = buy_score
+            total_score = final_buy_score
             breakdown = buy_breakdown
             reasons = buy_reasons
-        elif sell_score > buy_score and sell_score >= self.min_score_threshold and not sell_fatal:
+        elif final_sell_score > final_buy_score and final_sell_score >= self.min_score_threshold and not sell_fatal:
             direction = SignalDirection.SELL
-            total_score = sell_score
+            total_score = final_sell_score
             breakdown = sell_breakdown
             reasons = sell_reasons
         else:
             direction = SignalDirection.WAIT
-            total_score = max(buy_score, sell_score)
-            breakdown = buy_breakdown if buy_score >= sell_score else sell_breakdown
+            total_score = max(final_buy_score, final_sell_score)
+            breakdown = buy_breakdown if final_buy_score >= final_sell_score else sell_breakdown
             
             conflict_note = ""
             if buy_fatal or sell_fatal:
@@ -265,11 +309,10 @@ class ConfluenceEngine:
                 f"Technical Bias: {indicator_analysis.confluence_bias} (Score: {indicator_analysis.confluence_score:+.0f})",
             ]
             # Include best catalysts as context
-            best_catalysts = buy_reasons if buy_score >= sell_score else sell_reasons
+            best_catalysts = buy_reasons if final_buy_score >= final_sell_score else sell_reasons
             for c in best_catalysts[:3]:
                 if not c.startswith("MARKET BIAS"):
                     reasons.append(f"Observation: {c}")
-
         # 6. Risk Management & SMC Geometric Levels
         risk_params: Optional[RiskParameters] = None
         if direction in (SignalDirection.BUY, SignalDirection.SELL):
