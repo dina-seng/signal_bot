@@ -57,7 +57,9 @@ class SupportResistanceDetector:
 
         for i in range(1, len(sorted_by_price)):
             s = sorted_by_price[i]
-            ref_price = current_cluster[0].price
+            # ✅ FIX: Compare to the LAST added element in the cluster, not the first.
+            # This creates a continuous chain of tolerance, preventing artificial fragmentation.
+            ref_price = current_cluster[-1].price 
             rel_diff = abs(s.price - ref_price) / ref_price
 
             if rel_diff <= (tolerance_percent / 100.0):
@@ -70,7 +72,6 @@ class SupportResistanceDetector:
             clusters.append(current_cluster)
 
         return clusters
-
     def detect_sr_zones_and_pools(
         self,
         candles: Sequence[Union[CandleBase, Any]],

@@ -94,7 +94,7 @@ class LiquiditySweepDetector:
                 elif sw.swing_type == SwingType.SWING_LOW:
                     active_lows.append(sw)
 
-            # 1. Check for Buy-Side Liquidity Sweep (BSL) on active swing highs
+                       # 1. Check for Buy-Side Liquidity Sweep (BSL) on active swing highs
             for sh in list(active_highs):
                 if i <= sh.index:
                     continue
@@ -104,11 +104,11 @@ class LiquiditySweepDetector:
                     active_highs.remove(sh)
                     continue
 
-                # Condition: Price reached above swing high (h > sh.price)
-                # BUT closed back below or at the swing high (c <= sh.price)
-                if h > sh.price and c <= sh.price:
+                # ✅ FIX: Use strict inequality (c < sh.price) to ensure true rejection, not a doji test
+                if h > sh.price and c < sh.price:
                     if sh.index in swept_high_indices:
                         continue
+                    
                     upper_wick = h - max(o, c)
                     wick_ratio = round(upper_wick / candle_range, 2)
 
@@ -139,11 +139,11 @@ class LiquiditySweepDetector:
                     active_lows.remove(sl)
                     continue
 
-                # Condition: Price dipped below swing low (l < sl.price)
-                # BUT closed back above or at the swing low (c >= sl.price)
-                if l < sl.price and c >= sl.price:
+                # ✅ FIX: Use strict inequality (c > sl.price) to ensure true rejection
+                if l < sl.price and c > sl.price:
                     if sl.index in swept_low_indices:
                         continue
+                    
                     lower_wick = min(o, c) - l
                     wick_ratio = round(lower_wick / candle_range, 2)
 
