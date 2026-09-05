@@ -90,6 +90,54 @@ class BOSCHOCHDetector:
                 elif sw.swing_type == SwingType.SWING_LOW:
                     active_lows.append(sw)
 
+            # ✅ FIX: Only check against the MOST RECENT active swing high to prevent flooding
+            if active_highs:
+                sh = active_highs[-1] # Get the latest swing high
+                if i > sh.index and c > sh.price:
+                    if sh.index not in broken_high_indices:
+                        broken_high_indices.add(sh.index)
+                        active_highs.pop() # Remove it since it's broken
+
+                        penetration = c - sh.price
+                        displacement = round(min(1.0, max(0.1, penetration / candle_range)), 2)
+
+                        is_bos = (sh.structure_label == StructureLabel.HH) or (
+                            sh.structure_label != StructureLabel.LH and current_trend == TrendDirection.BULLISH
+                        )
+
+                        event_type = BOSCHOCHType.BULLISH_BOS if is_bos else BOSCHOCHType.BULLISH_CHOCH
+                        breakout = BreakoutEvent(
+                            index=i, timestamp=ts, event_type=event_type, breakout_price=c,
+                            broken_swing_price=sh.price, broken_swing_index=sh.index,
+                            broken_swing_timestamp=sh.timestamp, broken_swing_label=sh.structure_label,
+                            displacement_strength=displacement,
+                        )
+                        (bos_events if is_bos else choch_events).append(breakout)
+
+            # ✅ FIX: Only check against the MOST RECENT active swing low to prevent flooding
+            if active_lows:
+                sl = active_lows[-1] # Get the latest swing low
+                if i > sl.index and c < sl.price:
+                    if sl.index not in broken_low_indices:
+                        broken_low_indices.add(sl.index)
+                        active_lows.pop() # Remove it since it's broken
+
+                        penetration = sl.price - c
+                        displacement = round(min(1.0, max(0.1, penetration / candle_range)), 2)
+
+                        is_bos = (sl.structure_label == StructureLabel.LL) or (
+                            sl.structure_label != StructureLabel.HL and current_trend == TrendDirection.BEARISH
+                        )
+
+                        event_type = BOSCHOCHType.BEARISH_BOS if is_bos else BOSCHOCHType.BEARISH_CHOCH
+                        breakout = BreakoutEvent(
+                            index=i, timestamp=ts, event_type=event_type, breakout_price=c,
+                            broken_swing_price=sl.price, broken_swing_index=sl.index,
+                            broken_swing_timestamp=sl.timestamp, broken_swing_label=sl.structure_label,
+                            displacement_strength=displacement,
+                        )
+                        (bos_events if is_bos else choch_events).append(breakout)
+
             # 1. Check for Bullish Breakout above active swing highs
             for sh in list(active_highs):
                 if i <= sh.index:

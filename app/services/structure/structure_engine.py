@@ -149,17 +149,16 @@ class StructureEngine:
         sh_label = last_sh.structure_label
         sl_label = last_sl.structure_label
 
-        is_latest_bullish = (sh_label == StructureLabel.HH and sl_label == StructureLabel.HL)
-        is_latest_bearish = (sh_label == StructureLabel.LH and sl_label == StructureLabel.LL)
-
+        is_latest_bullish = (sh_label == StructureLabel.HH and sl_label in (StructureLabel.HL, StructureLabel.EL))
+        is_latest_bearish = (sh_label in (StructureLabel.LH, StructureLabel.EH) and sl_label == StructureLabel.LL)
         # Check for partial initialization (e.g. only 1 previous swing available)
-        if sh_label == StructureLabel.HH and sl_label == StructureLabel.UNCERTAIN:
+        if sh_label == StructureLabel.HH and sl_label in (StructureLabel.UNCERTAIN, StructureLabel.EL):
             is_latest_bullish = True
-        elif sh_label == StructureLabel.UNCERTAIN and sl_label == StructureLabel.HL:
+        elif sh_label in (StructureLabel.UNCERTAIN, StructureLabel.EH) and sl_label == StructureLabel.HL:
             is_latest_bullish = True
-        elif sh_label == StructureLabel.LH and sl_label == StructureLabel.UNCERTAIN:
+        elif sh_label == StructureLabel.LH and sl_label in (StructureLabel.UNCERTAIN, StructureLabel.EH):
             is_latest_bearish = True
-        elif sh_label == StructureLabel.UNCERTAIN and sl_label == StructureLabel.LL:
+        elif sh_label in (StructureLabel.UNCERTAIN, StructureLabel.EL) and sl_label == StructureLabel.LL:
             is_latest_bearish = True
 
         if is_latest_bullish and not is_latest_bearish:
