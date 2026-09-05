@@ -209,7 +209,7 @@ class ConfluenceEngine:
                 symbol=symbol,
                 timeframe_candles={
                     "4h": c_4h,
-                    "1h": c_prim if timeframe == "1h" else c_4h,
+                    timeframe: c_prim,
                     "15m": c_15m,
                 },
             )
