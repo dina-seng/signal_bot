@@ -250,7 +250,7 @@ class TelegramCommandHandler:
                     f"━━━━━━━━━━━━━━━━━━━━",
                 ]
                 for p in positions:
-                    dir_icon = "🟢 BUY" if p.direction == SignalDirection.BUY else "🔴 SELL"
+                    dir_icon = "🟢 BUY" if p.direction == SignalDirection.BUY else " SELL"
                     pnl_str = f"+${p.unrealized_pnl:,.2f}" if p.unrealized_pnl >= 0 else f"-${abs(p.unrealized_pnl):,.2f}"
                     lines.append(
                         f"• *{self.formatter.escape_markdown(p.symbol)}* ({dir_icon} `{p.remaining_position_size} Lots`)\n"
@@ -269,15 +269,15 @@ class TelegramCommandHandler:
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"💵 *Current Balance:* `${perf.current_balance:,.2f}`\n"
                 f"📈 *Total Return:* `{perf.total_return_pct:>+6.2f}%`\n"
-                f"📊 *Total Trades:* `{perf.total_trades}` ({perf.winning_trades}W / {perf.losing_trades}L)\n"
-                f"🎯 *Win Rate:* `{perf.win_rate:.1f}%`\n"
+                f" *Total Trades:* `{perf.total_trades}` ({perf.winning_trades}W / {perf.losing_trades}L)\n"
+                f" *Win Rate:* `{perf.win_rate:.1f}%`\n"
                 f"💰 *Profit Factor:* `{perf.profit_factor:.2f}`\n"
                 f"💵 *Average Win:* `${perf.average_win:,.2f}`\n"
                 f"🛑 *Average Loss:* `${perf.average_loss:,.2f}`\n"
                 f"━━━━━━━━━━━━━━━━━━━━"
             )
 
-              # -------------------------------------------------------------
+        # -------------------------------------------------------------
         # 8. Quick Strategy Backtest (/backtest <symbol>)
         # -------------------------------------------------------------
         elif cmd_name == "/backtest":
@@ -300,19 +300,19 @@ class TelegramCommandHandler:
                 m = bt_res.metrics
                 sym_escaped = self.formatter.escape_markdown(sym)
                 reply = (
-                    f" *HISTORICAL STRATEGY BACKTEST: {sym_escaped} [1h]* 📈\n"
+                    f"📈 *HISTORICAL STRATEGY BACKTEST: {sym_escaped} [1h]* 📈\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📊 *Total Trades:* `{m.total_trades}` ({m.winning_trades}W / {m.losing_trades}L)\n"
                     f"🎯 *Win Rate:* `{m.win_rate:.1f}%`\n"
                     f"💰 *Profit Factor:* `{m.profit_factor:.2f}`\n"
-                    f"💵 *Net PnL:* `${m.total_pnl:>+,.2f}` (`{m.total_pnl_percent:>+6.2f}%`)\n"
+                    f" *Net PnL:* `${m.total_pnl:>+,.2f}` (`{m.total_pnl_percent:>+6.2f}%`)\n"
                     f"📉 *Max Drawdown:* `{m.max_drawdown_pct:.2f}%` (`${m.max_drawdown_usd:,.2f}`)\n"
                     f"⭐ *Sharpe Ratio:* `{m.sharpe_ratio:.2f}` | *Calmar:* `{m.calmar_ratio:.2f}`\n"
                     f"━━━━━━━━━━━━━━━━━━━━"
                 )
 
         # -------------------------------------------------------------
-        # 9. Force Fresh Data Sync (/sync)  <-- MUST BE HERE
+        # 9. Force Fresh Data Sync (/sync)
         # -------------------------------------------------------------
         elif cmd_name == "/sync":
             reply = "🔄 *FORCING FRESH DATA SYNC...*\n━━━━━━━━━━━━━━━━━━━━\n"
@@ -346,7 +346,7 @@ class TelegramCommandHandler:
             raw_escaped = self.formatter.escape_code(raw_cmd)
             reply = f"❓ Unknown command `{raw_escaped}`. Type `/help` for available options."
 
-        # Send response to chat if requested
+
         if request.chat_id:
             await self.telegram_client.send_message(text=reply, chat_id=request.chat_id)
 
