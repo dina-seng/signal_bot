@@ -277,7 +277,7 @@ class TelegramCommandHandler:
                 f"━━━━━━━━━━━━━━━━━━━━"
             )
 
-        # -------------------------------------------------------------
+              # -------------------------------------------------------------
         # 8. Quick Strategy Backtest (/backtest <symbol>)
         # -------------------------------------------------------------
         elif cmd_name == "/backtest":
@@ -300,7 +300,7 @@ class TelegramCommandHandler:
                 m = bt_res.metrics
                 sym_escaped = self.formatter.escape_markdown(sym)
                 reply = (
-                    f"📈 *HISTORICAL STRATEGY BACKTEST: {sym_escaped} [1h]* 📈\n"
+                    f" *HISTORICAL STRATEGY BACKTEST: {sym_escaped} [1h]* 📈\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"📊 *Total Trades:* `{m.total_trades}` ({m.winning_trades}W / {m.losing_trades}L)\n"
                     f"🎯 *Win Rate:* `{m.win_rate:.1f}%`\n"
@@ -310,10 +310,13 @@ class TelegramCommandHandler:
                     f"⭐ *Sharpe Ratio:* `{m.sharpe_ratio:.2f}` | *Calmar:* `{m.calmar_ratio:.2f}`\n"
                     f"━━━━━━━━━━━━━━━━━━━━"
                 )
+
+        # -------------------------------------------------------------
+        # 9. Force Fresh Data Sync (/sync)  <-- MUST BE HERE
+        # -------------------------------------------------------------
         elif cmd_name == "/sync":
             reply = "🔄 *FORCING FRESH DATA SYNC...*\n━━━━━━━━━━━━━━━━━━━━\n"
             
-            # Initialize services
             provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
             ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
             ingest_svc.db = db
@@ -336,7 +339,9 @@ class TelegramCommandHandler:
             reply += "━━━━━━━━━━━━━━━━━━━━\n"
             reply += "_Database updated. Staleness blocks cleared. Ready to scan!_"
 
-
+        # -------------------------------------------------------------
+        # 10. Fallback for Unknown Commands (MUST BE LAST)
+        # -------------------------------------------------------------
         else:
             raw_escaped = self.formatter.escape_code(raw_cmd)
             reply = f"❓ Unknown command `{raw_escaped}`. Type `/help` for available options."
