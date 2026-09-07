@@ -64,7 +64,6 @@ class ConfluenceEngine:
         self.ltf_confirmation_engine = LTFConfirmationEngine()
 
         # Sub-strategy modular evaluators
-
         self.structure_evaluator = StructureConsensusEvaluator()
         self.liquidity_evaluator = LiquiditySMCConsensusEvaluator()
         self.indicator_evaluator = MomentumIndicatorConsensusEvaluator()
@@ -150,6 +149,37 @@ class ConfluenceEngine:
             context="SIGNAL EVALUATION",
             is_fresh=not staleness.is_stale,
         )
+        
+        # ✅ NEW HARD BLOCK: Refuse to analyze if data is too old
+        # For 1H/4H charts, anything over 2 hours old is unacceptable. 
+        # For 15m/30m, anything over 1 hour old is unacceptable.
+        max_allowed_age = 2.0 if timeframe in ["1h", "4h"] else 1.0
+        
+        if staleness.is_stale and staleness.age_hours > max_allowed_age:
+            now_utc = datetime.now(timezone.utc)
+            return SignalResponse(
+                symbol=symbol,
+                timeframe=timeframe,
+                direction=SignalDirection.WAIT,
+                setup_score=0.0,
+                entry_price=0.0,
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                reasons=[
+                    f"🚫 DATA TOO STALE: Last closed candle is {staleness.age_hours:.1f} hours old.",
+                    "Analysis aborted to prevent trading on outdated market conditions. Please sync fresh data."
+                ],
+                status=SignalStatus.ACTIVE,
+                timestamp=now_utc,
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0, liquidity_score=0.0, indicators_score=0.0,
+                    price_action_score=0.0, total_score=0.0, is_qualified=False,
+                ),
+            )
+
         if staleness.is_stale:
             logger.warning(staleness.message)
 
@@ -192,7 +222,7 @@ class ConfluenceEngine:
                 score_breakdown=breakdown,
             )
 
-        # 3. Concurrent Multi-Strategy Analytical Pipeline
+        # 4. Concurrent Multi-Strategy Analytical Pipeline
         # Sub-Module A: SMC Advanced Structure & Breakouts
         structure_analysis = self.liquidity_service.analyze_liquidity_and_structure(
             candles=c_prim,
@@ -219,17 +249,10 @@ class ConfluenceEngine:
                 },
             )
 
-        ltf_confirmed = True
-        ltf_reason = "N/A (LTF not required)"
-
-        if timeframe in ["1h", "4h"] and c_15m:
-            ltf_confirmed = True  # Will be validated per-direction below
-            ltf_reason = "Pending directional check"
-
         current_price = indicator_analysis.current_price
         latest_ts = indicator_analysis.timestamp
 
-        # 4. Multi-Pillar Sub-Evaluations for BUY
+        # 5. Multi-Pillar Sub-Evaluations for BUY
         buy_evals = {
             "structure": self.structure_evaluator.evaluate(SignalDirection.BUY, structure_analysis, mtf_analysis),
             "liquidity": self.liquidity_evaluator.evaluate(SignalDirection.BUY, structure_analysis, current_price),
@@ -251,7 +274,7 @@ class ConfluenceEngine:
             sell_evals, SignalDirection.SELL
         )
 
-        # ✅ NEW: LTF CONFIRMATION FILTER (Penalize scores if 15m doesn't confirm 1H/4H)
+        # ✅ LTF CONFIRMATION FILTER (Penalize scores if 15m doesn't confirm 1H/4H)
         final_buy_score = buy_score
         final_sell_score = sell_score
 
@@ -282,8 +305,7 @@ class ConfluenceEngine:
                 sell_reasons.append(f"⚠️ LTF Confirmation Missing (SELL): {sell_ltf_reason}")
                 logger.info(f"LTF confirmation failed for SELL {symbol} [{timeframe}]: {sell_ltf_reason}")
 
-        # 5. Determine Composite Direction & Filter Directional Conflict
-        # Note: We now use final_buy_score and final_sell_score
+        # 6. Determine Composite Direction & Filter Directional Conflict
         if final_buy_score >= final_sell_score and final_buy_score >= self.min_score_threshold and not buy_fatal:
             direction = SignalDirection.BUY
             total_score = final_buy_score
@@ -313,7 +335,8 @@ class ConfluenceEngine:
             for c in best_catalysts[:3]:
                 if not c.startswith("MARKET BIAS"):
                     reasons.append(f"Observation: {c}")
-        # 6. Risk Management & SMC Geometric Levels
+
+        # 7. Risk Management & SMC Geometric Levels
         risk_params: Optional[RiskParameters] = None
         if direction in (SignalDirection.BUY, SignalDirection.SELL):
             supp_low = structure_analysis.base_structure.key_support
