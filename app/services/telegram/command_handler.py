@@ -34,7 +34,7 @@ from app.services.telegram.message_formatter import TelegramMessageFormatter
 
 
 class TelegramCommandHandler:
-    """Handles incoming bot commands (/scan, /signal, /news, /account, /positions, /performance, /help)."""
+    """Handles incoming bot commands (/scan, /signal, /news, /account, /positions, /performance, /help, /sync)."""
 
     def __init__(
         self,
@@ -313,12 +313,12 @@ class TelegramCommandHandler:
         elif cmd_name == "/sync":
             reply = "🔄 *FORCING FRESH DATA SYNC...*\n━━━━━━━━━━━━━━━━━━━━\n"
             
+            # Initialize services
             provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
             ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
             ingest_svc.db = db
 
             synced_count = 0
-            # We sync the timeframes you are currently using
             target_timeframes = ["15m", "30m", "1h"] 
 
             for sym in settings.SUPPORTED_SYMBOLS:
@@ -334,7 +334,8 @@ class TelegramCommandHandler:
             reply += f"⏱ *Timeframes:* {', '.join(target_timeframes)}\n"
             reply += f"🔄 *Total API Fetches:* {synced_count}\n"
             reply += "━━━━━━━━━━━━━━━━━━━━\n"
-            reply += " _Database updated. Staleness blocks cleared. Ready to scan!_"
+            reply += "_Database updated. Staleness blocks cleared. Ready to scan!_"
+
 
         else:
             raw_escaped = self.formatter.escape_code(raw_cmd)
