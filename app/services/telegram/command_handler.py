@@ -310,6 +310,31 @@ class TelegramCommandHandler:
                     f"⭐ *Sharpe Ratio:* `{m.sharpe_ratio:.2f}` | *Calmar:* `{m.calmar_ratio:.2f}`\n"
                     f"━━━━━━━━━━━━━━━━━━━━"
                 )
+        elif cmd_name == "/sync":
+            reply = "🔄 *FORCING FRESH DATA SYNC...*\n━━━━━━━━━━━━━━━━━━━━\n"
+            
+            provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
+            ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
+            ingest_svc.db = db
+
+            synced_count = 0
+            # We sync the timeframes you are currently using
+            target_timeframes = ["15m", "30m", "1h"] 
+
+            for sym in settings.SUPPORTED_SYMBOLS:
+                for tf in target_timeframes:
+                    try:
+                        await ingest_svc.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
+                        synced_count += 1
+                    except Exception as e:
+                        logger.error(f"Manual sync failed for {sym} [{tf}]: {e}")
+
+            reply += f"✅ *Sync Complete!*\n"
+            reply += f"📊 *Pairs Synced:* {len(settings.SUPPORTED_SYMBOLS)}\n"
+            reply += f"⏱ *Timeframes:* {', '.join(target_timeframes)}\n"
+            reply += f"🔄 *Total API Fetches:* {synced_count}\n"
+            reply += "━━━━━━━━━━━━━━━━━━━━\n"
+            reply += " _Database updated. Staleness blocks cleared. Ready to scan!_"
 
         else:
             raw_escaped = self.formatter.escape_code(raw_cmd)
