@@ -3,13 +3,24 @@
 *.py[cod]
 *$py.class
 .pytest_cache/
+server/.pytest_cache/
 
 # Databases
 *.db
 *.sqlite3
+server/trade.db
 
 # Environment Variables
 .env
 .env.local
 .env.*.local
 *.env
+server/.env
+server/.env.local
+server/.env.*.local
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
