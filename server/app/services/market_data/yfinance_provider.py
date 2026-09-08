@@ -18,11 +18,11 @@ class YahooFinanceProvider(BaseMarketDataProvider):
         "EUR/USD": "EURUSD=X",
         "GBP/USD": "GBPUSD=X",
         "USD/JPY": "JPY=X",
-        "XAU/USD": "GC=F",
+        "XAU/USD": "XAUUSD=X",
         "EURUSD": "EURUSD=X",
         "GBPUSD": "GBPUSD=X",
         "USDJPY": "JPY=X",
-        "XAUUSD": "GC=F",
+        "XAUUSD": "XAUUSD=X",
     }
 
     # Timeframe mapping to yfinance intervals
@@ -32,7 +32,7 @@ class YahooFinanceProvider(BaseMarketDataProvider):
         "15m": "15m",
         "30m": "30m",
         "1h": "1h",
-        "4h": "1h",  # Will resample from 1h
+        "4h": "1h",  
         "1d": "1d",
     }
 

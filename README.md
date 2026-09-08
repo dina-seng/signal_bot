@@ -1,3 +1,32 @@
+<<<<<<< HEAD
+# Trade Monorepo
+
+Welcome to the Trade project repository.
+
+## 📂 Repository Structure
+
+- **[`server/`](./server)**: The core backend service built with Python and FastAPI for market analysis, Smart Money Concepts (SMC), indicators, backtesting, paper trading, and Telegram signal dispatching.
+  - Detailed documentation: [Server README](./server/README.md)
+  - Project architecture: [Server Project Structure](./server/PROJECT_STRUCTURE.md)
+  - Deployment instructions: [Server Deployment Guide](./server/DEPLOYMENT_GUIDE.md)
+- **[`client/`](./client)**: "QuantView" Algorithmic Trading Dashboard built with React, TypeScript, Tailwind CSS, Recharts, and Lucide React.
+  - High-performance Bloomberg terminal dark theme (#0a0a0f / #12121a)
+  - Real-time 10s polling, Signal Matrix with per-pair alert toggles, Telegram alert configuration, active positions, interactive charts, and economic calendar risk monitor.
+
+## 🚀 Getting Started with the Backend Service
+
+1. Navigate to the server folder:
+   ```bash
+   cd server
+   ```
+
+2. Create and activate a virtual environment (optional but recommended):
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Linux/macOS
+   .venv\Scripts\activate     # On Windows
+   ```
+=======
 # Project Structure: Forex Market Analysis & Telegram Signal Bot
 
 A production-ready Forex market analysis, technical/SMC analysis, risk management, backtesting, and Telegram signal generation system built with Python and FastAPI.
@@ -340,9 +369,47 @@ Pydantic schemas ensuring request validation and JSON serialization across all R
   - `paper.py` (`/api/v1/paper`)
   - `backtest.py` (`/api/v1/backtest`)
   - `telegram.py` (`/api/v1/telegram`)
+>>>>>>> b824e91a8970415ca477e4fea136db60741e4bf8
 
----
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
+<<<<<<< HEAD
+4. Run database setup / start the API:
+   ```bash
+   uvicorn app.main:app --reload --port 8000
+   ```
+
+5. Run test suite:
+   ```bash
+   python -m pytest tests/
+   ```
+
+## 💻 Getting Started with the Client (QuantView)
+
+1. Navigate to the client folder:
+   ```bash
+   cd client
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+4. Build for production:
+   ```bash
+   npm run build
+   ```
+
+=======
 ### 7. `scripts/` (Benchmarking & Diagnostics)
 - Verification scripts (`verify_*.py`) for all milestones from data pipeline to backtesting and Telegram.
 - Strategy benchmarking and diagnostic tools (`run_baseline_benchmark.py`, `diagnose_strategy.py`, `validate_oos.py`, `inspect_trades.py`).
@@ -358,3 +425,4 @@ Over 25 test modules ensuring full coverage of:
 - Signal scoring, dynamic SL/TP calculation, and news blackout enforcement.
 - Paper trading position tracking and backtesting metrics calculation.
 - REST API endpoint contracts and Telegram message formatting.
+>>>>>>> b824e91a8970415ca477e4fea136db60741e4bf8

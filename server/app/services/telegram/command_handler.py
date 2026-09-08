@@ -346,7 +346,7 @@ class TelegramCommandHandler:
             raw_escaped = self.formatter.escape_code(raw_cmd)
             reply = f"❓ Unknown command `{raw_escaped}`. Type `/help` for available options."
 
-        # Send response to chat if requested
+
         if request.chat_id:
             await self.telegram_client.send_message(text=reply, chat_id=request.chat_id)
 
