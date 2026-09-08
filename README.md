@@ -8,6 +8,9 @@ Welcome to the Trade project repository.
   - Detailed documentation: [Server README](./server/README.md)
   - Project architecture: [Server Project Structure](./server/PROJECT_STRUCTURE.md)
   - Deployment instructions: [Server Deployment Guide](./server/DEPLOYMENT_GUIDE.md)
+- **[`client/`](./client)**: "QuantView" Algorithmic Trading Dashboard built with React, TypeScript, Tailwind CSS, Recharts, and Lucide React.
+  - High-performance Bloomberg terminal dark theme (#0a0a0f / #12121a)
+  - Real-time 10s polling, Signal Matrix with per-pair alert toggles, Telegram alert configuration, active positions, interactive charts, and economic calendar risk monitor.
 
 ## 🚀 Getting Started with the Backend Service
 
@@ -37,3 +40,26 @@ Welcome to the Trade project repository.
    ```bash
    python -m pytest tests/
    ```
+
+## 💻 Getting Started with the Client (QuantView)
+
+1. Navigate to the client folder:
+   ```bash
+   cd client
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+4. Build for production:
+   ```bash
+   npm run build
+   ```
+
