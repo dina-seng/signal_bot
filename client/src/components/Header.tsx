@@ -17,6 +17,8 @@ interface HeaderProps {
   account: AccountSummary;
   riskStatus: RiskStatus;
   pollSecondsRemaining: number;
+  isApiConnected?: boolean;
+  apiEndpoint?: string;
   onRefresh: () => void;
   onToggleMobileSidebar: () => void;
   onToggleBlackout: () => void;
@@ -26,6 +28,8 @@ export const Header: React.FC<HeaderProps> = ({
   account,
   riskStatus,
   pollSecondsRemaining,
+  isApiConnected = false,
+  apiEndpoint = 'http://localhost:8000',
   onRefresh,
   onToggleMobileSidebar,
   onToggleBlackout,
@@ -82,6 +86,20 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="flex items-center gap-1 text-slate-400">
                     <Clock className="w-3 h-3 text-slate-500" />
                     {utcTime || '00:00:00 UTC'}
+                  </span>
+                  <span className="text-slate-600">|</span>
+                  <span
+                    className={`flex items-center gap-1 font-semibold ${
+                      isApiConnected ? 'text-[#00ff88]' : 'text-amber-400'
+                    }`}
+                    title={isApiConnected ? `Backend API connected at ${apiEndpoint}` : 'Backend API offline - using simulation mode'}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isApiConnected ? 'bg-[#00ff88] animate-pulse' : 'bg-amber-400'
+                      }`}
+                    />
+                    {isApiConnected ? 'API :8000 LIVE' : 'API MOCK'}
                   </span>
                 </div>
               </div>
