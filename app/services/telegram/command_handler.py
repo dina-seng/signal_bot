@@ -34,7 +34,7 @@ from app.services.telegram.message_formatter import TelegramMessageFormatter
 
 
 class TelegramCommandHandler:
-    """Handles incoming bot commands (/scan, /signal, /news, /account, /positions, /performance, /help)."""
+    """Handles incoming bot commands (/scan, /signal, /news, /account, /positions, /performance, /help, /sync)."""
 
     def __init__(
         self,
@@ -250,7 +250,7 @@ class TelegramCommandHandler:
                     f"━━━━━━━━━━━━━━━━━━━━",
                 ]
                 for p in positions:
-                    dir_icon = "🟢 BUY" if p.direction == SignalDirection.BUY else "🔴 SELL"
+                    dir_icon = "🟢 BUY" if p.direction == SignalDirection.BUY else " SELL"
                     pnl_str = f"+${p.unrealized_pnl:,.2f}" if p.unrealized_pnl >= 0 else f"-${abs(p.unrealized_pnl):,.2f}"
                     lines.append(
                         f"• *{self.formatter.escape_markdown(p.symbol)}* ({dir_icon} `{p.remaining_position_size} Lots`)\n"
@@ -269,8 +269,8 @@ class TelegramCommandHandler:
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"💵 *Current Balance:* `${perf.current_balance:,.2f}`\n"
                 f"📈 *Total Return:* `{perf.total_return_pct:>+6.2f}%`\n"
-                f"📊 *Total Trades:* `{perf.total_trades}` ({perf.winning_trades}W / {perf.losing_trades}L)\n"
-                f"🎯 *Win Rate:* `{perf.win_rate:.1f}%`\n"
+                f" *Total Trades:* `{perf.total_trades}` ({perf.winning_trades}W / {perf.losing_trades}L)\n"
+                f" *Win Rate:* `{perf.win_rate:.1f}%`\n"
                 f"💰 *Profit Factor:* `{perf.profit_factor:.2f}`\n"
                 f"💵 *Average Win:* `${perf.average_win:,.2f}`\n"
                 f"🛑 *Average Loss:* `${perf.average_loss:,.2f}`\n"
@@ -305,12 +305,43 @@ class TelegramCommandHandler:
                     f"📊 *Total Trades:* `{m.total_trades}` ({m.winning_trades}W / {m.losing_trades}L)\n"
                     f"🎯 *Win Rate:* `{m.win_rate:.1f}%`\n"
                     f"💰 *Profit Factor:* `{m.profit_factor:.2f}`\n"
-                    f"💵 *Net PnL:* `${m.total_pnl:>+,.2f}` (`{m.total_pnl_percent:>+6.2f}%`)\n"
+                    f" *Net PnL:* `${m.total_pnl:>+,.2f}` (`{m.total_pnl_percent:>+6.2f}%`)\n"
                     f"📉 *Max Drawdown:* `{m.max_drawdown_pct:.2f}%` (`${m.max_drawdown_usd:,.2f}`)\n"
                     f"⭐ *Sharpe Ratio:* `{m.sharpe_ratio:.2f}` | *Calmar:* `{m.calmar_ratio:.2f}`\n"
                     f"━━━━━━━━━━━━━━━━━━━━"
                 )
 
+        # -------------------------------------------------------------
+        # 9. Force Fresh Data Sync (/sync)
+        # -------------------------------------------------------------
+        elif cmd_name == "/sync":
+            reply = "🔄 *FORCING FRESH DATA SYNC...*\n━━━━━━━━━━━━━━━━━━━━\n"
+            
+            provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
+            ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
+            ingest_svc.db = db
+
+            synced_count = 0
+            target_timeframes = ["15m", "30m", "1h"] 
+
+            for sym in settings.SUPPORTED_SYMBOLS:
+                for tf in target_timeframes:
+                    try:
+                        await ingest_svc.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
+                        synced_count += 1
+                    except Exception as e:
+                        logger.error(f"Manual sync failed for {sym} [{tf}]: {e}")
+
+            reply += f"✅ *Sync Complete!*\n"
+            reply += f"📊 *Pairs Synced:* {len(settings.SUPPORTED_SYMBOLS)}\n"
+            reply += f"⏱ *Timeframes:* {', '.join(target_timeframes)}\n"
+            reply += f"🔄 *Total API Fetches:* {synced_count}\n"
+            reply += "━━━━━━━━━━━━━━━━━━━━\n"
+            reply += "_Database updated. Staleness blocks cleared. Ready to scan!_"
+
+        # -------------------------------------------------------------
+        # 10. Fallback for Unknown Commands (MUST BE LAST)
+        # -------------------------------------------------------------
         else:
             raw_escaped = self.formatter.escape_code(raw_cmd)
             reply = f"❓ Unknown command `{raw_escaped}`. Type `/help` for available options."
