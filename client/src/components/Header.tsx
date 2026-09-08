@@ -10,14 +10,19 @@ import {
   Menu,
   Clock,
   Radio,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { AccountSummary, RiskStatus } from '../types';
+import { formatCurrency, formatPnL } from '../utils/formatters';
 
 interface HeaderProps {
   account: AccountSummary;
   riskStatus: RiskStatus;
   pollSecondsRemaining: number;
   isApiConnected?: boolean;
+  isRefreshing?: boolean;
+  lastUpdatedSecondsAgo?: number;
   apiEndpoint?: string;
   onRefresh: () => void;
   onToggleMobileSidebar: () => void;
@@ -29,6 +34,8 @@ export const Header: React.FC<HeaderProps> = ({
   riskStatus,
   pollSecondsRemaining,
   isApiConnected = false,
+  isRefreshing = false,
+  lastUpdatedSecondsAgo = 0,
   apiEndpoint = 'http://localhost:8000',
   onRefresh,
   onToggleMobileSidebar,
@@ -54,7 +61,7 @@ export const Header: React.FC<HeaderProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  const isPnlPositive = account.unrealizedPnl >= 0;
+  const pnlMeta = formatPnL(account.unrealizedPnl);
 
   return (
     <header className="sticky top-0 z-30 w-full bg-[#12121a]/95 backdrop-blur-md border-b border-[#1e1e2d] px-4 lg:px-6 py-3">
@@ -64,21 +71,41 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-3">
             <button
               onClick={onToggleMobileSidebar}
-              className="lg:hidden p-2 rounded-md bg-[#181824] text-slate-300 hover:text-white border border-[#1e1e2d]"
+              className="lg:hidden p-2 rounded-md bg-[#181824] text-slate-300 hover:text-white border border-[#1e1e2d] cursor-pointer"
               aria-label="Toggle menu"
             >
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-[#00ff88] shadow-[0_0_8px_#00ff88] animate-pulse" />
+              <div
+                className={`w-2.5 h-2.5 rounded-full ${
+                  isApiConnected
+                    ? 'bg-[#00ff88] shadow-[0_0_8px_#00ff88] animate-pulse'
+                    : 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'
+                }`}
+              />
               <div>
-                <span className="text-xs font-mono font-bold tracking-wider text-slate-400 uppercase">
-                  QUANTVIEW TERMINAL
-                </span>
-                <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold tracking-wider text-slate-300 uppercase">
+                    QUANTVIEW TERMINAL
+                  </span>
+
+                  {/* Mode Badge: LIVE DATA vs SIMULATION MODE */}
+                  <span
+                    className={`px-2 py-0.2 rounded text-[10px] font-mono font-bold uppercase tracking-wider border ${
+                      isApiConnected
+                        ? 'bg-[#00ff88]/15 text-[#00ff88] border-[#00ff88]/30 shadow-[0_0_8px_rgba(0,255,136,0.2)]'
+                        : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                    }`}
+                  >
+                    {isApiConnected ? '● LIVE DATA' : '○ SIMULATION MODE'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 flex-wrap">
                   <span className="flex items-center gap-1 text-emerald-400">
                     <Radio className="w-3 h-3 animate-pulse" />
-                    LIVE BROKER
+                    BROKER
                   </span>
                   <span className="text-slate-600">|</span>
                   <span>{account.latencyMs}ms</span>
@@ -88,18 +115,8 @@ export const Header: React.FC<HeaderProps> = ({
                     {utcTime || '00:00:00 UTC'}
                   </span>
                   <span className="text-slate-600">|</span>
-                  <span
-                    className={`flex items-center gap-1 font-semibold ${
-                      isApiConnected ? 'text-[#00ff88]' : 'text-amber-400'
-                    }`}
-                    title={isApiConnected ? `Backend API connected at ${apiEndpoint}` : 'Backend API offline - using simulation mode'}
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        isApiConnected ? 'bg-[#00ff88] animate-pulse' : 'bg-amber-400'
-                      }`}
-                    />
-                    {isApiConnected ? 'API :8000 LIVE' : 'API MOCK'}
+                  <span className="text-slate-500 text-[10px]">
+                    Updated {lastUpdatedSecondsAgo}s ago
                   </span>
                 </div>
               </div>
@@ -131,7 +148,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Right: Key Financial Metrics Header */}
-        <div className="flex items-center justify-between lg:justify-end gap-3 lg:gap-6 flex-wrap">
+        <div className="flex items-center justify-between lg:justify-end gap-3 lg:gap-5 flex-wrap">
           {/* Account Balance */}
           <div className="bg-[#0a0a0f] px-3.5 py-1.5 rounded-lg border border-[#1e1e2d]">
             <span className="text-[10px] uppercase tracking-wider font-mono text-slate-400 flex items-center gap-1">
@@ -139,7 +156,7 @@ export const Header: React.FC<HeaderProps> = ({
               Balance
             </span>
             <div className="text-sm lg:text-base font-mono font-bold text-slate-100">
-              ${account.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              {formatCurrency(account.balance)}
             </div>
           </div>
 
@@ -150,20 +167,20 @@ export const Header: React.FC<HeaderProps> = ({
               Equity
             </span>
             <div className="text-sm lg:text-base font-mono font-bold text-slate-100">
-              ${account.equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              {formatCurrency(account.equity)}
             </div>
           </div>
 
           {/* Unrealized P&L */}
           <div
             className={`px-3.5 py-1.5 rounded-lg border transition-colors ${
-              isPnlPositive
+              pnlMeta.isPositive
                 ? 'bg-[#00ff88]/10 border-[#00ff88]/30 text-[#00ff88]'
                 : 'bg-[#ff3366]/10 border-[#ff3366]/30 text-[#ff3366]'
             }`}
           >
             <span className="text-[10px] uppercase tracking-wider font-mono opacity-80 flex items-center gap-1">
-              {isPnlPositive ? (
+              {pnlMeta.isPositive ? (
                 <TrendingUp className="w-3 h-3" />
               ) : (
                 <TrendingDown className="w-3 h-3" />
@@ -171,12 +188,9 @@ export const Header: React.FC<HeaderProps> = ({
               Unrealized P&L
             </span>
             <div className="text-sm lg:text-base font-mono font-bold flex items-center gap-1.5">
-              <span>
-                {isPnlPositive ? '+' : ''}$
-                {account.unrealizedPnl.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </span>
+              <span>{pnlMeta.formatted}</span>
               <span className="text-xs opacity-90">
-                ({isPnlPositive ? '+' : ''}
+                ({pnlMeta.isPositive ? '+' : ''}
                 {account.unrealizedPnlPercent.toFixed(2)}%)
               </span>
             </div>
@@ -185,20 +199,33 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Polling Indicator & Refresh Button */}
           <div className="flex items-center gap-2">
             <div
-              className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded bg-[#181824] border border-[#1e1e2d] text-[11px] font-mono text-slate-400"
-              title="Auto-refresh interval"
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#181824] border border-[#1e1e2d] text-[11px] font-mono text-slate-400"
+              title="Next automated synchronization"
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  isRefreshing ? 'bg-cyan-400 animate-ping' : 'bg-slate-500'
+                }`}
+              />
               <span>SYNC {pollSecondsRemaining}s</span>
             </div>
 
+            {/* Refresh Data Button */}
             <button
               onClick={onRefresh}
-              className="p-2 rounded-lg bg-[#181824] text-slate-300 hover:text-white hover:bg-[#1f1f30] border border-[#1e1e2d] transition-all"
-              title="Manual Data Refresh"
+              className={`px-3 py-1.5 rounded-lg bg-[#181824] hover:bg-[#202030] text-slate-300 hover:text-white border border-[#1e1e2d] hover:border-[#2a2a3e] text-xs font-mono font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                isRefreshing ? 'opacity-70 cursor-wait' : ''
+              }`}
+              title="Manually trigger API fetch across all endpoints"
               aria-label="Refresh Data"
+              disabled={isRefreshing}
             >
-              <RefreshCw className="w-4 h-4 text-cyan-400 hover:rotate-180 transition-transform duration-500" />
+              <RefreshCw
+                className={`w-3.5 h-3.5 text-cyan-400 ${
+                  isRefreshing ? 'animate-spin' : 'hover:rotate-180 transition-transform duration-500'
+                }`}
+              />
+              <span className="hidden sm:inline">Refresh Data</span>
             </button>
           </div>
         </div>

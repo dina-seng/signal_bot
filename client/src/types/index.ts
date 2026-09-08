@@ -25,19 +25,21 @@ export interface EquityDataPoint {
 export interface TradeSignal {
   id: string;
   symbol: PairSymbol;
-  direction: TradeDirection;
+  direction: 'BUY' | 'SELL' | 'SCANNING' | 'NO_SETUP';
   confluenceScore: number; // 0 - 100
   timeframe: string;
-  entryPrice: number;
-  stopLoss: number;
-  takeProfit1: number;
-  takeProfit2: number;
-  riskRewardRatio: string;
-  pipsAtRisk: number;
-  timestamp: string;
-  setupReason: string;
+  entryPrice?: number;
+  currentPrice?: number;
+  stopLoss?: number;
+  takeProfit1?: number;
+  takeProfit2?: number;
+  riskRewardRatio?: string;
+  pipsAtRisk?: number;
+  timestamp?: string;
+  setupReason?: string;
   notifyEnabled: boolean;
-  status: 'ACTIVE' | 'PENDING' | 'TRIGGERED';
+  status: 'ACTIVE' | 'PENDING' | 'TRIGGERED' | 'SCANNING' | 'NO_SETUP';
+  hasActiveSignal: boolean;
 }
 
 export interface Position {
@@ -56,16 +58,17 @@ export interface Position {
 }
 
 export interface NewsEvent {
-  id: string;
+  id: string | number;
   time: string;
   currency: string;
   event: string;
   impact: 'HIGH' | 'MEDIUM' | 'LOW';
-  actual?: string;
+  actual?: string | null;
   forecast: string;
   previous: string;
   minutesUntil: number;
   isBlackoutTrigger: boolean;
+  scheduledTimeRaw?: string;
 }
 
 export interface RiskStatus {
@@ -98,6 +101,7 @@ export interface AccountSummary {
   todayPnl: number;
   brokerStatus: 'CONNECTED' | 'RECONNECTING' | 'OFFLINE';
   latencyMs: number;
+  currency?: string;
 }
 
 export type NavigationTab = 'dashboard' | 'signals' | 'positions' | 'news' | 'settings';
