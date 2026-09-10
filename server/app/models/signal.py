@@ -20,6 +20,8 @@ class Signal(Base):
     fingerprint = Column(String(128), unique=True, nullable=False, index=True)
     reasons = Column(JSON, nullable=False)
     status = Column(String(20), default="ACTIVE", nullable=False)  # "ACTIVE", "INVALIDATED", "TP1_HIT", "TP2_HIT", "SL_HIT", "EXPIRED"
+    trend_alignment = Column(String(50), nullable=True)  # "TREND FOLLOWING", "COUNTER-TREND SCALP"
+    htf_trend = Column(String(20), nullable=True)  # "BULLISH", "BEARISH", "RANGING"
     is_broadcasted = Column(Boolean, default=False, nullable=False)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)

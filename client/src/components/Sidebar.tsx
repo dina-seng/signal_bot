@@ -21,6 +21,8 @@ interface SidebarProps {
   isBlackout: boolean;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
+  isApiConnected?: boolean;
+  isScannerRunning?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -31,6 +33,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isBlackout,
   isOpenMobile,
   onCloseMobile,
+  isApiConnected = false,
+  isScannerRunning = false,
 }) => {
   const navItems = [
     {
@@ -38,23 +42,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Dashboard',
       icon: LayoutDashboard,
       badge: null,
-      description: 'Overview & Performance',
     },
     {
       id: 'signals' as NavigationTab,
       label: 'Signals',
       icon: Zap,
-      badge: signalsCount,
-      badgeColor: 'bg-[#00ff88]/20 text-[#00ff88] border-[#00ff88]/40',
-      description: 'Confluence Matrix',
+      badge: signalsCount > 0 ? `${signalsCount}` : null,
+      badgeColor: 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30',
     },
     {
       id: 'positions' as NavigationTab,
       label: 'Positions',
       icon: Briefcase,
-      badge: positionsCount,
-      badgeColor: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40',
-      description: 'Active Orders & P&L',
+      badge: positionsCount > 0 ? `${positionsCount}` : null,
+      badgeColor: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
     },
     {
       id: 'news' as NavigationTab,
@@ -62,17 +63,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Newspaper,
       badge: isBlackout ? 'BLACKOUT' : 'SAFE',
       badgeColor: isBlackout
-        ? 'bg-[#ff3366]/20 text-[#ff3366] border-[#ff3366]/40'
-        : 'bg-[#00ff88]/20 text-[#00ff88] border-[#00ff88]/40',
-      description: 'Economic Calendar',
+        ? 'bg-[#ff3366]/15 text-[#ff3366] border-[#ff3366]/30'
+        : 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30',
     },
     {
       id: 'settings' as NavigationTab,
       label: 'Settings',
       icon: Bell,
-      badge: 'Telegram',
-      badgeColor: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
-      description: 'Alert Configuration',
+      badge: null,
+      badgeColor: '',
     },
   ];
 
@@ -82,41 +81,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {isOpenMobile && (
         <div
           onClick={onCloseMobile}
-          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 bg-black/80 backdrop-blur-xs lg:hidden"
           aria-hidden="true"
         />
       )}
 
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-50 w-64 bg-[#12121a] border-r border-[#1e1e2d] flex flex-col justify-between transition-transform duration-300 ease-in-out lg:translate-x-0 ${
+        className={`fixed top-0 bottom-0 left-0 z-50 w-56 bg-[#111319] border-r border-[#1d2230] flex flex-col justify-between transition-transform duration-200 ease-in-out lg:translate-x-0 ${
           isOpenMobile ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Top Branding */}
+        {/* Navigation Sections */}
         <div>
-          <div className="p-5 border-b border-[#1e1e2d] flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[#00ff88]/20 to-cyan-500/20 border border-[#00ff88]/40 flex items-center justify-center shadow-[0_0_15px_rgba(0,255,136,0.15)]">
-                <Shield className="w-5 h-5 text-[#00ff88]" />
+          {/* Top Branding */}
+          <div className="px-4 py-3.5 border-b border-[#1d2230] flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded bg-[#161922] border border-[#1d2230] flex items-center justify-center">
+                <Shield className="w-4 h-4 text-[#00e676]" />
               </div>
               <div>
-                <h1 className="text-base font-extrabold tracking-tight text-white flex items-center gap-1.5">
-                  Quant<span className="text-[#00ff88]">View</span>
-                </h1>
-                <p className="text-[10px] font-mono tracking-widest text-slate-400 uppercase">
+                <span className="text-sm font-bold tracking-tight text-white block leading-tight">
+                  Quant<span className="text-[#00e676]">View</span>
+                </span>
+                <span className="text-[9px] font-mono tracking-wider text-slate-500 uppercase">
                   Institutional Desk
-                </p>
+                </span>
               </div>
             </div>
-            <div className="hidden lg:block px-1.5 py-0.5 rounded text-[9px] font-mono uppercase bg-[#181824] text-slate-400 border border-[#1e1e2d]">
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-[#161922] text-slate-400 border border-[#1d2230]">
               v2.4
-            </div>
+            </span>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="p-3 space-y-1.5">
-            <div className="px-3 py-1.5 text-[10px] font-mono tracking-wider text-slate-500 uppercase">
-              Main Terminal
+          {/* Nav Items */}
+          <nav className="p-2 space-y-1">
+            <div className="px-2.5 pt-2 pb-1 text-[9px] font-mono tracking-wider text-slate-500 uppercase font-semibold">
+              Trading Desk
             </div>
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -128,29 +128,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onTabChange(item.id);
                     onCloseMobile();
                   }}
-                  className={`w-full group flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded text-xs font-medium transition-colors cursor-pointer ${
                     isActive
-                      ? 'bg-[#181824] text-white border-l-2 border-l-[#00ff88] border border-[#1e1e2d] shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-[#151520]'
+                      ? 'bg-[#161922] text-white border-l-2 border-[#00e676] border-r border-t border-b border-transparent shadow-xs'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-[#131620]'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2.5">
                     <Icon
-                      className={`w-4 h-4 transition-colors ${
-                        isActive ? 'text-[#00ff88]' : 'text-slate-400 group-hover:text-slate-200'
+                      className={`w-4 h-4 ${
+                        isActive ? 'text-[#00e676]' : 'text-slate-500'
                       }`}
                     />
-                    <div className="text-left">
-                      <span className="block leading-tight">{item.label}</span>
-                      <span className="text-[10px] text-slate-500 font-mono hidden sm:block">
-                        {item.description}
-                      </span>
-                    </div>
+                    <span>{item.label}</span>
                   </div>
 
                   {item.badge !== null && (
                     <span
-                      className={`px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded border ${item.badgeColor}`}
+                      className={`px-1.5 py-0.5 text-[9px] font-mono font-bold rounded border ${item.badgeColor}`}
                     >
                       {item.badge}
                     </span>
@@ -161,32 +156,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </nav>
         </div>
 
-        {/* Bottom Status Panel */}
-        <div className="p-4 border-t border-[#1e1e2d] space-y-3 bg-[#0d0d14]/60">
-          {/* Telegram status indicator */}
-          <div className="p-2.5 rounded-lg bg-[#181824] border border-[#1e1e2d] space-y-1.5">
-            <div className="flex items-center justify-between text-xs">
+        {/* Bottom System Services & Diagnostics */}
+        <div className="p-3 border-t border-[#1d2230] space-y-2 bg-[#0c0d12]">
+          <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 font-semibold px-1">
+            System Telemetry
+          </div>
+
+          {/* Telegram bot status */}
+          <div className="px-2.5 py-2 rounded bg-[#111319] border border-[#1d2230] space-y-1 font-mono text-[10px]">
+            <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-slate-300 font-medium">
-                <Send className="w-3.5 h-3.5 text-cyan-400" />
+                <Send className="w-3 h-3 text-cyan-400" />
                 Telegram Bot
               </span>
-              <span className="flex items-center gap-1 text-[10px] font-mono text-[#00ff88]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-ping" />
-                ONLINE
+              <span
+                className={`flex items-center gap-1 font-bold ${
+                  isApiConnected ? 'text-[#00e676]' : 'text-amber-400'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isApiConnected ? 'bg-[#00e676]' : 'bg-amber-400'
+                  }`}
+                />
+                {isApiConnected ? 'ONLINE' : 'STANDBY'}
               </span>
             </div>
-            <p className="text-[11px] font-mono text-slate-400 truncate">
+            <p className="text-slate-500 truncate text-[9px]">
               @signalTheBEST_bot
             </p>
           </div>
 
-          {/* System status */}
-          <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-            <span className="flex items-center gap-1">
+          {/* SMC Scanner status */}
+          <div className="px-2.5 py-1.5 rounded bg-[#111319] border border-[#1d2230] flex items-center justify-between text-[10px] font-mono text-slate-400">
+            <span className="flex items-center gap-1.5">
               <Cpu className="w-3 h-3 text-slate-500" />
-              Confluence Engine
+              SMC Scanner
             </span>
-            <span className="text-[#00ff88]">READY</span>
+            <span className={`font-bold ${isScannerRunning ? 'text-[#00e676]' : isApiConnected ? 'text-slate-300' : 'text-slate-500'}`}>
+              {isScannerRunning ? 'ACTIVE' : isApiConnected ? 'READY' : 'OFFLINE'}
+            </span>
           </div>
         </div>
       </aside>

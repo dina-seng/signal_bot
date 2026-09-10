@@ -12,6 +12,7 @@ from app.models.signal import Signal
 from app.schemas.signal import (
     MarketScanResponse,
     SignalResponse,
+    SignalStatus,
     StatelessSignalRequest,
 )
 from app.services.signals import SignalGenerator
@@ -35,12 +36,50 @@ def get_signals(
     symbol: Optional[str] = Query(None, description="Filter by currency pair (e.g. EUR/USD)"),
     direction: Optional[str] = Query(None, description="Filter by direction: BUY, SELL, WAIT"),
     status: Optional[str] = Query(None, description="Filter by status: ACTIVE, INVALIDATED, TP1_HIT, etc."),
+    unified: bool = Query(False, description="Return unified multi-timeframe signals across pairs"),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
+    generator: SignalGenerator = Depends(get_signal_generator),
 ):
-    """Retrieve historical and active generated trading signals from database."""
-    stmt = select(Signal)
+    """Retrieve active signals via Unified Multi-Timeframe Scanner or historical database signals."""
+    if unified:
+        target_symbols = [_normalize_symbol(symbol)] if symbol else settings.SUPPORTED_SYMBOLS
+        scan_res = generator.scan_unified_all(
+            db=db,
+            symbols=target_symbols,
+            persist_qualified=True,
+        )
+        unified_signals: List[SignalResponse] = []
+        for r in scan_res.results:
+            sig = r.signal
+            if not sig:
+                sig = SignalResponse(
+                    symbol=r.symbol,
+                    timeframe=r.timeframe,
+                    direction=r.direction,
+                    setup_score=r.setup_score,
+                    entry_price=None,
+                    stop_loss=None,
+                    take_profit_1=None,
+                    take_profit_2=None,
+                    risk_reward=None,
+                    fingerprint=f"UNIFIED_SCAN_{r.symbol}_{r.timeframe}",
+                    reasons=r.reasons,
+                    status=SignalStatus.ACTIVE if r.is_actionable else SignalStatus.EXPIRED,
+                    trend_alignment=r.trend_alignment,
+                    htf_trend=r.htf_trend,
+                    is_broadcasted=False,
+                    timestamp=scan_res.timestamp,
+                )
+            if direction and sig.direction.value != direction.upper().strip():
+                continue
+            if status and sig.status.value != status.upper().strip():
+                continue
+            unified_signals.append(sig)
+        return unified_signals
 
+    # Fallback to querying historical DB records if unified=False
+    stmt = select(Signal)
     if symbol:
         stmt = stmt.where(Signal.symbol == _normalize_symbol(symbol))
     if direction:
@@ -54,7 +93,8 @@ def get_signals(
 
 @router.get("/scan", response_model=MarketScanResponse)
 def scan_markets(
-    timeframe: str = Query("1h", description="Timeframe to scan (e.g. 15m, 1h, 4h)"),
+    unified: bool = Query(True, description="Whether to use Unified Multi-Timeframe Scanner"),
+    timeframe: str = Query("1h", description="Timeframe to scan if unified is False (e.g. 15m, 1h, 4h)"),
     account_balance: float = Query(10000.0, ge=100.0),
     risk_percent: float = Query(0.5, ge=0.1, le=5.0),
     persist_qualified: bool = Query(True, description="Whether to persist qualified signals to DB"),
@@ -62,10 +102,37 @@ def scan_markets(
     generator: SignalGenerator = Depends(get_signal_generator),
 ):
     """Scan all supported Forex and Commodity markets for high-confluence trade setups."""
+    if unified:
+        return generator.scan_unified_all(
+            db=db,
+            symbols=settings.SUPPORTED_SYMBOLS,
+            account_balance=account_balance,
+            risk_percent=risk_percent,
+            persist_qualified=persist_qualified,
+        )
+
     return generator.scan_all_symbols(
         db=db,
         symbols=settings.SUPPORTED_SYMBOLS,
         timeframe=timeframe.lower().strip(),
+        account_balance=account_balance,
+        risk_percent=risk_percent,
+        persist_qualified=persist_qualified,
+    )
+
+
+@router.get("/unified", response_model=MarketScanResponse)
+def get_unified_signals(
+    account_balance: float = Query(10000.0, ge=100.0),
+    risk_percent: float = Query(0.5, ge=0.1, le=5.0),
+    persist_qualified: bool = Query(True, description="Whether to persist qualified signals to DB"),
+    db: Session = Depends(get_db),
+    generator: SignalGenerator = Depends(get_signal_generator),
+):
+    """Unified Multi-Timeframe Scanner endpoint returning consistent signals across 15m, 30m, and 1H."""
+    return generator.scan_unified_all(
+        db=db,
+        symbols=settings.SUPPORTED_SYMBOLS,
         account_balance=account_balance,
         risk_percent=risk_percent,
         persist_qualified=persist_qualified,
