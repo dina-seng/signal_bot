@@ -18,6 +18,7 @@ interface NewsRiskMonitorProps {
   news: NewsEvent[];
   riskStatus: RiskStatus;
   isLoading?: boolean;
+  isSyncingCalendar?: boolean;
   onToggleBlackout: () => void;
   onSyncCalendar?: () => void;
 }
@@ -26,59 +27,64 @@ export const NewsRiskMonitor: React.FC<NewsRiskMonitorProps> = ({
   news,
   riskStatus,
   isLoading = false,
+  isSyncingCalendar = false,
   onToggleBlackout,
   onSyncCalendar,
 }) => {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 font-mono">
       {/* Risk Status Banner */}
       <div
-        className={`rounded-xl p-5 border transition-all duration-300 shadow-terminal ${
+        className={`rounded-lg p-4 border transition-colors ${
           riskStatus.isBlackout
-            ? 'bg-gradient-to-r from-[#ff3366]/20 via-[#18121a] to-[#12121a] border-[#ff3366]/50 shadow-sell-glow'
-            : 'bg-gradient-to-r from-[#00ff88]/15 via-[#121814] to-[#12121a] border-[#00ff88]/40 shadow-buy-glow'
+            ? 'bg-[#181116] border-[#ff3366]/40 text-slate-200'
+            : 'bg-[#111614] border-[#00e676]/30 text-slate-200'
         }`}
       >
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-start gap-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex items-center gap-3">
             <div
-              className={`p-3 rounded-xl shrink-0 ${
+              className={`p-2 rounded shrink-0 ${
                 riskStatus.isBlackout
-                  ? 'bg-[#ff3366]/20 text-[#ff3366] animate-bounce'
-                  : 'bg-[#00ff88]/20 text-[#00ff88]'
+                  ? 'bg-[#ff3366]/15 text-[#ff3366]'
+                  : 'bg-[#00e676]/10 text-[#00e676]'
               }`}
             >
               {riskStatus.isBlackout ? (
-                <ShieldAlert className="w-7 h-7" />
+                <ShieldAlert className="w-5 h-5" />
               ) : (
-                <ShieldCheck className="w-7 h-7" />
+                <ShieldCheck className="w-5 h-5" />
               )}
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <span
-                  className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded uppercase tracking-wider border ${
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider border ${
                     riskStatus.isBlackout
-                      ? 'bg-[#ff3366]/20 text-[#ff3366] border-[#ff3366]/40 animate-pulse'
-                      : 'bg-[#00ff88]/20 text-[#00ff88] border-[#00ff88]/40'
+                      ? 'bg-[#ff3366]/20 text-[#ff3366] border-[#ff3366]/40'
+                      : 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30'
                   }`}
                 >
-                  {riskStatus.isBlackout ? '🔴 BLACKOUT ACTIVE' : '🟢 SAFE ENVIRONMENT'}
+                  {riskStatus.isBlackout ? '● BLACKOUT ACTIVE' : '○ SAFE TO TRADE'}
                 </span>
-                <span className="text-xs font-mono text-slate-400">
-                  Risk Per Trade: {riskStatus.allowedRiskPercent}%
+                <span className="text-[11px] text-slate-400">
+                  Risk Per Order: <strong className="text-white">{riskStatus.allowedRiskPercent}%</strong>
+                </span>
+                <span className="text-slate-600 hidden sm:inline">|</span>
+                <span className="text-[10px] text-slate-500 hidden sm:inline">
+                  Buffer: -30m / +15m Red Folder
                 </span>
               </div>
 
-              <h3 className="text-base font-bold text-white">
+              <div className="text-xs font-semibold text-white pt-0.5">
                 {riskStatus.isBlackout
-                  ? 'Automated Trading Paused (Macroeconomic Blackout Window)'
+                  ? 'Automated Order Flow Suspended (High-Impact Macro Event)'
                   : 'Institutional Flow Normal — All Systems Operating Safely'}
-              </h3>
+              </div>
 
-              <p className="text-xs text-slate-300 font-mono">
-                {riskStatus.activeEvent || 'No high-impact red folder events within the -30m / +15m blackout buffer.'}
+              <p className="text-[11px] text-slate-400 italic">
+                {riskStatus.activeEvent || 'No high-impact economic releases scheduled within the risk buffer window.'}
               </p>
             </div>
           </div>
@@ -87,76 +93,79 @@ export const NewsRiskMonitor: React.FC<NewsRiskMonitorProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={onToggleBlackout}
-              className={`px-3 py-2 rounded-lg text-xs font-mono font-bold border transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded text-xs font-semibold border transition-colors cursor-pointer ${
                 riskStatus.isBlackout
-                  ? 'bg-[#181824] text-slate-300 hover:text-white border-[#1e1e2d]'
-                  : 'bg-[#ff3366]/20 text-[#ff3366] border-[#ff3366]/40 hover:bg-[#ff3366]/30'
+                  ? 'bg-[#161922] text-slate-300 hover:text-white border-[#1d2230]'
+                  : 'bg-[#ff3366]/15 text-[#ff3366] border-[#ff3366]/30 hover:bg-[#ff3366]/25'
               }`}
             >
-              {riskStatus.isBlackout ? 'Deactivate Blackout' : 'Simulate Blackout Test'}
+              {riskStatus.isBlackout ? 'Deactivate Blackout' : 'Test Blackout'}
             </button>
           </div>
         </div>
       </div>
 
       {/* Economic Calendar Section */}
-      <div className="rounded-xl p-5 bg-[#12121a] border border-[#1e1e2d] shadow-terminal space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 border-b border-[#1e1e2d]">
+      <div className="rounded-lg p-4 bg-[#111319] border border-[#1d2230] space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2.5 border-b border-[#1d2230]">
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold text-white">Economic News Calendar</h3>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
-                Live Backend Feed
+              <h3 className="text-sm font-semibold text-white uppercase tracking-wide">Macroeconomic Calendar</h3>
+              <span className="px-1.5 py-0.5 rounded text-[9px] uppercase bg-[#161922] text-slate-400 border border-[#1d2230]">
+                ForexFactory Feed
               </span>
             </div>
-            <p className="text-xs text-slate-400 font-mono mt-1">
-              Blackout rules: Automated suspension 30 mins before & 15 mins after red-folder events
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Blackout rules: 30m prior and 15m after high-impact events automatically trigger trading halt
             </p>
           </div>
 
-          <div className="flex items-center gap-3 text-xs font-mono text-slate-400 flex-wrap">
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-[#ff3366]" /> HIGH
+          <div className="flex items-center gap-3 text-xs text-slate-400 flex-wrap">
+            <span className="flex items-center gap-1 text-[11px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#ff3366]" /> HIGH
             </span>
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-amber-400" /> MEDIUM
+            <span className="flex items-center gap-1 text-[11px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> MEDIUM
             </span>
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-slate-500" /> LOW
+            <span className="flex items-center gap-1 text-[11px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-500" /> LOW
             </span>
 
             {onSyncCalendar && (
               <button
                 onClick={onSyncCalendar}
-                className="ml-2 px-2.5 py-1 rounded bg-[#181824] hover:bg-[#202030] text-slate-300 hover:text-white border border-[#1e1e2d] text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer"
-                title="Sync calendar from ForexFactory"
+                disabled={isSyncingCalendar}
+                className={`px-2 py-0.5 rounded bg-[#161922] hover:bg-[#1d212d] text-slate-300 hover:text-white border border-[#1d2230] text-xs flex items-center gap-1 transition-colors cursor-pointer ${
+                  isSyncingCalendar ? 'opacity-70 cursor-wait' : ''
+                }`}
+                title="Sync calendar from ForexFactory provider"
               >
-                <RefreshCw className="w-3 h-3 text-cyan-400" />
-                <span>Sync</span>
+                <RefreshCw className={`w-3 h-3 text-cyan-400 ${isSyncingCalendar ? 'animate-spin' : ''}`} />
+                <span>{isSyncingCalendar ? 'Syncing...' : 'Sync'}</span>
               </button>
             )}
           </div>
         </div>
 
         {/* News Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs font-mono">
-            <thead className="bg-[#0a0a0f] text-slate-400 uppercase text-[10px] tracking-wider border-b border-[#1e1e2d]">
+        <div className="overflow-x-auto rounded border border-[#1d2230]">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-[#0c0d12] text-slate-500 uppercase text-[10px] tracking-wider border-b border-[#1d2230]">
               <tr>
-                <th scope="col" className="py-2.5 px-4">Time (UTC)</th>
-                <th scope="col" className="py-2.5 px-4">Currency</th>
-                <th scope="col" className="py-2.5 px-4">Event Name</th>
-                <th scope="col" className="py-2.5 px-4 text-center">Impact</th>
-                <th scope="col" className="py-2.5 px-4 text-right">Actual</th>
-                <th scope="col" className="py-2.5 px-4 text-right">Forecast</th>
-                <th scope="col" className="py-2.5 px-4 text-right">Previous</th>
-                <th scope="col" className="py-2.5 px-4 text-right">Countdown</th>
+                <th scope="col" className="py-2 px-3">Time (UTC)</th>
+                <th scope="col" className="py-2 px-3">CCY</th>
+                <th scope="col" className="py-2 px-3">Event</th>
+                <th scope="col" className="py-2 px-3 text-center">Impact</th>
+                <th scope="col" className="py-2 px-3 text-right">Actual</th>
+                <th scope="col" className="py-2 px-3 text-right">Forecast</th>
+                <th scope="col" className="py-2 px-3 text-right">Previous</th>
+                <th scope="col" className="py-2 px-3 text-right">Countdown</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#1e1e2d]/60">
+            <tbody className="divide-y divide-[#1d2230]/60 text-[11px]">
               {news.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500 italic">
+                  <td colSpan={8} className="py-6 text-center text-slate-500 italic text-xs">
                     No scheduled economic news events found in database.
                   </td>
                 </tr>
@@ -165,7 +174,6 @@ export const NewsRiskMonitor: React.FC<NewsRiskMonitorProps> = ({
                   const isHigh = item.impact === 'HIGH';
                   const isMed = item.impact === 'MEDIUM';
                   
-                  // Compute dynamic countdown from scheduled time if available
                   const countdown = getTimeUntil(item.scheduledTimeRaw || item.time);
                   const isUrgent = countdown.isWithin30m;
                   const isBlackoutTrigger = (isHigh && isUrgent) || item.isBlackoutTrigger;
@@ -173,74 +181,74 @@ export const NewsRiskMonitor: React.FC<NewsRiskMonitorProps> = ({
                   return (
                     <tr
                       key={item.id}
-                      className={`hover:bg-[#181824]/50 transition-colors ${
-                        isBlackoutTrigger ? 'bg-[#ff3366]/10 animate-pulse' : ''
+                      className={`hover:bg-[#161922]/50 transition-colors ${
+                        isBlackoutTrigger ? 'bg-[#ff3366]/10' : ''
                       }`}
                     >
                       {/* Time */}
-                      <td className="py-3 px-4 text-slate-300 font-medium whitespace-nowrap">
+                      <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
                         {formatTime(item.time || item.scheduledTimeRaw)}
                       </td>
 
                       {/* Currency */}
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded font-bold bg-[#181824] text-slate-200 border border-[#1e1e2d]">
+                      <td className="py-2 px-3">
+                        <span className="px-1.5 py-0.5 rounded font-bold bg-[#161922] text-slate-300 border border-[#1d2230]">
                           {item.currency}
                         </span>
                       </td>
 
                       {/* Event Title */}
-                      <td className="py-3 px-4 font-semibold text-white">
-                        <div className="flex items-center gap-2 flex-wrap">
+                      <td className="py-2 px-3 font-semibold text-white">
+                        <div className="flex items-center gap-2">
                           <span>{item.event}</span>
                           {isBlackoutTrigger && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase bg-[#ff3366]/20 text-[#ff3366] border border-[#ff3366]/40 shadow-[0_0_8px_rgba(255,51,102,0.3)] animate-pulse">
-                              BLACKOUT TRIGGER
+                            <span className="px-1 py-0.2 rounded text-[8px] uppercase bg-[#ff3366]/20 text-[#ff3366] border border-[#ff3366]/40">
+                              BLACKOUT
                             </span>
                           )}
                         </div>
                       </td>
 
                       {/* Impact Badge */}
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-2 px-3 text-center">
                         <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${
                             isHigh
-                              ? 'bg-[#ff3366]/15 text-[#ff3366] border-[#ff3366]/40'
+                              ? 'bg-[#ff3366]/10 text-[#ff3366] border-[#ff3366]/30'
                               : isMed
-                              ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
-                              : 'bg-slate-700/30 text-slate-300 border-slate-600/40'
+                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                              : 'bg-[#161922] text-slate-400 border-[#1d2230]'
                           }`}
                         >
-                          {isHigh && <Flame className="w-3 h-3 text-[#ff3366]" />}
+                          {isHigh && <Flame className="w-2.5 h-2.5 text-[#ff3366]" />}
                           {item.impact}
                         </span>
                       </td>
 
                       {/* Actual */}
-                      <td className="py-3 px-4 text-right font-bold text-slate-100">
+                      <td className="py-2 px-3 text-right font-bold text-slate-200">
                         {item.actual || <span className="text-slate-600">--</span>}
                       </td>
 
                       {/* Forecast */}
-                      <td className="py-3 px-4 text-right text-slate-400">
+                      <td className="py-2 px-3 text-right text-slate-400">
                         {item.forecast || '--'}
                       </td>
 
                       {/* Previous */}
-                      <td className="py-3 px-4 text-right text-slate-500">
+                      <td className="py-2 px-3 text-right text-slate-500">
                         {item.previous || '--'}
                       </td>
 
                       {/* Countdown */}
-                      <td className="py-3 px-4 text-right font-semibold whitespace-nowrap">
+                      <td className="py-2 px-3 text-right whitespace-nowrap">
                         {countdown.isPast ? (
                           <span className="text-slate-500">Released</span>
                         ) : (
                           <span
                             className={
                               isUrgent
-                                ? 'text-[#ff3366] font-bold animate-pulse'
+                                ? 'text-[#ff3366] font-bold'
                                 : 'text-cyan-400'
                             }
                           >

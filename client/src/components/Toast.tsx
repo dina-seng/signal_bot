@@ -36,23 +36,23 @@ const ToastItem: React.FC<{ toast: ToastMessage; onDismiss: (id: string) => void
 
   const borderClass =
     toast.type === 'success'
-      ? 'border-[#00ff88]/40 shadow-[0_0_15px_rgba(0,255,136,0.2)]'
+      ? 'border-[#00e676]/40 bg-[#111319]/95 text-slate-100'
       : toast.type === 'warning'
-      ? 'border-[#ff3366]/40 shadow-[0_0_15px_rgba(255,51,102,0.2)]'
-      : 'border-cyan-500/40 shadow-[0_0_15px_rgba(6,182,212,0.2)]';
+      ? 'border-[#ff3366]/40 bg-[#111319]/95 text-slate-100'
+      : 'border-cyan-500/40 bg-[#111319]/95 text-slate-100';
 
   const icon =
     toast.type === 'success' ? (
-      <CheckCircle2 className="w-5 h-5 text-[#00ff88] shrink-0" />
+      <CheckCircle2 className="w-4 h-4 text-[#00e676] shrink-0" />
     ) : toast.type === 'warning' ? (
-      <AlertTriangle className="w-5 h-5 text-[#ff3366] shrink-0" />
+      <AlertTriangle className="w-4 h-4 text-[#ff3366] shrink-0" />
     ) : (
-      <Info className="w-5 h-5 text-cyan-400 shrink-0" />
+      <Info className="w-4 h-4 text-cyan-400 shrink-0" />
     );
 
   return (
     <div
-      className={`pointer-events-auto flex items-start gap-3 p-3.5 rounded-lg bg-[#12121a]/95 backdrop-blur-md border ${borderClass} text-slate-100 transition-all duration-300 animate-slide-in`}
+      className={`pointer-events-auto flex items-start gap-3 p-3 rounded-md border ${borderClass} backdrop-blur-md transition-all duration-200 shadow-terminal`}
     >
       <div className="mt-0.5">{icon}</div>
       <div className="flex-1 min-w-0">

@@ -13,6 +13,7 @@ import {
   PairSymbol,
   TradeSignal,
   Position,
+  ClosedTrade,
   AlertConfiguration,
   NewsEvent,
   RiskStatus,
@@ -33,6 +34,9 @@ import {
   BackendSignal,
   BackendNewsEvent,
   BackendPerformance,
+  BackendPaperTrade,
+  BackendTelegramStatus,
+  BackendScannerStatus,
 } from './services/api';
 import { formatPrice, getTimeUntil } from './utils/formatters';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
@@ -45,15 +49,23 @@ export const App: React.FC = () => {
   const [stats, setStats] = useState(initialPerformanceStats);
   const [signals, setSignals] = useState<TradeSignal[]>(initialSignals);
   const [positions, setPositions] = useState<Position[]>(initialPositions);
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
   const [alertConfig, setAlertConfig] = useState<AlertConfiguration>(initialAlertConfig);
   const [news, setNews] = useState<NewsEvent[]>(initialNewsEvents);
   const [riskStatus, setRiskStatus] = useState<RiskStatus>(initialRiskStatus);
   const [selectedChartSymbol, setSelectedChartSymbol] = useState<PairSymbol>('EUR/USD');
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
+  // Telegram & Scanner live status
+  const [telegramStatus, setTelegramStatus] = useState<BackendTelegramStatus | null>(null);
+  const [scannerStatus, setScannerStatus] = useState<BackendScannerStatus | null>(null);
+
   // Loading, timing & error states
   const [isInitialLoading, setIsInitialLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [isScanningMarkets, setIsScanningMarkets] = useState<boolean>(false);
+  const [isSyncingCalendar, setIsSyncingCalendar] = useState<boolean>(false);
+  const [isTriggeringScanner, setIsTriggeringScanner] = useState<boolean>(false);
   const [isApiConnected, setIsApiConnected] = useState<boolean>(false);
   const [apiResponseTimeMs, setApiResponseTimeMs] = useState<number>(24);
   const [lastUpdatedSecondsAgo, setLastUpdatedSecondsAgo] = useState<number>(0);
@@ -143,6 +155,33 @@ export const App: React.FC = () => {
         setPositions(mappedPositions);
       }
 
+      // Fetch Closed Trade History
+      try {
+        const tradesRes = await quantViewApi.getTradeHistory(50);
+        const bTrades: BackendPaperTrade[] = tradesRes.data;
+        if (Array.isArray(bTrades)) {
+          const mappedClosed: ClosedTrade[] = bTrades.map((t) => ({
+            id: String(t.id),
+            symbol: t.symbol,
+            side: t.direction,
+            size: t.remaining_position_size || t.initial_position_size || 0.1,
+            entryPrice: t.entry_price,
+            exitPrice: t.exit_price || t.current_price,
+            stopLoss: t.stop_loss,
+            takeProfit: t.take_profit_1,
+            realizedPnl: t.realized_pnl,
+            pnlPips: t.pnl_pips,
+            returnR: t.return_r,
+            exitReason: t.exit_reason || 'CLOSED',
+            openedAt: t.opened_at,
+            closedAt: t.closed_at || t.opened_at,
+          }));
+          setClosedTrades(mappedClosed);
+        }
+      } catch {
+        // Keep previous closed trades
+      }
+
       // Fetch Performance
       try {
         const perfRes = await quantViewApi.getPerformance();
@@ -150,7 +189,7 @@ export const App: React.FC = () => {
         if (bPerf) {
           setStats((prev) => ({
             ...prev,
-            winRate: bPerf.win_rate_pct ?? (bPerf.win_rate ? bPerf.win_rate * 100 : prev.winRate),
+            winRate: bPerf.win_rate_pct ?? (bPerf.win_rate ? Number((bPerf.win_rate * 100).toFixed(1)) : prev.winRate),
             profitFactor: bPerf.profit_factor ?? prev.profitFactor,
             totalTrades: bPerf.total_trades ?? prev.totalTrades,
             maxDrawdown: bPerf.max_drawdown_pct ?? bPerf.max_drawdown ?? prev.maxDrawdown,
@@ -191,28 +230,27 @@ export const App: React.FC = () => {
       if (Array.isArray(bSignals)) {
         // Build 4 cards matching SUPPORTED_PAIRS
         const matrixSignals: TradeSignal[] = SUPPORTED_PAIRS.map((sym) => {
-          // Find latest active signal for this symbol
-          const matching = bSignals.find(
-            (s) => s.symbol === sym && s.status === 'ACTIVE'
-          );
+          // Find matching unified signal for this symbol
+          const matching = bSignals.find((s) => s.symbol === sym);
+          const hasActiveActionable = matching && matching.status === 'ACTIVE' && (matching.direction === 'BUY' || matching.direction === 'SELL');
 
-          if (matching) {
+          if (hasActiveActionable && matching) {
             const isBuy = matching.direction === 'BUY';
-            const entry = matching.entry_price;
-            const sl = matching.stop_loss;
+            const entry = matching.entry_price || prices[sym] || 0;
+            const sl = matching.stop_loss || entry * (isBuy ? 0.995 : 1.005);
             const pipsAtRisk = Math.abs(Math.round(isBuy ? (entry - sl) * 10000 : (sl - entry) * 10000)) / 10;
             const rr = matching.risk_reward || matching.risk_reward_ratio || 2.0;
 
             return {
-              id: `SIG-${matching.id}`,
+              id: `SIG-${matching.id || sym}`,
               symbol: sym,
               direction: matching.direction,
               confluenceScore: Math.round(matching.setup_score || matching.confluence_score || 80),
               timeframe: matching.timeframe || '15m',
               entryPrice: entry,
               stopLoss: sl,
-              takeProfit1: matching.take_profit_1,
-              takeProfit2: matching.take_profit_2 || matching.take_profit_1 * 1.005,
+              takeProfit1: matching.take_profit_1 || (isBuy ? entry * 1.01 : entry * 0.99),
+              takeProfit2: matching.take_profit_2 || matching.take_profit_1 * 1.005 || (isBuy ? entry * 1.015 : entry * 0.985),
               riskRewardRatio: `1:${rr.toFixed(1)}`,
               pipsAtRisk: pipsAtRisk > 0 ? pipsAtRisk : 25,
               timestamp: matching.timestamp
@@ -221,27 +259,36 @@ export const App: React.FC = () => {
               setupReason: Array.isArray(matching.reasons) && matching.reasons.length > 0
                 ? matching.reasons.slice(0, 3).join(' • ')
                 : 'Multi-Timeframe Structure Confirmation & Liquidity Sweep',
+              trendAlignment: matching.trend_alignment || undefined,
+              htfTrend: matching.htf_trend || undefined,
               notifyEnabled: true,
               status: 'ACTIVE',
               hasActiveSignal: true,
             };
           }
 
-          // No active setup currently qualified in DB for this pair:
-          // Display Scanning card with real live market price
+          // No active actionable setup currently for this pair:
+          // Display Unified Scanning card with real 1H context & score
           const currentMarketPrice = prices[sym] || (sym === 'XAU/USD' ? 4411.60 : undefined);
+          const waitTf = matching?.timeframe || '1H';
+          const waitScore = matching ? Math.round(matching.setup_score || matching.confluence_score || 0) : 45;
+          const waitReason = (matching?.reasons && matching.reasons.length > 0)
+            ? matching.reasons[0]
+            : (matching?.htf_trend ? `1H Trend: ${matching.htf_trend} • Awaiting high-confluence setup` : 'Scanning order flow for Breaker Blocks, Fair Value Gaps, and fractal swings.');
 
           return {
             id: `SCAN-${sym}`,
             symbol: sym,
             direction: 'SCANNING',
-            confluenceScore: 45,
-            timeframe: '15m',
+            confluenceScore: waitScore,
+            timeframe: waitTf,
             currentPrice: currentMarketPrice,
+            trendAlignment: matching?.trend_alignment || undefined,
+            htfTrend: matching?.htf_trend || undefined,
             notifyEnabled: false,
             status: 'SCANNING',
             hasActiveSignal: false,
-            setupReason: 'Scanning order flow for Breaker Blocks, Fair Value Gaps, and fractal swings.',
+            setupReason: waitReason,
           };
         });
 
@@ -302,15 +349,24 @@ export const App: React.FC = () => {
         // Keep previous
       }
 
-      // 3. Check Telegram Bot Status
+      // 3. Check Telegram Bot Status & Background Scanner Status
       try {
-        const tgRes = await quantViewApi.getTelegramStatus();
-        if (tgRes.data) {
+        const [tgRes, scanRes] = await Promise.allSettled([
+          quantViewApi.getTelegramStatus(),
+          quantViewApi.getScannerStatus(),
+        ]);
+
+        if (tgRes.status === 'fulfilled' && tgRes.value.data) {
+          setTelegramStatus(tgRes.value.data);
           setAlertConfig((prev) => ({
             ...prev,
-            telegramChatConnected: tgRes.data.is_configured,
+            telegramChatConnected: tgRes.value.data.is_configured,
             telegramBotHandle: '@signalTheBEST_bot',
           }));
+        }
+
+        if (scanRes.status === 'fulfilled' && scanRes.value.data) {
+          setScannerStatus(scanRes.value.data);
         }
       } catch {
         // Keep previous
@@ -447,6 +503,89 @@ export const App: React.FC = () => {
     setTimeout(fetchAccountAndPositions, 500);
   };
 
+  // Auto-execute paper trade directly from high-confluence signal
+  const handleTradeFromSignal = async (sig: TradeSignal) => {
+    try {
+      const numId = sig.id.startsWith('SIG-') ? parseInt(sig.id.replace('SIG-', ''), 10) : undefined;
+      const res = await quantViewApi.tradeFromSignal({
+        signal_id: isNaN(numId!) ? null : numId,
+        symbol: sig.symbol,
+        timeframe: sig.timeframe || '1h',
+        risk_percent: 0.5,
+      });
+
+      addToast(
+        'success',
+        'Order Placed',
+        `Opened ${sig.direction} position on ${sig.symbol} (Order #${res.data.id}) via /api/v1/paper/orders/from-signal.`
+      );
+
+      // Instantly refresh account and open positions
+      await fetchAccountAndPositions();
+    } catch (err: any) {
+      addToast('warning', 'Order Failed', err.message || 'Could not place paper trade');
+    }
+  };
+
+  // On-demand market scan across all symbols
+  const handleScanMarkets = async () => {
+    setIsScanningMarkets(true);
+    try {
+      const res = await quantViewApi.scanMarkets('1h');
+      const count = res.data.qualified_signals_count || 0;
+      addToast(
+        'info',
+        'Scan Completed',
+        `Confluence engine evaluated ${res.data.symbols_scanned} symbols: ${count} actionable trade setup(s) identified.`
+      );
+      await fetchSignalsAndPrices();
+    } catch (err: any) {
+      addToast('warning', 'Scan Failed', err.message || 'Market scanner returned error');
+    } finally {
+      setIsScanningMarkets(false);
+    }
+  };
+
+  // Manual synchronization of economic calendar from live provider
+  const handleSyncNews = async () => {
+    setIsSyncingCalendar(true);
+    try {
+      await quantViewApi.syncNewsCalendar();
+      addToast(
+        'success',
+        'Calendar Synchronized',
+        `Synced economic news events from ForexFactory provider via /api/v1/news/sync.`
+      );
+      await fetchNewsAndRisk();
+    } catch (err: any) {
+      addToast('warning', 'Sync Failed', err.message || 'Could not synchronize calendar');
+    } finally {
+      setIsSyncingCalendar(false);
+    }
+  };
+
+  // Manually trigger background scanner cycle
+  const handleTriggerScannerCycle = async () => {
+    setIsTriggeringScanner(true);
+    try {
+      await quantViewApi.triggerScannerCycle('1h', true, true);
+      addToast(
+        'success',
+        'Scanner Triggered',
+        `Background scanner cycle executed via /api/v1/telegram/scanner/trigger.`
+      );
+      await Promise.allSettled([
+        fetchAccountAndPositions(),
+        fetchSignalsAndPrices(),
+        fetchNewsAndRisk(),
+      ]);
+    } catch (err: any) {
+      addToast('warning', 'Scanner Error', err.message || 'Could not trigger background scanner');
+    } finally {
+      setIsTriggeringScanner(false);
+    }
+  };
+
   // Test Notification Button Handler connected to POST /api/v1/telegram/broadcast
   const handleSendTestNotification = async () => {
     setIsSendingTestTelegram(true);
@@ -526,7 +665,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-slate-200 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#0a0b10] text-slate-200 flex flex-col font-sans">
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
@@ -539,10 +678,12 @@ export const App: React.FC = () => {
         isBlackout={riskStatus.isBlackout}
         isOpenMobile={isMobileSidebarOpen}
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
+        isApiConnected={isApiConnected}
+        isScannerRunning={scannerStatus?.is_running}
       />
 
       {/* Main Content Wrapper */}
-      <div className="lg:pl-64 flex flex-col min-h-screen">
+      <div className="lg:pl-56 flex flex-col min-h-screen">
         {/* Top Header with Real Balance, LIVE DATA badge, and Refresh Data button */}
         <Header
           account={account}
@@ -559,11 +700,11 @@ export const App: React.FC = () => {
 
         {/* Offline / Connection Error Banner (if API is unreachable) */}
         {!isApiConnected && !isInitialLoading && (
-          <div className="mx-4 lg:mx-6 mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between gap-3">
+          <div className="mx-4 lg:mx-5 mt-2.5 px-3 py-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
               <span>
-                Backend API (http://localhost:8000) not responding. Running in <strong>SIMULATION MODE</strong> with realistic market fallbacks. Run <code>python -m uvicorn app.main:app --reload</code> in <code>server/</code> to connect live.
+                FastAPI backend on port 8000 unreachable. Running in <strong>SIMULATION MODE</strong>. Start server with <code>python -m uvicorn app.main:app --reload</code> in <code>server/</code>.
               </span>
             </div>
             <button
@@ -571,76 +712,37 @@ export const App: React.FC = () => {
               className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-[11px] font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1"
             >
               <RefreshCw className="w-3 h-3" />
-              <span>Retry Connection</span>
+              <span>Retry</span>
             </button>
           </div>
         )}
 
-        {/* Tab Navigation Pill Bar */}
-        <div className="px-4 lg:px-6 pt-4 flex items-center justify-between border-b border-[#1e1e2d]/60 pb-3 flex-wrap gap-3">
-          <div className="flex items-center gap-1 bg-[#12121a] p-1 rounded-lg border border-[#1e1e2d] overflow-x-auto">
-            <button
-              onClick={() => setCurrentTab('dashboard')}
-              className={`px-3 py-1.5 rounded-md text-xs font-mono font-bold transition-all cursor-pointer ${
-                currentTab === 'dashboard'
-                  ? 'bg-[#181824] text-white border border-[#1e1e2d] shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Unified Dashboard
-            </button>
-            <button
-              onClick={() => setCurrentTab('signals')}
-              className={`px-3 py-1.5 rounded-md text-xs font-mono font-bold transition-all cursor-pointer ${
-                currentTab === 'signals'
-                  ? 'bg-[#181824] text-[#00ff88] border border-[#00ff88]/30 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Signals ({signals.filter((s) => s.hasActiveSignal).length})
-            </button>
-            <button
-              onClick={() => setCurrentTab('positions')}
-              className={`px-3 py-1.5 rounded-md text-xs font-mono font-bold transition-all cursor-pointer ${
-                currentTab === 'positions'
-                  ? 'bg-[#181824] text-cyan-400 border border-cyan-500/30 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Positions ({positions.length})
-            </button>
-            <button
-              onClick={() => setCurrentTab('news')}
-              className={`px-3 py-1.5 rounded-md text-xs font-mono font-bold transition-all cursor-pointer ${
-                currentTab === 'news'
-                  ? 'bg-[#181824] text-amber-400 border border-amber-500/30 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              News & Risk
-            </button>
-            <button
-              onClick={() => setCurrentTab('settings')}
-              className={`px-3 py-1.5 rounded-md text-xs font-mono font-bold transition-all cursor-pointer ${
-                currentTab === 'settings'
-                  ? 'bg-[#181824] text-purple-300 border border-purple-500/30 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Alert Settings
-            </button>
+        {/* Workspace Context Bar */}
+        <div className="px-4 lg:px-5 py-2 flex items-center justify-between border-b border-[#1d2230] text-xs font-mono bg-[#0e1015]/70">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 uppercase text-[10px] tracking-wider">Workspace:</span>
+            <span className="font-bold text-slate-200 uppercase text-xs">
+              {currentTab === 'dashboard' && 'Unified Trading Desk'}
+              {currentTab === 'signals' && 'Multi-Timeframe Confluence Matrix'}
+              {currentTab === 'positions' && 'Position & Order Management'}
+              {currentTab === 'news' && 'Macroeconomic Risk Monitor'}
+              {currentTab === 'settings' && 'Alert Engine & Daemon Settings'}
+            </span>
           </div>
 
-          <div className="flex items-center gap-3 text-xs font-mono">
-            <span className="text-slate-400">Endpoint:</span>
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="hidden sm:inline text-slate-500">
+              Pairs: <strong className="text-slate-300">EUR/USD • GBP/USD • USD/JPY • XAU/USD</strong>
+            </span>
+            <span className="text-slate-700 hidden sm:inline">|</span>
             <span
-              className={`px-2 py-0.5 rounded font-bold border ${
+              className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
                 isApiConnected
-                  ? 'bg-[#00ff88]/15 text-[#00ff88] border-[#00ff88]/30'
-                  : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                  ? 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
               }`}
             >
-              {isApiConnected ? 'FASTAPI /api/v1 (LIVE)' : 'SIMULATION FALLBACK'}
+              {isApiConnected ? 'FASTAPI /api/v1 (LIVE)' : 'SIMULATION MODE'}
             </span>
           </div>
         </div>
@@ -650,20 +752,26 @@ export const App: React.FC = () => {
           {/* 1. UNIFIED DASHBOARD TAB */}
           {currentTab === 'dashboard' && (
             <>
-              {/* Performance Stats & Equity Curve */}
-              <PerformanceDashboard stats={stats} />
+              {/* Performance Stats & Equity Curve derived from real trades */}
+              <PerformanceDashboard
+                stats={stats}
+                account={account}
+                closedTrades={closedTrades}
+              />
 
               {/* Signal Matrix Grid (4 Cards: EUR/USD, GBP/USD, USD/JPY, XAU/USD) */}
               <SignalMatrix
                 signals={signals}
                 livePrices={livePrices}
                 isLoading={isInitialLoading}
+                isScanning={isScanningMarkets}
                 onToggleNotify={handleToggleNotify}
                 onSelectSignalForChart={handleSelectSignalForChart}
-                onTriggerScan={handleManualRefresh}
+                onTriggerScan={handleScanMarkets}
+                onTradeFromSignal={handleTradeFromSignal}
               />
 
-              {/* Candlestick Chart Area Placeholder */}
+              {/* Candlestick Chart Area */}
               <div id="chart-section">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
@@ -671,9 +779,10 @@ export const App: React.FC = () => {
                 />
               </div>
 
-              {/* Active Positions Table (Live P&L with 3s refresh) */}
+              {/* Active Positions & Closed Trades Table (Live P&L with 3s refresh) */}
               <ActivePositionsTable
                 positions={positions}
+                closedTrades={closedTrades}
                 isLoading={isInitialLoading}
                 onClosePosition={handleClosePosition}
               />
@@ -683,17 +792,22 @@ export const App: React.FC = () => {
                 news={news}
                 riskStatus={riskStatus}
                 isLoading={isInitialLoading}
+                isSyncingCalendar={isSyncingCalendar}
                 onToggleBlackout={handleToggleBlackout}
-                onSyncCalendar={handleManualRefresh}
+                onSyncCalendar={handleSyncNews}
               />
 
-              {/* Notification Settings Panel */}
+              {/* Notification & Background Scanner Settings Panel */}
               <NotificationSettings
                 config={alertConfig}
                 onUpdateConfig={setAlertConfig}
                 onSendTestNotification={handleSendTestNotification}
                 isSendingTest={isSendingTestTelegram}
                 testNotificationResult={testNotificationResult}
+                telegramStatus={telegramStatus}
+                scannerStatus={scannerStatus}
+                onTriggerScanner={handleTriggerScannerCycle}
+                isTriggeringScanner={isTriggeringScanner}
               />
             </>
           )}
@@ -705,9 +819,11 @@ export const App: React.FC = () => {
                 signals={signals}
                 livePrices={livePrices}
                 isLoading={isInitialLoading}
+                isScanning={isScanningMarkets}
                 onToggleNotify={handleToggleNotify}
                 onSelectSignalForChart={handleSelectSignalForChart}
-                onTriggerScan={handleManualRefresh}
+                onTriggerScan={handleScanMarkets}
+                onTradeFromSignal={handleTradeFromSignal}
               />
               <div id="chart-section">
                 <TradingChart
@@ -723,6 +839,7 @@ export const App: React.FC = () => {
             <div className="space-y-6">
               <ActivePositionsTable
                 positions={positions}
+                closedTrades={closedTrades}
                 isLoading={isInitialLoading}
                 onClosePosition={handleClosePosition}
               />
@@ -742,8 +859,9 @@ export const App: React.FC = () => {
                 news={news}
                 riskStatus={riskStatus}
                 isLoading={isInitialLoading}
+                isSyncingCalendar={isSyncingCalendar}
                 onToggleBlackout={handleToggleBlackout}
-                onSyncCalendar={handleManualRefresh}
+                onSyncCalendar={handleSyncNews}
               />
             </div>
           )}
@@ -757,6 +875,10 @@ export const App: React.FC = () => {
                 onSendTestNotification={handleSendTestNotification}
                 isSendingTest={isSendingTestTelegram}
                 testNotificationResult={testNotificationResult}
+                telegramStatus={telegramStatus}
+                scannerStatus={scannerStatus}
+                onTriggerScanner={handleTriggerScannerCycle}
+                isTriggeringScanner={isTriggeringScanner}
               />
             </div>
           )}
@@ -780,12 +902,12 @@ export const App: React.FC = () => {
             <span>•</span>
             <span
               className={`flex items-center gap-1 ${
-                isApiConnected ? 'text-[#00ff88]' : 'text-amber-400'
+                isApiConnected ? 'text-[#00e676]' : 'text-amber-400'
               }`}
             >
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  isApiConnected ? 'bg-[#00ff88] animate-pulse' : 'bg-amber-400'
+                  isApiConnected ? 'bg-[#00e676] animate-pulse' : 'bg-amber-400'
                 }`}
               />
               {isApiConnected ? 'LIVE DATA POLLING (3s/10s/60s)' : 'SIMULATION MODE'}

@@ -39,7 +39,7 @@ export function formatPnL(pnl: number | null | undefined): {
     maximumFractionDigits: 2,
   });
   const formatted = `${isPositive ? '+' : '-'}$${absFormatted}`;
-  const colorClass = isPositive ? 'text-[#00ff88]' : 'text-[#ff3366]';
+  const colorClass = isPositive ? 'text-[#00e676]' : 'text-[#ff3366]';
 
   return { formatted, isPositive, colorClass };
 }

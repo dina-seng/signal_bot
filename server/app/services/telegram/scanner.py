@@ -311,25 +311,43 @@ class AutomatedMarketScanner:
                 logger.error(f"News ingestion failed: {e}")
                 db.rollback()
 
-            # 3. Run Strategy Signal Evaluation across symbols & timeframes
-            for tf in target_timeframes:
-                logger.info(f"Signal analysis started for timeframe [{tf}]")
+            # 3. Run Strategy Signal Evaluation across symbols
+            scan_batches = []
+            if timeframes or timeframe:
+                for tf in target_timeframes:
+                    logger.info(f"Signal analysis started for timeframe [{tf}]")
+                    try:
+                        batch_res = self.signal_generator.scan_all_symbols(
+                            db=db,
+                            symbols=target_symbols,
+                            timeframe=tf,
+                            account_balance=10000.0,
+                            risk_percent=0.5,
+                            persist_qualified=True,
+                        )
+                        scan_batches.append(batch_res)
+                    except Exception as e:
+                        logger.error(f"Signal analysis failed for timeframe [{tf}]: {e}")
+                        db.rollback()
+                        continue
+                    logger.info(f"Signal analysis completed for timeframe [{tf}]")
+            else:
+                logger.info("Unified multi-timeframe signal analysis started across target symbols")
                 try:
-                    scan_res = self.signal_generator.scan_all_symbols(
+                    unified_res = self.signal_generator.scan_unified_all(
                         db=db,
                         symbols=target_symbols,
-                        timeframe=tf,
                         account_balance=10000.0,
                         risk_percent=0.5,
                         persist_qualified=True,
                     )
+                    scan_batches.append(unified_res)
                 except Exception as e:
-                    logger.error(f"Signal analysis failed for timeframe [{tf}]: {e}")
+                    logger.error(f"Unified signal analysis failed: {e}")
                     db.rollback()
-                    continue
+                logger.info("Unified signal analysis completed")
 
-                logger.info(f"Signal analysis completed for timeframe [{tf}]")
-
+            for scan_res in scan_batches:
                 for result in scan_res.results:
                     sig = result.signal
                     if not sig or not result.is_actionable or result.blackout_blocked:

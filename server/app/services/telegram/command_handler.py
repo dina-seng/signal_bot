@@ -80,13 +80,12 @@ class TelegramCommandHandler:
             reply = self.formatter.format_help_menu()
 
         # -------------------------------------------------------------
-        # 2. Market Scanner (/scan)
+        # 2. Unified Multi-Timeframe Market Scanner (/scan)
         # -------------------------------------------------------------
         elif cmd_name == "/scan":
-            scan_res = self.signal_generator.scan_all_symbols(
+            scan_res = self.signal_generator.scan_unified_all(
                 db=db,
                 symbols=settings.SUPPORTED_SYMBOLS,
-                timeframe="1h",
                 account_balance=10000.0,
                 risk_percent=0.5,
                 persist_qualified=True,
@@ -94,7 +93,7 @@ class TelegramCommandHandler:
             reply = self.formatter.format_market_scan_summary(scan_res)
 
         # -------------------------------------------------------------
-        # 3. Single Pair Deep Signal Evaluation (/signal <symbol>)
+        # 3. Single Pair Unified Signal Evaluation (/signal <symbol>)
         # -------------------------------------------------------------
         elif cmd_name == "/signal":
             if len(parts) < 2:
@@ -108,91 +107,40 @@ class TelegramCommandHandler:
                         provider=self.market_provider, db=db
                     )
                     ingest_svc.db = db
-                    for tf in ["1h", "4h", "15m"]:
+                    for tf in ["1h", "4h", "30m", "15m"]:
                         try:
                             await ingest_svc.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
                         except Exception as e:
                             logger.warning(f"Failed to refresh market data for {sym} [{tf}] via provider: {e}")
 
-                # 2. Query and filter for verified closed candles from DB
-                c1h_raw = list(
-                    db.scalars(
-                        select(Candle)
-                        .where(Candle.symbol == sym, Candle.timeframe == "1h")
-                        .order_by(desc(Candle.timestamp))
-                        .limit(200)
-                    ).all()
+                # 2. Evaluate Unified Multi-Timeframe Signal
+                scan_res = self.signal_generator.scan_unified(
+                    db=db,
+                    symbol=sym,
+                    account_balance=10000.0,
+                    risk_percent=0.5,
+                    persist_qualified=True,
                 )
-                c1h_raw.reverse()
-                c1h = filter_closed_candles(c1h_raw, timeframe="1h")
 
-                if not c1h:
-                    reply = f"❌ No candle data found in database for `{sym}`. Ingest data first."
+                if scan_res.is_actionable and scan_res.signal:
+                    reply = self.formatter.format_signal_alert(scan_res.signal)
                 else:
-                    c4h_raw = list(
-                        db.scalars(
-                            select(Candle)
-                            .where(Candle.symbol == sym, Candle.timeframe == "4h")
-                            .order_by(desc(Candle.timestamp))
-                            .limit(100)
-                        ).all()
+                    sym_code = self.formatter.escape_code(sym)
+                    htf_txt = self.formatter.escape_code(scan_res.htf_trend or "NEUTRAL")
+                    score_txt = f"{scan_res.setup_score:.0f}/100"
+                    align_txt = f" • Alignment: `{scan_res.trend_alignment}`" if scan_res.trend_alignment else ""
+                    reasons_lines = "\n".join([f"  • {self.formatter.escape_markdown(r)}" for r in scan_res.reasons[:4]])
+                    reply = (
+                        f"⚪ *UNIFIED SIGNAL STATUS: WAIT*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📊 *Pair:* `{sym_code}` [{scan_res.timeframe}]\n"
+                        f"📈 *1H Context:* `{htf_txt}`{align_txt}\n"
+                        f"⭐ *Confluence Score:* `{score_txt}` (Min: `{settings.MIN_SETUP_SCORE:.0f}`)\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"💡 *Current Market Analysis:*\n"
+                        f"{reasons_lines}\n\n"
+                        f"⚠️ _Awaiting 15m/30m/1H confirmation before generating actionable entry._"
                     )
-                    c4h_raw.reverse()
-                    c4h = filter_closed_candles(c4h_raw, timeframe="4h")
-
-                    c15m_raw = list(
-                        db.scalars(
-                            select(Candle)
-                            .where(Candle.symbol == sym, Candle.timeframe == "15m")
-                            .order_by(desc(Candle.timestamp))
-                            .limit(100)
-                        ).all()
-                    )
-                    c15m_raw.reverse()
-                    c15m = filter_closed_candles(c15m_raw, timeframe="15m")
-
-                    # 3. Data Staleness Detection & Explicit Latest Candle Logging
-                    staleness = check_data_staleness(c1h, symbol=sym, timeframe="1h")
-                    latest_c1h = c1h[-1]
-                    log_latest_candle(
-                        latest_c1h,
-                        symbol=sym,
-                        timeframe="1h",
-                        context="/signal",
-                        is_fresh=not staleness.is_stale,
-                    )
-                    if staleness.is_stale:
-                        logger.warning(staleness.message)
-
-                    news_check = self.news_filter.check_from_db(db=db, symbol=sym, target_time=datetime.now(timezone.utc))
-
-                    sig = self.signal_generator.evaluate_market_signal(
-                        candles_primary=c1h,
-                        symbol=sym,
-                        timeframe="1h",
-                        candles_4h=c4h if c4h else None,
-                        candles_15m=c15m if c15m else None,
-                        news_check=news_check,
-                    )
-
-                    if sig.direction in (SignalDirection.BUY, SignalDirection.SELL):
-                        reply = self.formatter.format_signal_alert(sig)
-                        if staleness.is_stale:
-                            reply += f"\n\n⚠️ *DATA FRESHNESS WARNING:* Market data is {staleness.age_hours:.1f}h old (last candle: {staleness.latest_candle_time.strftime('%Y-%m-%d %H:%M UTC')})."
-                    else:
-                        sym_code = self.formatter.escape_code(sig.symbol)
-                        reply = (
-                            f"⚪ *MARKET STATUS: WAIT (NO ACTIVE SETUP)*\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📊 *Pair:* `{sym_code}` (1h)\n"
-                            f"⭐ *Setup Score:* `{sig.setup_score:.1f} / 100` (Min required: `{settings.MIN_SETUP_SCORE:.1f}`)\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"💡 *Current Market Analysis:*\n"
-                        )
-                        for r in sig.reasons:
-                            reply += f"  • {self.formatter.escape_markdown(r)}\n"
-                        if staleness.is_stale:
-                            reply += f"\n⚠️ *Data Freshness:* Last closed candle is from {staleness.latest_candle_time.strftime('%Y-%m-%d %H:%M UTC')} ({staleness.age_hours:.1f}h ago).\n"
 
         # -------------------------------------------------------------
         # 4. Economic News Calendar (/news)

@@ -213,7 +213,7 @@ async def test_telegram_command_handler(test_db_session):
     # 2. /scan
     res_scan = await handler.handle_command(test_db_session, TelegramCommandRequest(command="/scan"))
     assert res_scan.handled_successfully is True
-    assert "MULTI-MARKET SCANNER" in res_scan.reply_text
+    assert "UNIFIED SCANNER" in res_scan.reply_text or "MULTI-MARKET SCANNER" in res_scan.reply_text
 
     # 3. /news
     res_news = await handler.handle_command(test_db_session, TelegramCommandRequest(command="/news"))

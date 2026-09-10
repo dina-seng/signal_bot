@@ -64,170 +64,152 @@ export const Header: React.FC<HeaderProps> = ({
   const pnlMeta = formatPnL(account.unrealizedPnl);
 
   return (
-    <header className="sticky top-0 z-30 w-full bg-[#12121a]/95 backdrop-blur-md border-b border-[#1e1e2d] px-4 lg:px-6 py-3">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-        {/* Left: Mobile hamburger + Terminal Title & Connection Status */}
-        <div className="flex items-center justify-between lg:justify-start gap-4">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onToggleMobileSidebar}
-              className="lg:hidden p-2 rounded-md bg-[#181824] text-slate-300 hover:text-white border border-[#1e1e2d] cursor-pointer"
-              aria-label="Toggle menu"
+    <header className="sticky top-0 z-30 w-full bg-[#111319]/95 backdrop-blur-md border-b border-[#1d2230] px-4 lg:px-5 py-2.5">
+      <div className="flex items-center justify-between gap-3 flex-wrap xl:flex-nowrap">
+        {/* Left: Terminal Branding & Environment Telemetry */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onToggleMobileSidebar}
+            className="lg:hidden p-1.5 rounded bg-[#161922] text-slate-400 hover:text-white border border-[#1d2230] cursor-pointer"
+            aria-label="Toggle navigation menu"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+
+          {/* Terminal Identifier & Mode Badge */}
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono font-bold tracking-widest text-slate-100 uppercase">
+                QUANT<span className="text-[#00e676]">VIEW</span>
+              </span>
+              <span className="text-[10px] font-mono text-slate-500 uppercase">TERMINAL</span>
+            </div>
+
+            {/* Live Data / Simulation Mode Badge */}
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold tracking-wider uppercase border flex items-center gap-1.5 ${
+                isApiConnected
+                  ? 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+              }`}
             >
-              <Menu className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-2.5">
-              <div
-                className={`w-2.5 h-2.5 rounded-full ${
-                  isApiConnected
-                    ? 'bg-[#00ff88] shadow-[0_0_8px_#00ff88] animate-pulse'
-                    : 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  isApiConnected ? 'bg-[#00e676]' : 'bg-amber-400'
                 }`}
               />
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono font-bold tracking-wider text-slate-300 uppercase">
-                    QUANTVIEW TERMINAL
-                  </span>
-
-                  {/* Mode Badge: LIVE DATA vs SIMULATION MODE */}
-                  <span
-                    className={`px-2 py-0.2 rounded text-[10px] font-mono font-bold uppercase tracking-wider border ${
-                      isApiConnected
-                        ? 'bg-[#00ff88]/15 text-[#00ff88] border-[#00ff88]/30 shadow-[0_0_8px_rgba(0,255,136,0.2)]'
-                        : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                    }`}
-                  >
-                    {isApiConnected ? '● LIVE DATA' : '○ SIMULATION MODE'}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 flex-wrap">
-                  <span className="flex items-center gap-1 text-emerald-400">
-                    <Radio className="w-3 h-3 animate-pulse" />
-                    BROKER
-                  </span>
-                  <span className="text-slate-600">|</span>
-                  <span>{account.latencyMs}ms</span>
-                  <span className="text-slate-600">|</span>
-                  <span className="flex items-center gap-1 text-slate-400">
-                    <Clock className="w-3 h-3 text-slate-500" />
-                    {utcTime || '00:00:00 UTC'}
-                  </span>
-                  <span className="text-slate-600">|</span>
-                  <span className="text-slate-500 text-[10px]">
-                    Updated {lastUpdatedSecondsAgo}s ago
-                  </span>
-                </div>
-              </div>
-            </div>
+              {isApiConnected ? 'LIVE DATA' : 'SIMULATION'}
+            </span>
           </div>
 
-          {/* Quick Risk Pill (clickable to simulate blackout) */}
+          {/* Telemetry separator */}
+          <div className="hidden sm:flex items-center gap-2 text-[11px] font-mono text-slate-400 pl-2 border-l border-[#1d2230]">
+            <span className="flex items-center gap-1 text-slate-300">
+              <Radio className={`w-3 h-3 ${isApiConnected ? 'text-[#00e676]' : 'text-slate-500'}`} />
+              <span>{isApiConnected ? 'BROKER' : 'OFFLINE'}</span>
+            </span>
+            <span className="text-slate-600">|</span>
+            <span className="text-slate-300">{account.latencyMs}ms</span>
+            <span className="text-slate-600">|</span>
+            <span className="flex items-center gap-1 text-slate-300">
+              <Clock className="w-3 h-3 text-slate-500" />
+              <span>{utcTime || '00:00:00 UTC'}</span>
+            </span>
+            <span className="text-slate-600">|</span>
+            <span className="text-slate-500 text-[10px]">
+              T-{lastUpdatedSecondsAgo}s
+            </span>
+          </div>
+
+          {/* Quick Risk Pill */}
           <button
             onClick={onToggleBlackout}
-            title="Click to toggle blackout simulation"
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-semibold border transition-all cursor-pointer ${
+            title="Click to toggle macroeconomic blackout window simulation"
+            className={`hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-semibold border transition-all cursor-pointer ${
               riskStatus.isBlackout
-                ? 'bg-[#ff3366]/15 text-[#ff3366] border-[#ff3366]/30 hover:bg-[#ff3366]/25 animate-pulse'
-                : 'bg-[#00ff88]/15 text-[#00ff88] border-[#00ff88]/30 hover:bg-[#00ff88]/25'
+                ? 'bg-[#ff3366]/15 text-[#ff3366] border-[#ff3366]/40 hover:bg-[#ff3366]/25'
+                : 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30 hover:bg-[#00e676]/20'
             }`}
           >
             {riskStatus.isBlackout ? (
               <>
-                <ShieldAlert className="w-3.5 h-3.5" />
+                <ShieldAlert className="w-3 h-3" />
                 <span>BLACKOUT ACTIVE</span>
               </>
             ) : (
               <>
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>SAFE ENVIRONMENT</span>
+                <ShieldCheck className="w-3 h-3" />
+                <span>RISK SAFE</span>
               </>
             )}
           </button>
         </div>
 
-        {/* Right: Key Financial Metrics Header */}
-        <div className="flex items-center justify-between lg:justify-end gap-3 lg:gap-5 flex-wrap">
+        {/* Right: Financial Metrics & Synchronization Controls */}
+        <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-end">
           {/* Account Balance */}
-          <div className="bg-[#0a0a0f] px-3.5 py-1.5 rounded-lg border border-[#1e1e2d]">
-            <span className="text-[10px] uppercase tracking-wider font-mono text-slate-400 flex items-center gap-1">
-              <Wallet className="w-3 h-3 text-slate-500" />
-              Balance
-            </span>
-            <div className="text-sm lg:text-base font-mono font-bold text-slate-100">
+          <div className="flex items-baseline gap-1.5 px-2.5 py-1 rounded bg-[#0a0b10] border border-[#1d2230] font-mono">
+            <span className="text-[10px] uppercase text-slate-500 font-semibold">Bal:</span>
+            <span className="text-xs sm:text-sm font-bold text-slate-100">
               {formatCurrency(account.balance)}
-            </div>
+            </span>
           </div>
 
           {/* Equity */}
-          <div className="bg-[#0a0a0f] px-3.5 py-1.5 rounded-lg border border-[#1e1e2d]">
-            <span className="text-[10px] uppercase tracking-wider font-mono text-slate-400 flex items-center gap-1">
-              <Activity className="w-3 h-3 text-slate-500" />
-              Equity
-            </span>
-            <div className="text-sm lg:text-base font-mono font-bold text-slate-100">
+          <div className="flex items-baseline gap-1.5 px-2.5 py-1 rounded bg-[#0a0b10] border border-[#1d2230] font-mono">
+            <span className="text-[10px] uppercase text-slate-500 font-semibold">Eq:</span>
+            <span className="text-xs sm:text-sm font-bold text-slate-100">
               {formatCurrency(account.equity)}
-            </div>
+            </span>
           </div>
 
-          {/* Unrealized P&L */}
+          {/* Floating P&L */}
           <div
-            className={`px-3.5 py-1.5 rounded-lg border transition-colors ${
+            className={`flex items-baseline gap-1.5 px-2.5 py-1 rounded border font-mono ${
               pnlMeta.isPositive
-                ? 'bg-[#00ff88]/10 border-[#00ff88]/30 text-[#00ff88]'
+                ? 'bg-[#00e676]/10 border-[#00e676]/30 text-[#00e676]'
                 : 'bg-[#ff3366]/10 border-[#ff3366]/30 text-[#ff3366]'
             }`}
           >
-            <span className="text-[10px] uppercase tracking-wider font-mono opacity-80 flex items-center gap-1">
-              {pnlMeta.isPositive ? (
-                <TrendingUp className="w-3 h-3" />
-              ) : (
-                <TrendingDown className="w-3 h-3" />
-              )}
-              Unrealized P&L
+            <span className="text-[10px] uppercase opacity-75 font-semibold">P&L:</span>
+            <span className="text-xs sm:text-sm font-bold">
+              {pnlMeta.formatted}
             </span>
-            <div className="text-sm lg:text-base font-mono font-bold flex items-center gap-1.5">
-              <span>{pnlMeta.formatted}</span>
-              <span className="text-xs opacity-90">
-                ({pnlMeta.isPositive ? '+' : ''}
-                {account.unrealizedPnlPercent.toFixed(2)}%)
-              </span>
-            </div>
+            <span className="text-[10px] opacity-80">
+              ({pnlMeta.isPositive ? '+' : ''}{account.unrealizedPnlPercent.toFixed(2)}%)
+            </span>
           </div>
 
-          {/* Polling Indicator & Refresh Button */}
-          <div className="flex items-center gap-2">
-            <div
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#181824] border border-[#1e1e2d] text-[11px] font-mono text-slate-400"
-              title="Next automated synchronization"
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  isRefreshing ? 'bg-cyan-400 animate-ping' : 'bg-slate-500'
-                }`}
-              />
-              <span>SYNC {pollSecondsRemaining}s</span>
-            </div>
-
-            {/* Refresh Data Button */}
-            <button
-              onClick={onRefresh}
-              className={`px-3 py-1.5 rounded-lg bg-[#181824] hover:bg-[#202030] text-slate-300 hover:text-white border border-[#1e1e2d] hover:border-[#2a2a3e] text-xs font-mono font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                isRefreshing ? 'opacity-70 cursor-wait' : ''
+          {/* Polling Countdown Indicator */}
+          <div
+            className="hidden lg:flex items-center gap-1.5 px-2 py-1 rounded bg-[#161922] border border-[#1d2230] text-[10px] font-mono text-slate-400"
+            title="Automated sync countdown"
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isRefreshing ? 'bg-cyan-400 animate-ping' : 'bg-slate-500'
               }`}
-              title="Manually trigger API fetch across all endpoints"
-              aria-label="Refresh Data"
-              disabled={isRefreshing}
-            >
-              <RefreshCw
-                className={`w-3.5 h-3.5 text-cyan-400 ${
-                  isRefreshing ? 'animate-spin' : 'hover:rotate-180 transition-transform duration-500'
-                }`}
-              />
-              <span className="hidden sm:inline">Refresh Data</span>
-            </button>
+            />
+            <span>SYNC {pollSecondsRemaining}s</span>
           </div>
+
+          {/* Refresh Action Button */}
+          <button
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className={`px-2.5 py-1 rounded bg-[#161922] hover:bg-[#1d212d] text-slate-300 hover:text-white border border-[#1d2230] hover:border-[#282f42] text-xs font-mono font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+              isRefreshing ? 'opacity-70 cursor-wait' : ''
+            }`}
+            title="Trigger full sync across all endpoints"
+            aria-label="Refresh Data"
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 text-cyan-400 ${
+                isRefreshing ? 'animate-spin' : ''
+              }`}
+            />
+            <span className="hidden sm:inline text-xs">Sync</span>
+          </button>
         </div>
       </div>
     </header>

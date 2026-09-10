@@ -94,8 +94,16 @@ class TelegramMessageFormatter:
             f"⏱ *Timeframe:* `{tf}`",
             f"🎯 *Direction:* {dir_emoji}",
             f"⭐ *Confluence Score:* `{score_str} / 100`",
-            f"━━━━━━━━━━━━━━━━━━━━",
         ]
+
+        if getattr(sig, "trend_alignment", None):
+            align_icon = "✅" if sig.trend_alignment == "TREND FOLLOWING" else "⚠️"
+            lines.append(f"🧭 *Trend Alignment:* {align_icon} `{cls.escape_code(sig.trend_alignment)}`")
+
+        if getattr(sig, "htf_trend", None):
+            lines.append(f"📈 *1H Context:* `{cls.escape_code(sig.htf_trend)}`")
+
+        lines.append(f"━━━━━━━━━━━━━━━━━━━━")
 
         if sig.entry_price is not None:
             formatted_entry = cls.format_price(sig.entry_price, sym_clean)
@@ -201,9 +209,9 @@ class TelegramMessageFormatter:
 
     @classmethod
     def format_market_scan_summary(cls, scan_result: MarketScanResponse) -> str:
-        """Format full multi-symbol market scanner digest."""
+        """Format full multi-symbol unified market scanner digest."""
         lines = [
-            f"📡 *MULTI-MARKET SCANNER DIGEST* 📡",
+            f"📡 *UNIFIED SCANNER DIGEST* 📡",
             f"━━━━━━━━━━━━━━━━━━━━",
             f"🕒 *Scan Time:* `{scan_result.timestamp.strftime('%Y-%m-%d %H:%M UTC')}`",
             f"🔍 *Markets Scanned:* `{scan_result.scanned_count}` | 🎯 *Actionable:* `{scan_result.actionable_count}`",
@@ -213,16 +221,30 @@ class TelegramMessageFormatter:
         for r in scan_result.results:
             dir_icon = "🟢" if r.direction == SignalDirection.BUY else ("🔴" if r.direction == SignalDirection.SELL else "⚪")
             status_text = f"*{cls.escape_markdown(r.direction.value)}* (Score: `{r.setup_score:.0f}/100`)"
+
+            # Trend alignment tag
+            if getattr(r, "trend_alignment", None):
+                align = r.trend_alignment
+                if align == "COUNTER-TREND SCALP":
+                    status_text += " `[⚠️ COUNTER-TREND SCALP]`"
+                elif align == "TREND FOLLOWING":
+                    status_text += " `[✅ TREND FOLLOWING]`"
+                else:
+                    status_text += f" `[{cls.escape_markdown(align)}]`"
+            elif r.direction == SignalDirection.WAIT and getattr(r, "htf_trend", None):
+                status_text += f" `[1H {cls.escape_markdown(r.htf_trend)}]`"
+
             if r.blackout_blocked:
                 status_text += " `[NEWS BLOCKED]`"
 
             sym = cls.escape_code(f"{r.symbol:<8}")
-            tf = cls.escape_code(r.timeframe)
+            tf_display = "1H" if r.timeframe.lower() == "1h" else r.timeframe
+            tf = cls.escape_code(tf_display)
             lines.append(f"{dir_icon} `{sym}` [{tf}] ➔ {status_text}")
 
         lines.extend([
             f"━━━━━━━━━━━━━━━━━━━━",
-            f"💡 _Type /signal <pair> for deep analysis on any symbol._",
+            f"💡 _Type /signal <pair> for deep multi-timeframe analysis._",
         ])
         return "\n".join(lines)
 

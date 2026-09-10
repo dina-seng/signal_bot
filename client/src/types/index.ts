@@ -37,6 +37,8 @@ export interface TradeSignal {
   pipsAtRisk?: number;
   timestamp?: string;
   setupReason?: string;
+  trendAlignment?: 'TREND FOLLOWING' | 'COUNTER-TREND SCALP' | string;
+  htfTrend?: string;
   notifyEnabled: boolean;
   status: 'ACTIVE' | 'PENDING' | 'TRIGGERED' | 'SCANNING' | 'NO_SETUP';
   hasActiveSignal: boolean;
@@ -102,6 +104,23 @@ export interface AccountSummary {
   brokerStatus: 'CONNECTED' | 'RECONNECTING' | 'OFFLINE';
   latencyMs: number;
   currency?: string;
+}
+
+export interface ClosedTrade {
+  id: string;
+  symbol: PairSymbol | string;
+  side: TradeDirection;
+  size: number;
+  entryPrice: number;
+  exitPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  realizedPnl: number;
+  pnlPips: number;
+  returnR?: number;
+  exitReason: string;
+  openedAt: string;
+  closedAt: string;
 }
 
 export type NavigationTab = 'dashboard' | 'signals' | 'positions' | 'news' | 'settings';
