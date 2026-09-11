@@ -1,10 +1,9 @@
 """Market data module containing providers and ingestion engine."""
 
-from app.core.config import settings  # ✅ ADDED IMPORT
-from app.core.logging import logger   # ✅ ADDED IMPORT
+from app.core.config import settings
+from app.core.logging import logger
 
 from app.services.market_data.base import BaseMarketDataProvider
-from app.services.market_data.yfinance_provider import YahooFinanceProvider
 from app.services.market_data.twelvedata_provider import TwelveDataProvider
 from app.services.market_data.mock_provider import MockMarketDataProvider
 from app.services.market_data.ingestion import IngestionService
@@ -25,31 +24,29 @@ from app.services.market_data.freshness import (
 )
 
 
-def get_market_data_provider(provider_name: str = "yfinance") -> BaseMarketDataProvider:
+def get_market_data_provider(provider_name: str = "twelvedata") -> BaseMarketDataProvider:
     """Factory to retrieve configured market data provider instance."""
     name = provider_name.lower().strip()
     
-    if name == "yfinance" or name == "yahoo":
-        return YahooFinanceProvider()
-        
-    elif name == "twelvedata":
+    if name == "twelvedata":
         api_key = getattr(settings, "TWELVEDATA_API_KEY", None)
         if not api_key:
-            logger.warning("TWELVEDATA_API_KEY is missing in environment variables. Falling back to YFinance.")
-            return YahooFinanceProvider()
-        return TwelveDataProvider(api_key=api_key)
+            logger.warning("TWELVEDATA_API_KEY is missing in environment variables. Falling back to Mock provider.")
+            return MockMarketDataProvider() # ✅ FIXED: Return an instance, not the class
+        
+        return TwelveDataProvider(api_key=api_key) 
         
     elif name == "mock":
         return MockMarketDataProvider()
         
     else:
-        # Default fallback
-        return YahooFinanceProvider()
+        # Safe default fallback
+        logger.warning(f"Provider '{name}' not found or unavailable. Falling back to Mock provider.")
+        return MockMarketDataProvider() # ✅ FIXED: Return an instance
 
 
 __all__ = [
     "BaseMarketDataProvider",
-    "YahooFinanceProvider",
     "TwelveDataProvider",
     "MockMarketDataProvider",
     "IngestionService",
