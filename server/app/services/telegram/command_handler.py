@@ -97,7 +97,7 @@ class TelegramCommandHandler:
         # -------------------------------------------------------------
         elif cmd_name == "/signal":
             if len(parts) < 2:
-                reply = "⚠️ *Usage:* `/signal <symbol>`\n_Example:_ `/signal EUR/USD` or `/signal XAU/USD`"
+                reply = "⚠️ *Usage:* `/signal <symbol>`\n_Example:_ `/signal XAU/USD` or `/signal USD/JPY`"
             else:
                 sym = self._normalize_symbol(parts[1])
 
@@ -229,7 +229,7 @@ class TelegramCommandHandler:
         # 8. Quick Strategy Backtest (/backtest <symbol>)
         # -------------------------------------------------------------
         elif cmd_name == "/backtest":
-            sym = self._normalize_symbol(parts[1]) if len(parts) > 1 else "EUR/USD"
+            sym = self._normalize_symbol(parts[1]) if len(parts) > 1 else "XAU/USD"
             candles = list(
                 db.scalars(
                     select(Candle)

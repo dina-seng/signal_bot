@@ -103,7 +103,7 @@ class PerformanceMetrics(BaseModel):
 
 class BacktestRequest(BaseModel):
     """Request payload for running a backtest on database candles."""
-    symbol: str = Field(default="EUR/USD", description="Currency pair symbol")
+    symbol: str = Field(default="XAU/USD", description="Currency pair symbol")
     timeframe: str = Field(default="1h", description="Timeframe (e.g. 15m, 1h, 4h)")
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
@@ -115,7 +115,7 @@ class BacktestRequest(BaseModel):
 class StatelessBacktestRequest(BaseModel):
     """Request payload for running a stateless in-memory backtest on raw candle sequences."""
     candles: List[CandleBase]
-    symbol: str = Field(default="EUR/USD")
+    symbol: str = Field(default="XAU/USD")
     timeframe: str = Field(default="1h")
     config: Optional[BacktestConfig] = None
 
@@ -159,7 +159,7 @@ class BacktestRunSummary(BaseModel):
 
 class ParameterSweepRequest(BaseModel):
     """Request schema for optimizing parameters across a candidate grid."""
-    symbol: str = Field(default="EUR/USD")
+    symbol: str = Field(default="XAU/USD")
     timeframe: str = Field(default="1h")
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None

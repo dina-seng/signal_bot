@@ -26,13 +26,13 @@ from app.services.market_data.freshness import (
 
 def get_market_data_provider(provider_name: str = "twelvedata") -> BaseMarketDataProvider:
     """Factory to retrieve configured market data provider instance."""
-    name = provider_name.lower().strip()
+    name = (provider_name or "twelvedata").lower().strip()
     
-    if name == "twelvedata":
-        api_key = getattr(settings, "TWELVEDATA_API_KEY", None)
+    if name in ("twelvedata", "twelve", "twelve_data"):
+        api_key = getattr(settings, "TWELVE_DATA_API_KEY", None) or getattr(settings, "TWELVEDATA_API_KEY", None)
         if not api_key:
-            logger.warning("TWELVEDATA_API_KEY is missing in environment variables. Falling back to Mock provider.")
-            return MockMarketDataProvider() # ✅ FIXED: Return an instance, not the class
+            logger.warning("TWELVE_DATA_API_KEY is missing in environment variables. Falling back to Mock provider.")
+            return MockMarketDataProvider()
         
         return TwelveDataProvider(api_key=api_key) 
         
@@ -42,7 +42,7 @@ def get_market_data_provider(provider_name: str = "twelvedata") -> BaseMarketDat
     else:
         # Safe default fallback
         logger.warning(f"Provider '{name}' not found or unavailable. Falling back to Mock provider.")
-        return MockMarketDataProvider() # ✅ FIXED: Return an instance
+        return MockMarketDataProvider()
 
 
 __all__ = [

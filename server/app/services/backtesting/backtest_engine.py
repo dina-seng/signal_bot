@@ -52,7 +52,7 @@ class BacktestEngine:
     def run_simulation(
         self,
         candles: Sequence[Union[CandleBase, Any]],
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         timeframe: str = "1h",
         config: Optional[BacktestConfig] = None,
         candles_4h: Optional[Sequence[Union[CandleBase, Any]]] = None,

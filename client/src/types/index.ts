@@ -1,6 +1,6 @@
 export type TradeDirection = 'BUY' | 'SELL';
 
-export type PairSymbol = 'EUR/USD' | 'GBP/USD' | 'USD/JPY' | 'XAU/USD';
+export type PairSymbol = 'XAU/USD' | 'USD/JPY';
 
 export interface PerformanceStats {
   winRate: number; // e.g. 68.4

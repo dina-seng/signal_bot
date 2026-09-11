@@ -150,7 +150,7 @@ class IndicatorService:
     def analyze_indicators(
         self,
         candles: Sequence[Union[CandleBase, Any]],
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         timeframe: str = "1h",
         ema_fast: int = 20,
         ema_mid: int = 50,

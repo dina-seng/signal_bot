@@ -9,7 +9,7 @@ from app.services.market_data.base import BaseMarketDataProvider
 class MockMarketDataProvider(BaseMarketDataProvider):
     """Generates synthetic, deterministic OHLCV candles for testing pipelines and strategies."""
 
-    SUPPORTED_SYMBOLS = ["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]
+    SUPPORTED_SYMBOLS = ["XAU/USD", "USD/JPY"]
 
     def __init__(self, base_price: float = 1.1000, volatility: float = 0.0010):
         self.base_price = base_price

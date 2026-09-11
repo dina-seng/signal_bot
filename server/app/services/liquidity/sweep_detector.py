@@ -52,7 +52,7 @@ class LiquiditySweepDetector:
         self,
         candles: Sequence[Union[CandleBase, Any]],
         swings: List[SwingPoint],
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         min_wick_ratio: Optional[float] = None,
     ) -> List[LiquiditySweep]:
         """Identify all Buy-Side Liquidity (BSL) and Sell-Side Liquidity (SSL) sweeps.

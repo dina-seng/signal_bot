@@ -41,7 +41,7 @@ import {
 import { formatPrice, getTimeUntil } from './utils/formatters';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
-const SUPPORTED_PAIRS: PairSymbol[] = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD', 'USD/JPY'];
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
@@ -53,7 +53,7 @@ export const App: React.FC = () => {
   const [alertConfig, setAlertConfig] = useState<AlertConfiguration>(initialAlertConfig);
   const [news, setNews] = useState<NewsEvent[]>(initialNewsEvents);
   const [riskStatus, setRiskStatus] = useState<RiskStatus>(initialRiskStatus);
-  const [selectedChartSymbol, setSelectedChartSymbol] = useState<PairSymbol>('EUR/USD');
+  const [selectedChartSymbol, setSelectedChartSymbol] = useState<PairSymbol>('XAU/USD');
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
 
   // Telegram & Scanner live status
@@ -334,7 +334,7 @@ export const App: React.FC = () => {
 
       // 2. Check Blackout status for major pair
       try {
-        const blkRes = await quantViewApi.checkBlackout('EUR/USD');
+        const blkRes = await quantViewApi.checkBlackout('XAU/USD');
         const bBlackout = blkRes.data;
         if (bBlackout) {
           setRiskStatus({
@@ -732,7 +732,7 @@ export const App: React.FC = () => {
 
           <div className="flex items-center gap-3 text-[11px]">
             <span className="hidden sm:inline text-slate-500">
-              Pairs: <strong className="text-slate-300">EUR/USD • GBP/USD • USD/JPY • XAU/USD</strong>
+              Pairs: <strong className="text-slate-300">XAU/USD • USD/JPY</strong>
             </span>
             <span className="text-slate-700 hidden sm:inline">|</span>
             <span
@@ -759,7 +759,7 @@ export const App: React.FC = () => {
                 closedTrades={closedTrades}
               />
 
-              {/* Signal Matrix Grid (4 Cards: EUR/USD, GBP/USD, USD/JPY, XAU/USD) */}
+              {/* Signal Matrix Grid (2 Cards: XAU/USD, USD/JPY) */}
               <SignalMatrix
                 signals={signals}
                 livePrices={livePrices}

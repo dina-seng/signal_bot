@@ -85,7 +85,7 @@ class SignalGenerator:
     def evaluate_market_signal(
         self,
         candles_primary: Sequence[Union[CandleBase, Any]],
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         timeframe: str = "1h",
         candles_4h: Optional[Sequence[Union[CandleBase, Any]]] = None,
         candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,

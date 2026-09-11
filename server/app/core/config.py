@@ -1,7 +1,7 @@
 """Application configuration management using Pydantic Settings."""
 
 from typing import List, Optional
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
 
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./trade.db"
 
     # Market Instruments and Timeframes
-    SUPPORTED_SYMBOLS: List[str] = ["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]
+    SUPPORTED_SYMBOLS: List[str] = ["XAU/USD", "USD/JPY"]
     SUPPORTED_TIMEFRAMES: List[str] = ["15m", "1h", "4h"]
 
     # Market Structure & Analysis Strategy Config (Milestones 2-6)
@@ -40,11 +40,19 @@ class Settings(BaseSettings):
     NEWS_BLACKOUT_AFTER_MINUTES: int = 15
 
     # Providers & External APIs
-    MARKET_DATA_PROVIDER: str = "yfinance"
+    MARKET_DATA_PROVIDER: str = "twelvedata"
     NEWS_PROVIDER: str = "forexfactory"
-    TWELVE_DATA_API_KEY: Optional[str] = None
+    TWELVE_DATA_API_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("TWELVE_DATA_API_KEY", "TWELVEDATA_API_KEY"),
+    )
     ALPHA_VANTAGE_API_KEY: Optional[str] = None
     NEWS_API_KEY: Optional[str] = None
+
+    @property
+    def TWELVEDATA_API_KEY(self) -> Optional[str]:
+        """Backwards compatibility alias for TWELVE_DATA_API_KEY."""
+        return self.TWELVE_DATA_API_KEY
 
     # Telegram Bot (Milestone 9)
     TELEGRAM_BOT_TOKEN: Optional[str] = None

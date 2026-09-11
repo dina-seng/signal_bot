@@ -22,7 +22,7 @@ class ParameterOptimizer:
     def run_sweep(
         self,
         candles: Sequence[Union[CandleBase, Any]],
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         timeframe: str = "1h",
         request: Optional[ParameterSweepRequest] = None,
         candles_4h: Optional[Sequence[Union[CandleBase, Any]]] = None,

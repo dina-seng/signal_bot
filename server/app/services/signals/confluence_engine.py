@@ -87,7 +87,7 @@ class ConfluenceEngine:
 
     def evaluate(
         self,
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         candles_dict: Optional[Dict[str, Sequence[Union[CandleBase, Any]]]] = None,
         candles_primary: Optional[Sequence[Union[CandleBase, Any]]] = None,
         timeframe: str = "1h",
