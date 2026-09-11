@@ -1,5 +1,6 @@
 """Risk Management and Position Sizing Calculator."""
 
+from app.core.logging import logger
 from typing import Optional
 from app.core.config import settings
 from app.schemas.signal import RiskParameters, SignalDirection
@@ -36,22 +37,7 @@ class RiskManager:
         risk_percent: Optional[float] = None,
         min_rr: Optional[float] = None,
     ) -> RiskParameters:
-        """Compute Stop Loss, Take Profits (TP1 & TP2), R:R, and suggested lot size.
-
-        Args:
-            symbol: Forex instrument (e.g. 'EUR/USD').
-            direction: BUY or SELL.
-            entry_price: Current market price.
-            atr_value: Current ATR in price units.
-            key_support_low: Nearest structural swing/sweep support low.
-            key_resistance_high: Nearest structural swing/sweep resistance high.
-            account_balance: Account equity USD (default: 10,000).
-            risk_percent: Risk percentage per trade (default: 0.5%).
-            min_rr: Minimum Risk-Reward ratio (default: 2.0).
-
-        Returns:
-            RiskParameters object.
-        """
+        """Compute Stop Loss, Take Profits (TP1 & TP2), R:R, and suggested lot size."""
         balance = account_balance or 10000.0
         risk_pct = risk_percent or settings.MAX_RISK_PERCENT
         req_rr = min_rr or settings.MIN_RR
@@ -60,11 +46,19 @@ class RiskManager:
         # Base ATR buffer fallback if ATR is missing
         default_atr = entry_price * 0.0015
         effective_atr = atr_value if (atr_value is not None and atr_value > 0) else default_atr
-        atr_buffer = effective_atr * 0.5
+        
+        # 🛡️ SANITY CHECK: Cap maximum structural distance to prevent macro-level SLs
+        # 100 pips is a safe hard limit for intraday trading (100 * 0.0001 = 0.0100)
+        max_structural_distance = 100 * pip_size 
 
         if direction == SignalDirection.BUY:
             if key_support_low is not None and key_support_low < entry_price:
-                stop_loss = key_support_low - atr_buffer
+                # Check if the structural support is unreasonably far away
+                if (entry_price - key_support_low) > max_structural_distance:
+                    logger.warning(f"Structural support {key_support_low} is too far from entry {entry_price} (>100 pips). Falling back to ATR-based SL.")
+                    stop_loss = entry_price - (effective_atr * 1.5)
+                else:
+                    stop_loss = key_support_low - (effective_atr * 0.5) # atr_buffer
             else:
                 stop_loss = entry_price - (effective_atr * 1.5)
 
@@ -78,7 +72,12 @@ class RiskManager:
 
         else:  # SELL
             if key_resistance_high is not None and key_resistance_high > entry_price:
-                stop_loss = key_resistance_high + atr_buffer
+                # Check if the structural resistance is unreasonably far away
+                if (key_resistance_high - entry_price) > max_structural_distance:
+                    logger.warning(f"Structural resistance {key_resistance_high} is too far from entry {entry_price} (>100 pips). Falling back to ATR-based SL.")
+                    stop_loss = entry_price + (effective_atr * 1.5)
+                else:
+                    stop_loss = key_resistance_high + (effective_atr * 0.5) # atr_buffer
             else:
                 stop_loss = entry_price + (effective_atr * 1.5)
 
