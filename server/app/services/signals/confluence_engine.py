@@ -1,8 +1,13 @@
 """Unified Multi-Strategy Consensus and Confluence Engine."""
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 import hashlib
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING, Tuple, Union
+
+if TYPE_CHECKING:
+    from app.services.strategies.strategy_manager import StrategyManager
 
 from app.core.config import settings
 from app.core.logging import logger
@@ -37,13 +42,22 @@ from app.services.signals.evaluators import (
 from app.services.signals.path_validator import PathValidator
 from app.services.signals.risk_manager import RiskManager
 from app.services.structure import MultiTimeframeStructureEngine
+from app.services.strategies.base import StrategyResult
 
 
 class ConfluenceEngine:
-    """Unified Multi-Strategy Consensus Engine synthesizing SMC Structure, Liquidity, Indicators, and Price Action.
-    
-    Evaluates individual analytical sub-modules together for any instrument and produces
-    exactly one high-conviction composite trade signal with strict directional agreement filtering.
+    """Unified Multi-Strategy Consensus Engine.
+
+    Delegates analytical scoring to the pluggable ``StrategyManager``
+    while retaining ownership of:
+      - Data ingestion & validation (staleness, closed-candle filtering)
+      - News blackout checks
+      - Risk management & position sizing
+      - Fingerprint generation & SignalResponse assembly
+
+    Backward-compatible: ``evaluate()`` still returns a single
+    ``SignalResponse`` (the best qualifying signal).  Use
+    ``evaluate_multi()`` to receive all qualifying signals.
     """
 
     def __init__(
@@ -54,6 +68,7 @@ class ConfluenceEngine:
         news_filter: Optional[NewsFilterEngine] = None,
         risk_manager: Optional[RiskManager] = None,
         min_score_threshold: Optional[float] = None,
+        strategy_manager: Optional["StrategyManager"] = None,
     ):
         self.liquidity_service = liquidity_service or LiquidityService()
         self.mtf_engine = mtf_engine or MultiTimeframeStructureEngine()
@@ -65,12 +80,19 @@ class ConfluenceEngine:
 
         self.ltf_confirmation_engine = LTFConfirmationEngine()
 
-        # Sub-strategy modular evaluators
+        # Sub-strategy modular evaluators (kept for backward compat with ScoringEngine)
         self.structure_evaluator = StructureConsensusEvaluator()
         self.liquidity_evaluator = LiquiditySMCConsensusEvaluator()
         self.indicator_evaluator = MomentumIndicatorConsensusEvaluator()
         self.price_action_evaluator = PriceActionConsensusEvaluator()
         self.consensus_filter = ConsensusFilter(min_score_threshold=self.min_score_threshold)
+
+        # Pluggable strategy manager (lazy import to avoid circular dependency)
+        if strategy_manager is not None:
+            self.strategy_manager = strategy_manager
+        else:
+            from app.services.strategies.strategy_manager import StrategyManager
+            self.strategy_manager = StrategyManager()
 
     @staticmethod
     def generate_fingerprint(
@@ -87,19 +109,28 @@ class ConfluenceEngine:
         payload = f"{symbol}_{timeframe}_{direction.value}_{entry_price:.5f}_{stop_loss:.5f}_{ts_str}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def evaluate(
+    # ------------------------------------------------------------------
+    # Pre-flight checks (shared by evaluate & evaluate_multi)
+    # ------------------------------------------------------------------
+
+    def _preflight(
         self,
-        symbol: str = "XAU/USD",
+        symbol: str,
+        timeframe: str,
         candles_dict: Optional[Dict[str, Sequence[Union[CandleBase, Any]]]] = None,
         candles_primary: Optional[Sequence[Union[CandleBase, Any]]] = None,
-        timeframe: str = "1h",
         candles_4h: Optional[Sequence[Union[CandleBase, Any]]] = None,
         candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
         news_check: Optional[NewsBlackoutCheckResponse] = None,
-        account_balance: float = 10000.0,
-        risk_percent: float = 0.5,
-    ) -> SignalResponse:
-        """Run all analytical models together on candle datasets and produce a single composite SignalResponse."""
+    ) -> Tuple[
+        Optional[SignalResponse],      # early-exit response (None = proceed)
+        List[Any], Optional[List[Any]], Optional[List[Any]],  # c_prim, c_4h, c_15m
+    ]:
+        """Run data-validation and news-blackout checks.
+
+        Returns ``(early_exit_response, c_prim, c_4h, c_15m)``.
+        If ``early_exit_response`` is not None, the caller should return it immediately.
+        """
         # 1. Resolve primary and multi-timeframe candle datasets
         if candles_dict:
             raw_prim = candles_dict.get(timeframe) or candles_dict.get("1h") or list(candles_dict.values())[0]
@@ -117,28 +148,31 @@ class ConfluenceEngine:
 
         if not c_prim:
             now_utc = datetime.now(timezone.utc)
-            return SignalResponse(
-                symbol=symbol,
-                timeframe=timeframe,
-                direction=SignalDirection.WAIT,
-                setup_score=0.0,
-                entry_price=0.0,
-                stop_loss=0.0,
-                take_profit_1=0.0,
-                take_profit_2=0.0,
-                risk_reward=0.0,
-                fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
-                reasons=["No closed verified candle dataset provided for analysis."],
-                status=SignalStatus.ACTIVE,
-                timestamp=now_utc,
-                score_breakdown=ScoreBreakdown(
-                    structure_score=0.0,
-                    liquidity_score=0.0,
-                    indicators_score=0.0,
-                    price_action_score=0.0,
-                    total_score=0.0,
-                    is_qualified=False,
+            return (
+                SignalResponse(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    direction=SignalDirection.WAIT,
+                    setup_score=0.0,
+                    entry_price=0.0,
+                    stop_loss=0.0,
+                    take_profit_1=0.0,
+                    take_profit_2=0.0,
+                    risk_reward=0.0,
+                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                    reasons=["No closed verified candle dataset provided for analysis."],
+                    status=SignalStatus.ACTIVE,
+                    timestamp=now_utc,
+                    score_breakdown=ScoreBreakdown(
+                        structure_score=0.0,
+                        liquidity_score=0.0,
+                        indicators_score=0.0,
+                        price_action_score=0.0,
+                        total_score=0.0,
+                        is_qualified=False,
+                    ),
                 ),
+                [], None, None,
             )
 
         # 2. Check Data Staleness & Explicit Latest Candle Logging
@@ -152,40 +186,41 @@ class ConfluenceEngine:
             is_fresh=not staleness.is_stale,
         )
         
-        # ✅ NEW HARD BLOCK: Refuse to analyze if data is too old
-        # For 1H/4H charts, anything over 2 hours old is unacceptable. 
-        # For 15m/30m, anything over 1 hour old is unacceptable.
+        # ✅ HARD BLOCK: Refuse to analyze if data is too old
         max_allowed_age = 2.0 if timeframe in ["1h", "4h"] else 1.0
         
         if staleness.is_stale and staleness.age_hours > max_allowed_age:
             now_utc = datetime.now(timezone.utc)
-            return SignalResponse(
-                symbol=symbol,
-                timeframe=timeframe,
-                direction=SignalDirection.WAIT,
-                setup_score=0.0,
-                entry_price=0.0,
-                stop_loss=0.0,
-                take_profit_1=0.0,
-                take_profit_2=0.0,
-                risk_reward=0.0,
-                fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
-                reasons=[
-                    f"🚫 DATA TOO STALE: Last closed candle is {staleness.age_hours:.1f} hours old.",
-                    "Analysis aborted to prevent trading on outdated market conditions. Please sync fresh data."
-                ],
-                status=SignalStatus.ACTIVE,
-                timestamp=now_utc,
-                score_breakdown=ScoreBreakdown(
-                    structure_score=0.0, liquidity_score=0.0, indicators_score=0.0,
-                    price_action_score=0.0, total_score=0.0, is_qualified=False,
+            return (
+                SignalResponse(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    direction=SignalDirection.WAIT,
+                    setup_score=0.0,
+                    entry_price=0.0,
+                    stop_loss=0.0,
+                    take_profit_1=0.0,
+                    take_profit_2=0.0,
+                    risk_reward=0.0,
+                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                    reasons=[
+                        f"🚫 DATA TOO STALE: Last closed candle is {staleness.age_hours:.1f} hours old.",
+                        "Analysis aborted to prevent trading on outdated market conditions. Please sync fresh data."
+                    ],
+                    status=SignalStatus.ACTIVE,
+                    timestamp=now_utc,
+                    score_breakdown=ScoreBreakdown(
+                        structure_score=0.0, liquidity_score=0.0, indicators_score=0.0,
+                        price_action_score=0.0, total_score=0.0, is_qualified=False,
+                    ),
                 ),
+                c_prim, c_4h, c_15m,
             )
 
         if staleness.is_stale:
             logger.warning(staleness.message)
 
-        # 3. Check News Blackout / News Data Unavailable Fail-Safe (Immediate rejection if active)
+        # 3. Check News Blackout / News Data Unavailable Fail-Safe
         if news_check and (news_check.is_blackout or not news_check.trading_allowed or news_check.is_news_unavailable or news_check.is_fail_safe):
             now_utc = datetime.now(timezone.utc)
             if news_check.is_blackout:
@@ -207,24 +242,44 @@ class ConfluenceEngine:
                 total_score=0.0,
                 is_qualified=False,
             )
-            return SignalResponse(
-                symbol=symbol,
-                timeframe=timeframe,
-                direction=SignalDirection.WAIT,
-                setup_score=0.0,
-                entry_price=0.0,
-                stop_loss=0.0,
-                take_profit_1=0.0,
-                take_profit_2=0.0,
-                risk_reward=0.0,
-                fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
-                reasons=reasons,
-                status=SignalStatus.ACTIVE,
-                timestamp=now_utc,
-                score_breakdown=breakdown,
+            return (
+                SignalResponse(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    direction=SignalDirection.WAIT,
+                    setup_score=0.0,
+                    entry_price=0.0,
+                    stop_loss=0.0,
+                    take_profit_1=0.0,
+                    take_profit_2=0.0,
+                    risk_reward=0.0,
+                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                    reasons=reasons,
+                    status=SignalStatus.ACTIVE,
+                    timestamp=now_utc,
+                    score_breakdown=breakdown,
+                ),
+                c_prim, c_4h, c_15m,
             )
 
-        # 4. Concurrent Multi-Strategy Analytical Pipeline
+        return None, c_prim, c_4h, c_15m
+
+    # ------------------------------------------------------------------
+    # Shared data preparation
+    # ------------------------------------------------------------------
+
+    def _prepare_market_data(
+        self,
+        symbol: str,
+        timeframe: str,
+        c_prim: Sequence[Any],
+        c_4h: Optional[Sequence[Any]],
+        c_15m: Optional[Sequence[Any]],
+    ) -> Tuple[Any, Any, Optional[Any]]:
+        """Run structure, indicator, and MTF analysis on candle data.
+
+        Returns ``(structure_analysis, indicator_analysis, mtf_analysis)``.
+        """
         # Sub-Module A: SMC Advanced Structure & Breakouts
         structure_analysis = self.liquidity_service.analyze_liquidity_and_structure(
             candles=c_prim,
@@ -251,118 +306,31 @@ class ConfluenceEngine:
                 },
             )
 
+        return structure_analysis, indicator_analysis, mtf_analysis
+
+    # ------------------------------------------------------------------
+    # Build a SignalResponse from a StrategyResult
+    # ------------------------------------------------------------------
+
+    def _build_signal_response(
+        self,
+        result: StrategyResult,
+        symbol: str,
+        timeframe: str,
+        indicator_analysis: Any,
+        structure_analysis: Any,
+        account_balance: float,
+        risk_percent: float,
+    ) -> SignalResponse:
+        """Convert a ``StrategyResult`` into a full ``SignalResponse`` with risk management."""
         current_price = indicator_analysis.current_price
         latest_ts = indicator_analysis.timestamp
+        direction = result.direction
+        reasons = list(result.reasons)  # Mutable copy for path validation notes
 
-        # 5. Multi-Pillar Sub-Evaluations for BUY
-        buy_evals = {
-            "structure": self.structure_evaluator.evaluate(SignalDirection.BUY, structure_analysis, mtf_analysis),
-            "liquidity": self.liquidity_evaluator.evaluate(SignalDirection.BUY, structure_analysis, current_price),
-            "indicators": self.indicator_evaluator.evaluate(SignalDirection.BUY, indicator_analysis),
-            "price_action": self.price_action_evaluator.evaluate(SignalDirection.BUY, indicator_analysis),
-        }
-        buy_score, buy_breakdown, buy_reasons, buy_fatal = self.consensus_filter.synthesize(
-            buy_evals, SignalDirection.BUY
-        )
-
-        # Multi-Pillar Sub-Evaluations for SELL
-        sell_evals = {
-            "structure": self.structure_evaluator.evaluate(SignalDirection.SELL, structure_analysis, mtf_analysis),
-            "liquidity": self.liquidity_evaluator.evaluate(SignalDirection.SELL, structure_analysis, current_price),
-            "indicators": self.indicator_evaluator.evaluate(SignalDirection.SELL, indicator_analysis),
-            "price_action": self.price_action_evaluator.evaluate(SignalDirection.SELL, indicator_analysis),
-        }
-        sell_score, sell_breakdown, sell_reasons, sell_fatal = self.consensus_filter.synthesize(
-            sell_evals, SignalDirection.SELL
-        )
-
-        # ✅ LTF CONFIRMATION FILTER (Penalize scores if 15m doesn't confirm 1H/4H)
-        final_buy_score = buy_score
-        final_sell_score = sell_score
-
-        if timeframe in ["1h", "4h"] and c_15m:
-            # Check BUY LTF Confirmation
-            is_buy_confirmed, buy_ltf_reason = self.ltf_confirmation_engine.check_ltf_confirmation(
-                primary_timeframe=timeframe,
-                primary_direction=TrendDirection.BULLISH,
-                primary_candles=c_prim,
-                ltf_candles=c_15m,
-                max_bars_ago=5,
-            )
-            if not is_buy_confirmed:
-                final_buy_score = buy_score * 0.3  # Penalize by 70%
-                buy_reasons.append(f"⚠️ LTF Confirmation Missing (BUY): {buy_ltf_reason}")
-                logger.info(f"LTF confirmation failed for BUY {symbol} [{timeframe}]: {buy_ltf_reason}")
-
-            # Check SELL LTF Confirmation
-            is_sell_confirmed, sell_ltf_reason = self.ltf_confirmation_engine.check_ltf_confirmation(
-                primary_timeframe=timeframe,
-                primary_direction=TrendDirection.BEARISH,
-                primary_candles=c_prim,
-                ltf_candles=c_15m,
-                max_bars_ago=5,
-            )
-            if not is_sell_confirmed:
-                final_sell_score = sell_score * 0.3  # Penalize by 70%
-                sell_reasons.append(f"⚠️ LTF Confirmation Missing (SELL): {sell_ltf_reason}")
-                logger.info(f"LTF confirmation failed for SELL {symbol} [{timeframe}]: {sell_ltf_reason}")
-
-        # 6. Determine Composite Direction & Filter Directional Conflict
-        if final_buy_score >= final_sell_score and final_buy_score >= self.min_score_threshold and not buy_fatal:
-            direction = SignalDirection.BUY
-            total_score = final_buy_score
-            breakdown = buy_breakdown
-            reasons = buy_reasons
-        elif final_sell_score > final_buy_score and final_sell_score >= self.min_score_threshold and not sell_fatal:
-            direction = SignalDirection.SELL
-            total_score = final_sell_score
-            breakdown = sell_breakdown
-            reasons = sell_reasons
-        else:
-            direction = SignalDirection.WAIT
-            total_score = max(final_buy_score, final_sell_score)
-            breakdown = buy_breakdown if final_buy_score >= final_sell_score else sell_breakdown
-            
-            conflict_note = ""
-            if buy_fatal or sell_fatal:
-                conflict_note = "Directional contradiction between pillars detected. "
-            
-            reasons = [
-                f"MARKET BIAS: NEUTRAL / WAIT ({conflict_note}Score: {total_score:.1f}/100, Min required: {self.min_score_threshold:.1f}).",
-                f"Market State: {structure_analysis.market_state}",
-                f"Technical Bias: {indicator_analysis.confluence_bias} (Score: {indicator_analysis.confluence_score:+.0f})",
-            ]
-            # Include best catalysts as context
-            best_catalysts = buy_reasons if final_buy_score >= final_sell_score else sell_reasons
-            for c in best_catalysts[:3]:
-                if not c.startswith("MARKET BIAS"):
-                    reasons.append(f"Observation: {c}")
-
-        # 7. Risk Management & SMC Geometric Levels
-        risk_params: Optional[RiskParameters] = None
-        if direction in (SignalDirection.BUY, SignalDirection.SELL):
-            supp_low = structure_analysis.base_structure.key_support
-            res_high = structure_analysis.base_structure.key_resistance
-
-            risk_params = self.risk_manager.calculate_trade_risk(
-                symbol=symbol,
-                direction=direction,
-                entry_price=current_price,
-                atr_value=indicator_analysis.atr.atr_value,
-                key_support_low=supp_low,
-                key_resistance_high=res_high,
-                account_balance=account_balance,
-                risk_percent=risk_percent,
-            )
-            entry_p = risk_params.entry_price
-            sl_p = risk_params.stop_loss
-            tp1_p = risk_params.take_profit_1
-            tp2_p = risk_params.take_profit_2
-            rr_p = risk_params.risk_reward_tp1
         # 7. Risk Management & SMC Geometric Levels + PATH VALIDATION
         risk_params: Optional[RiskParameters] = None
-        final_reasons = list(reasons)  # Copy reasons so we can append path validation notes
-        
+
         if direction in (SignalDirection.BUY, SignalDirection.SELL):
             supp_low = structure_analysis.base_structure.key_support
             res_high = structure_analysis.base_structure.key_resistance
@@ -378,23 +346,20 @@ class ConfluenceEngine:
                 account_balance=account_balance,
                 risk_percent=risk_percent,
             )
-            
+
             # B. Small Account Rejection Check
             if risk_params.suggested_lot_size == 0.0:
                 logger.warning(f"Trade REJECTED for {symbol}: Insufficient balance for safe position sizing.")
                 direction = SignalDirection.WAIT
-                total_score = 0.0
-                final_reasons = [
+                reasons = [
                     "❌ INSUFFICIENT BALANCE: Account is too small to safely trade this setup at minimum lot size.",
                     "Action: Awaiting larger account balance or lower volatility setup."
                 ]
                 risk_params = None
             else:
                 # C. 🗺️ PATH VALIDATION (Adaptive Adjuster)
-                # Extract zones directly from the schemas your evaluators already use!
-                base_struct = getattr(structure_analysis, 'base_structure', structure_analysis)
-                sr_zones = getattr(base_struct, 'sr_zones', [])
-                liquidity_pools = getattr(base_struct, 'liquidity_pools', [])
+                sr_zones = getattr(structure_analysis, 'sr_zones', [])
+                liquidity_pools = getattr(structure_analysis, 'liquidity_pools', [])
                 active_fvgs = getattr(indicator_analysis, 'active_fvgs', [])
 
                 path_result = self.path_validator.validate_trade_path(
@@ -408,34 +373,32 @@ class ConfluenceEngine:
 
                 if not path_result.is_clear:
                     obstacle_price = path_result.nearest_obstacle_price
-                    obstacle_type = path_result.obstacle_type
-                    
+                    obstacle_type = path_result.obstacle_type or "Unknown Obstacle"
+
                     # 🎯 LIQUIDITY EXCEPTION: Equal Highs/Lows are magnets, not walls.
                     if "Equal Highs" in obstacle_type or "Equal Lows" in obstacle_type:
                         logger.info(f"🎯 Liquidity Magnet Detected: Allowing TP to target {obstacle_type} at {obstacle_price:.5f}")
-                        final_reasons.append(f"🎯 Targeting Liquidity Sweep at {obstacle_price:.5f}")
+                        reasons.append(f"🎯 Targeting Liquidity Sweep at {obstacle_price:.5f}")
                     else:
                         # 🛡️ ADAPTIVE ADJUSTMENT: Move TP just before the obstacle
                         pip_size = self.risk_manager.get_pip_size(symbol)
-                        buffer_pips = 2.0  # 2 pip safety buffer before the wall
-                        buffer_price = buffer_pips * pip_size
-                        
+                        buffer_price = 2.0 * pip_size  # 2 pip safety buffer
+
                         if direction == SignalDirection.BUY:
                             adjusted_tp1 = obstacle_price - buffer_price
                         else:
                             adjusted_tp1 = obstacle_price + buffer_price
-                            
+
                         # Recalculate R:R with the new adjusted TP
                         new_risk_price = abs(risk_params.entry_price - risk_params.stop_loss)
                         new_reward_price = abs(adjusted_tp1 - risk_params.entry_price)
                         new_rr = new_reward_price / new_risk_price if new_risk_price > 0 else 0.0
-                        
+
                         # Minimum viable R:R check
-                        if new_rr < 1.2: 
+                        if new_rr < 1.2:
                             logger.warning(f"Trade REJECTED: Path adjustment ruined R:R ({new_rr:.2f}). Obstacle at {obstacle_price:.5f}.")
                             direction = SignalDirection.WAIT
-                            total_score = 0.0
-                            final_reasons = [
+                            reasons = [
                                 f"❌ PATH BLOCKED: Obstacle ({obstacle_type}) at {obstacle_price:.5f} forces TP adjustment.",
                                 f"Adjusted R:R dropped to {new_rr:.2f} (Minimum required: 1.2). Trade aborted for capital preservation."
                             ]
@@ -445,9 +408,9 @@ class ConfluenceEngine:
                             logger.info(f"✅ TP Adjusted: Moved from {risk_params.take_profit_1:.5f} to {adjusted_tp1:.5f} to avoid {obstacle_type}. New R:R: {new_rr:.2f}")
                             risk_params.take_profit_1 = round(adjusted_tp1, 5)
                             risk_params.risk_reward_tp1 = round(new_rr, 2)
-                            final_reasons.append(f"⚠️ TP Adjusted: Path blocked by {obstacle_type} at {obstacle_price:.5f}. TP safely moved to {adjusted_tp1:.5f} (New R:R: {new_rr:.2f}) to ensure execution.")
+                            reasons.append(f"⚠️ TP Adjusted: Path blocked by {obstacle_type} at {obstacle_price:.5f}. TP safely moved to {adjusted_tp1:.5f} (New R:R: {new_rr:.2f}) to ensure execution.")
 
-        # 8. Build Final Response (Update your return statement to use `final_reasons` and handle WAIT properly)
+        # 8. Build Final Response
         entry_p = risk_params.entry_price if risk_params else current_price
         sl_p = risk_params.stop_loss if risk_params else current_price
         tp1_p = risk_params.take_profit_1 if risk_params else current_price
@@ -467,16 +430,148 @@ class ConfluenceEngine:
             symbol=symbol,
             timeframe=timeframe,
             direction=direction,
-            setup_score=total_score,
+            setup_score=result.score,
             entry_price=entry_p,
             stop_loss=sl_p,
             take_profit_1=tp1_p,
             take_profit_2=tp2_p,
             risk_reward=rr_p,
             fingerprint=fingerprint,
-            reasons=final_reasons,  # 👈 USE THE UPDATED REASONS LIST
+            reasons=reasons,
             status=SignalStatus.ACTIVE,
             timestamp=latest_ts,
-            score_breakdown=breakdown,
+            score_breakdown=result.score_breakdown,
             risk_parameters=risk_params,
         )
+
+    # ------------------------------------------------------------------
+    # Public API: single-signal (backward-compatible)
+    # ------------------------------------------------------------------
+
+    def evaluate(
+        self,
+        symbol: str = "XAU/USD",
+        candles_dict: Optional[Dict[str, Sequence[Union[CandleBase, Any]]]] = None,
+        candles_primary: Optional[Sequence[Union[CandleBase, Any]]] = None,
+        timeframe: str = "1h",
+        candles_4h: Optional[Sequence[Union[CandleBase, Any]]] = None,
+        candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
+        news_check: Optional[NewsBlackoutCheckResponse] = None,
+        account_balance: float = 10000.0,
+        risk_percent: float = 0.5,
+    ) -> SignalResponse:
+        """Run all strategies and return the single best qualifying SignalResponse.
+
+        Fully backward-compatible with the original single-signal contract.
+        """
+        signals = self.evaluate_multi(
+            symbol=symbol,
+            candles_dict=candles_dict,
+            candles_primary=candles_primary,
+            timeframe=timeframe,
+            candles_4h=candles_4h,
+            candles_15m=candles_15m,
+            news_check=news_check,
+            account_balance=account_balance,
+            risk_percent=risk_percent,
+        )
+
+        # Return the best (highest-scoring actionable) signal, or the first WAIT
+        actionable = [s for s in signals if s.direction in (SignalDirection.BUY, SignalDirection.SELL)]
+        if actionable:
+            actionable.sort(key=lambda s: s.setup_score, reverse=True)
+            return actionable[0]
+        return signals[0]
+
+    # ------------------------------------------------------------------
+    # Public API: multi-signal (new)
+    # ------------------------------------------------------------------
+
+    def evaluate_multi(
+        self,
+        symbol: str = "XAU/USD",
+        candles_dict: Optional[Dict[str, Sequence[Union[CandleBase, Any]]]] = None,
+        candles_primary: Optional[Sequence[Union[CandleBase, Any]]] = None,
+        timeframe: str = "1h",
+        candles_4h: Optional[Sequence[Union[CandleBase, Any]]] = None,
+        candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
+        news_check: Optional[NewsBlackoutCheckResponse] = None,
+        account_balance: float = 10000.0,
+        risk_percent: float = 0.5,
+    ) -> List[SignalResponse]:
+        """Run all strategies and return a SignalResponse per strategy.
+
+        Each strategy that scores ≥ threshold produces an independent signal.
+        Strategies that score below threshold produce a WAIT signal.
+        """
+        # Pre-flight checks
+        early_exit, c_prim, c_4h, c_15m = self._preflight(
+            symbol=symbol,
+            timeframe=timeframe,
+            candles_dict=candles_dict,
+            candles_primary=candles_primary,
+            candles_4h=candles_4h,
+            candles_15m=candles_15m,
+            news_check=news_check,
+        )
+        if early_exit is not None:
+            return [early_exit]
+
+        # Prepare shared market data
+        structure_analysis, indicator_analysis, mtf_analysis = self._prepare_market_data(
+            symbol=symbol,
+            timeframe=timeframe,
+            c_prim=c_prim,
+            c_4h=c_4h,
+            c_15m=c_15m,
+        )
+
+        # Run all strategies
+        strategy_results: List[StrategyResult] = self.strategy_manager.run_all_strategies(
+            symbol=symbol,
+            timeframe=timeframe,
+            candles=c_prim,
+            indicators=indicator_analysis,
+            structure=structure_analysis,
+            mtf=mtf_analysis,
+            candles_15m=c_15m,
+        )
+
+        # Build a SignalResponse per strategy result
+        signals: List[SignalResponse] = []
+        for result in strategy_results:
+            sig = self._build_signal_response(
+                result=result,
+                symbol=symbol,
+                timeframe=timeframe,
+                indicator_analysis=indicator_analysis,
+                structure_analysis=structure_analysis,
+                account_balance=account_balance,
+                risk_percent=risk_percent,
+            )
+            signals.append(sig)
+
+        # Ensure at least one result
+        if not signals:
+            now_utc = datetime.now(timezone.utc)
+            signals.append(SignalResponse(
+                symbol=symbol,
+                timeframe=timeframe,
+                direction=SignalDirection.WAIT,
+                setup_score=0.0,
+                entry_price=0.0,
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                reasons=["No strategy produced a result."],
+                status=SignalStatus.ACTIVE,
+                timestamp=now_utc,
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0, liquidity_score=0.0, indicators_score=0.0,
+                    price_action_score=0.0, total_score=0.0, is_qualified=False,
+                ),
+            ))
+
+        return signals

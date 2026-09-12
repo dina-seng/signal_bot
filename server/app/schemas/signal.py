@@ -67,6 +67,7 @@ class SignalBase(BaseModel):
     status: SignalStatus = SignalStatus.ACTIVE
     trend_alignment: Optional[str] = Field(default=None, description="Trend alignment status: TREND FOLLOWING or COUNTER-TREND SCALP")
     htf_trend: Optional[str] = Field(default=None, description="Higher timeframe (1H) trend bias: BULLISH, BEARISH, RANGING")
+    strategy_name: Optional[str] = Field(default=None, description="Strategy that generated this signal (e.g. 'SMC Confluence', 'Momentum')")
     is_broadcasted: bool = False
     timestamp: datetime
 

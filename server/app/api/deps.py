@@ -91,6 +91,7 @@ from app.services.signals import (
     RiskManager,
     SignalGenerator,
     SignalScoringEngine,
+    StrategyManager,
 )
 
 
@@ -104,12 +105,18 @@ def get_scoring_engine() -> SignalScoringEngine:
     return SignalScoringEngine(min_score_threshold=settings.MIN_SETUP_SCORE)
 
 
+def get_strategy_manager() -> StrategyManager:
+    """Dependency for pluggable strategy manager."""
+    return StrategyManager()
+
+
 def get_confluence_engine(
     liquidity_service: LiquidityService = Depends(get_liquidity_service),
     mtf_engine: MultiTimeframeStructureEngine = Depends(get_mtf_structure_engine),
     indicator_service: IndicatorService = Depends(get_indicator_service),
     news_filter: NewsFilterEngine = Depends(get_news_filter_engine),
     risk_manager: RiskManager = Depends(get_risk_manager),
+    strategy_manager: StrategyManager = Depends(get_strategy_manager),
 ) -> ConfluenceEngine:
     """Dependency for unified multi-strategy consensus engine."""
     return ConfluenceEngine(
@@ -119,6 +126,7 @@ def get_confluence_engine(
         news_filter=news_filter,
         risk_manager=risk_manager,
         min_score_threshold=settings.MIN_SETUP_SCORE,
+        strategy_manager=strategy_manager,
     )
 
 
