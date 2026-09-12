@@ -87,12 +87,17 @@ class TelegramMessageFormatter:
         tf = cls.escape_code(sig.timeframe)
         score_str = f"{sig.setup_score:.1f}"
 
+        # Strategy-aware header
+        strategy_label = sig.strategy_name or "Confluence"
+        header = f"⚡ *NEW SIGNAL: {cls.escape_markdown(strategy_label)}* ⚡"
+
         lines = [
-            f"⚡ *NEW FOREX TRADE SIGNAL* ⚡",
+            header,
             f"━━━━━━━━━━━━━━━━━━━━",
             f"📊 *Instrument:* `{sym}`",
             f"⏱ *Timeframe:* `{tf}`",
             f"🎯 *Direction:* {dir_emoji}",
+            f"🧠 *Strategy:* `{cls.escape_code(strategy_label)}`",
             f"⭐ *Confluence Score:* `{score_str} / 100`",
         ]
 
@@ -240,7 +245,13 @@ class TelegramMessageFormatter:
             sym = cls.escape_code(f"{r.symbol:<8}")
             tf_display = "1H" if r.timeframe.lower() == "1h" else r.timeframe
             tf = cls.escape_code(tf_display)
-            lines.append(f"{dir_icon} `{sym}` [{tf}] ➔ {status_text}")
+
+            # Strategy badge
+            strat_badge = ""
+            if getattr(r, "signal", None) and getattr(r.signal, "strategy_name", None):
+                strat_badge = f" `[{cls.escape_code(r.signal.strategy_name)}]`"
+
+            lines.append(f"{dir_icon} `{sym}` [{tf}] ➔ {status_text}{strat_badge}")
 
         lines.extend([
             f"━━━━━━━━━━━━━━━━━━━━",

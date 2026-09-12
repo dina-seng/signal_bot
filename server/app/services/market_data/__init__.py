@@ -42,7 +42,7 @@ def get_market_data_provider(provider_name: str = "twelvedata") -> BaseMarketDat
     else:
         # Safe default fallback
         logger.warning(f"Provider '{name}' not found or unavailable. Falling back to Mock provider.")
-        return MockMarketDataProvider() # ✅ FIXED: Return an instance
+        return MockMarketDataProvider() 
 
 
 __all__ = [
