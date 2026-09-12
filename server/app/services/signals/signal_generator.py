@@ -105,6 +105,29 @@ class SignalGenerator:
             risk_percent=risk_percent,
         )
 
+    def evaluate_market_signals_multi(
+        self,
+        candles_primary: Sequence[Union[CandleBase, Any]],
+        symbol: str = "XAU/USD",
+        timeframe: str = "1h",
+        candles_4h: Optional[Sequence[Union[CandleBase, Any]]] = None,
+        candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
+        news_check: Optional[NewsBlackoutCheckResponse] = None,
+        account_balance: float = 10000.0,
+        risk_percent: float = 0.5,
+    ) -> List[SignalResponse]:
+        """Run all strategies and return independent SignalResponse per qualifying strategy."""
+        return self.confluence_engine.evaluate_multi(
+            symbol=symbol,
+            candles_primary=candles_primary,
+            timeframe=timeframe,
+            candles_4h=candles_4h,
+            candles_15m=candles_15m,
+            news_check=news_check,
+            account_balance=account_balance,
+            risk_percent=risk_percent,
+        )
+
 
     def persist_signal_if_qualified(self, db: Session, signal_resp: SignalResponse) -> Optional[Signal]:
         """Save qualified actionable BUY/SELL signals into the database if not already present."""
@@ -143,6 +166,7 @@ class SignalGenerator:
             status=signal_resp.status.value,
             trend_alignment=signal_resp.trend_alignment,
             htf_trend=signal_resp.htf_trend,
+            strategy_name=signal_resp.strategy_name,
             is_broadcasted=signal_resp.is_broadcasted,
             timestamp=signal_resp.timestamp,
         )
