@@ -329,9 +329,9 @@ class TelegramMessageFormatter:
         return (
             f" *FOREX SIGNAL BOT - COMMAND MENU* \n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📡 `/scan` - Scan all markets (EUR/USD, GBP/USD, USD/JPY, Gold)\n"
+            f"📡 `/scan` - Scan all markets (XAU/USD, USD/JPY)\n"
             f"🔄 `/sync` - Force fresh data sync for ALL pairs (Fixes Stale Data)\n"
-            f"🎯 `/signal <pair>` - Deep setup score for symbol (e.g. `/signal EUR/USD`)\n"
+            f"🎯 `/signal <pair>` - Deep setup score for symbol (e.g. `/signal XAU/USD`)\n"
             f"📰 `/news` - Today's economic calendar & news blackout check\n"
             f" `/account` - Virtual paper trading balance, equity & margin\n"
             f"📊 `/positions` - List all active & pending paper positions\n"

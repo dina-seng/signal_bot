@@ -32,10 +32,8 @@ interface SignalMatrixProps {
 }
 
 const DEFAULT_PRICES: Record<string, number> = {
-  'EUR/USD': 1.16243,
-  'GBP/USD': 1.35382,
-  'USD/JPY': 154.359,
   'XAU/USD': 4411.60,
+  'USD/JPY': 154.359,
 };
 
 type TickDirection = 'up' | 'down' | null;
@@ -107,7 +105,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
 
         const updatedPrices: Record<string, number> = {};
         const newTicks: Record<string, TickDirection> = {};
-        const supported = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD'];
+        const supported = ['XAU/USD', 'USD/JPY'];
 
         supported.forEach((sym) => {
           const currentBase = basePrices[sym] || DEFAULT_PRICES[sym] || 1.0;

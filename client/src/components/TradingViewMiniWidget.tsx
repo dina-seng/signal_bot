@@ -1,10 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 
 export const TRADINGVIEW_SYMBOLS: Record<string, string> = {
-  'EUR/USD': 'FX:EURUSD',
-  'GBP/USD': 'FX:GBPUSD',
-  'USD/JPY': 'FX:USDJPY',
   'XAU/USD': 'TVC:GOLD',
+  'USD/JPY': 'FX:USDJPY',
 };
 
 interface TradingViewMiniWidgetProps {

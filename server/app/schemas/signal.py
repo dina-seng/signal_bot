@@ -107,7 +107,7 @@ class MarketScanResponse(BaseModel):
 class StatelessSignalRequest(BaseModel):
     """Request schema for evaluating custom candles for a signal."""
     candles: List[CandleBase]
-    symbol: Optional[str] = Field(default="EUR/USD")
+    symbol: Optional[str] = Field(default="XAU/USD")
     timeframe: Optional[str] = Field(default="1h")
     account_balance: Optional[float] = Field(default=10000.0)
     risk_percent: Optional[float] = Field(default=0.5)

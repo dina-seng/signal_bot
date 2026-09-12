@@ -153,7 +153,7 @@ def evaluate_stateless_signal(
 
     return generator.evaluate_market_signal(
         candles_primary=request.candles,
-        symbol=request.symbol or "EUR/USD",
+        symbol=request.symbol or "XAU/USD",
         timeframe=request.timeframe or "1h",
         account_balance=request.account_balance or 10000.0,
         risk_percent=request.risk_percent or 0.5,

@@ -70,7 +70,7 @@ class ATRCalculator:
         highs: Sequence[float],
         lows: Sequence[float],
         closes: Sequence[float],
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         period: int = 14,
     ) -> tuple[ATRSnapshot, List[Optional[float]]]:
         """Calculate ATR snapshot with pip conversion and suggested SL/TP distances."""

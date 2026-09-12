@@ -72,42 +72,6 @@ export const equityHistoryData: Record<'1W' | '1M' | '3M' | 'ALL', EquityDataPoi
 
 export const initialSignals: TradeSignal[] = [
   {
-    id: 'SIG-USDJPY-01',
-    symbol: 'USD/JPY',
-    direction: 'SELL',
-    confluenceScore: 76,
-    timeframe: '15m',
-    entryPrice: 154.35983,
-    stopLoss: 154.84742,
-    takeProfit1: 153.38466,
-    takeProfit2: 152.89707,
-    riskRewardRatio: '1:2.0',
-    pipsAtRisk: 48.7,
-    timestamp: 'Just now',
-    setupReason: 'Confirmed Bearish BOS + Buy-Side Liquidity Sweep + Pin Bar Trigger',
-    notifyEnabled: true,
-    status: 'ACTIVE',
-    hasActiveSignal: true,
-  },
-  {
-    id: 'SIG-GBPUSD-02',
-    symbol: 'GBP/USD',
-    direction: 'BUY',
-    confluenceScore: 85,
-    timeframe: '30m',
-    entryPrice: 1.35382,
-    stopLoss: 1.34991,
-    takeProfit1: 1.36164,
-    takeProfit2: 1.36555,
-    riskRewardRatio: '1:2.0',
-    pipsAtRisk: 39.1,
-    timestamp: '15m ago',
-    setupReason: 'Bullish BOS + Sell-Side Sweep + Fresh Institutional Demand Zone',
-    notifyEnabled: true,
-    status: 'ACTIVE',
-    hasActiveSignal: true,
-  },
-  {
     id: 'SIG-XAUUSD-03',
     symbol: 'XAU/USD',
     direction: 'BUY',
@@ -126,19 +90,19 @@ export const initialSignals: TradeSignal[] = [
     hasActiveSignal: true,
   },
   {
-    id: 'SIG-EURUSD-04',
-    symbol: 'EUR/USD',
-    direction: 'BUY',
-    confluenceScore: 78,
-    timeframe: '1h',
-    entryPrice: 1.16243,
-    stopLoss: 1.15920,
-    takeProfit1: 1.16890,
-    takeProfit2: 1.17350,
+    id: 'SIG-USDJPY-01',
+    symbol: 'USD/JPY',
+    direction: 'SELL',
+    confluenceScore: 76,
+    timeframe: '15m',
+    entryPrice: 154.35983,
+    stopLoss: 154.84742,
+    takeProfit1: 153.38466,
+    takeProfit2: 152.89707,
     riskRewardRatio: '1:2.0',
-    pipsAtRisk: 32.3,
-    timestamp: 'Scanning...',
-    setupReason: 'Asian Low Sweep + HTF Bullish Structure + FVG Entry',
+    pipsAtRisk: 48.7,
+    timestamp: 'Just now',
+    setupReason: 'Confirmed Bearish BOS + Buy-Side Liquidity Sweep + Pin Bar Trigger',
     notifyEnabled: true,
     status: 'ACTIVE',
     hasActiveSignal: true,
@@ -148,16 +112,16 @@ export const initialSignals: TradeSignal[] = [
 export const initialPositions: Position[] = [
   {
     id: '4',
-    symbol: 'GBP/USD',
+    symbol: 'XAU/USD',
     side: 'BUY',
     size: 0.1,
-    entryPrice: 1.35387,
-    currentPrice: 1.35452,
-    stopLoss: 1.34991,
-    takeProfit: 1.36164,
-    pnl: 6.50,
-    pnlPercent: 0.05,
-    pips: 6.5,
+    entryPrice: 4410.50,
+    currentPrice: 4412.80,
+    stopLoss: 4398.00,
+    takeProfit: 4438.00,
+    pnl: 23.00,
+    pnlPercent: 0.28,
+    pips: 23.0,
     openTime: '14:28 UTC',
   },
   {
@@ -264,20 +228,15 @@ export interface CandleData {
 }
 
 export const generateCandles = (symbol: PairSymbol): CandleData[] => {
-  let basePrice = 1.1620;
-  let volatility = 0.0015;
-  let precision = 5;
+  let basePrice = 4410.00;
+  let volatility = 8.5;
+  let precision = 2;
 
-  if (symbol === 'GBP/USD') {
-    basePrice = 1.3530;
-    volatility = 0.0020;
-    precision = 5;
-  } else if (symbol === 'USD/JPY') {
+  if (symbol === 'USD/JPY') {
     basePrice = 153.70;
     volatility = 0.25;
     precision = 3;
   } else if (symbol === 'XAU/USD') {
-    // REAL GOLD PRICE REGIME ~4410 - 4420
     basePrice = 4410.00;
     volatility = 8.5;
     precision = 2;

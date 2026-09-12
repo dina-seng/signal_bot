@@ -43,7 +43,7 @@ class PriceActionDetector:
     def detect_candlestick_patterns(
         self,
         candles: Sequence[Union[CandleBase, Any]],
-        symbol: str = "EUR/USD",  # ✅ ADD THIS PARAMETER
+        symbol: str = "XAU/USD",
     ) -> List[PriceActionPattern]:
         """Identify classic price-action candlestick patterns."""
         if len(candles) < 2:
@@ -139,7 +139,7 @@ class PriceActionDetector:
     def detect_fair_value_gaps(
         self,
         candles: Sequence[Union[CandleBase, Any]],
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         min_gap_pips: float = 1.0,
     ) -> List[FairValueGap]:
         """Detect Bullish and Bearish Fair Value Gaps (FVG / Imbalances) and track mitigation.

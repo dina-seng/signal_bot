@@ -90,7 +90,7 @@ class LiquidityService:
     def analyze_liquidity_and_structure(
         self,
         candles: Sequence[Union[CandleBase, Any]],
-        symbol: str = "EUR/USD",
+        symbol: str = "XAU/USD",
         timeframe: str = "1h",
         lookback: Optional[int] = None,
         tolerance_percent: Optional[float] = None,

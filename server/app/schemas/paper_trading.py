@@ -51,7 +51,7 @@ class AccountResetRequest(BaseModel):
 class PaperOrderCreate(BaseModel):
     """Schema for submitting a manual or automated paper order."""
     account_id: Optional[int] = None
-    symbol: str = Field(default="EUR/USD")
+    symbol: str = Field(default="XAU/USD")
     direction: SignalDirection = Field(..., description="BUY or SELL")
     order_type: str = Field(default="MARKET", description="MARKET, LIMIT, or STOP")
     target_entry_price: Optional[float] = Field(default=None, description="Target price for LIMIT/STOP orders")
@@ -112,7 +112,7 @@ class PaperPositionCloseRequest(BaseModel):
 class AutoTradeSignalRequest(BaseModel):
     """Schema for converting a generated trade signal into an active virtual position."""
     signal_id: Optional[int] = None
-    symbol: str = Field(default="EUR/USD")
+    symbol: str = Field(default="XAU/USD")
     timeframe: str = Field(default="1h")
     account_id: Optional[int] = None
     risk_percent: float = Field(default=0.5, ge=0.01, le=10.0)

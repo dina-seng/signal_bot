@@ -17,19 +17,12 @@ router = APIRouter(prefix="/market", tags=["Market Data"])
 
 # Symbol Metadata
 SYMBOL_METADATA = {
-    "EUR/USD": MarketSymbolInfo(
-        symbol="EUR/USD",
-        base_currency="EUR",
+    "XAU/USD": MarketSymbolInfo(
+        symbol="XAU/USD",
+        base_currency="XAU",
         quote_currency="USD",
-        pip_size=0.0001,
-        description="Euro / US Dollar",
-    ),
-    "GBP/USD": MarketSymbolInfo(
-        symbol="GBP/USD",
-        base_currency="GBP",
-        quote_currency="USD",
-        pip_size=0.0001,
-        description="British Pound / US Dollar",
+        pip_size=0.01,
+        description="Gold / US Dollar (Spot / Futures)",
     ),
     "USD/JPY": MarketSymbolInfo(
         symbol="USD/JPY",
@@ -37,13 +30,6 @@ SYMBOL_METADATA = {
         quote_currency="JPY",
         pip_size=0.01,
         description="US Dollar / Japanese Yen",
-    ),
-    "XAU/USD": MarketSymbolInfo(
-        symbol="XAU/USD",
-        base_currency="XAU",
-        quote_currency="USD",
-        pip_size=0.01,
-        description="Gold / US Dollar (Spot / Futures)",
     ),
 }
 
