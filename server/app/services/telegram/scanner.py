@@ -178,7 +178,7 @@ class AutomatedMarketScanner:
         else:
             current_ts = current_ts.astimezone(timezone.utc)
 
-        # Query the most recent previous signal for this symbol, timeframe & direction
+        # Query the most recent previous signal for this symbol, timeframe, direction & strategy
         stmt = (
             select(Signal)
             .where(
@@ -186,8 +186,10 @@ class AutomatedMarketScanner:
                 Signal.timeframe == signal_resp.timeframe,
                 Signal.direction == dir_str,
             )
-            .order_by(desc(Signal.timestamp))
         )
+        if getattr(signal_resp, "strategy_name", None):
+            stmt = stmt.where(Signal.strategy_name == signal_resp.strategy_name)
+        stmt = stmt.order_by(desc(Signal.timestamp))
 
         # Exclude the current signal if it was already persisted
         if signal_resp.id:

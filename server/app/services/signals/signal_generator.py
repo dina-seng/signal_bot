@@ -74,6 +74,7 @@ class SignalGenerator:
         entry_price: float,
         stop_loss: float,
         timestamp: datetime,
+        strategy_name: Optional[str] = None,
     ) -> str:
         """Generate unique SHA-256 fingerprint for deduplication."""
         return ConfluenceEngine.generate_fingerprint(
@@ -83,6 +84,7 @@ class SignalGenerator:
             entry_price=entry_price,
             stop_loss=stop_loss,
             timestamp=timestamp,
+            strategy_name=strategy_name,
         )
 
     def evaluate_market_signal(
@@ -143,12 +145,15 @@ class SignalGenerator:
         if existing:
             return existing
 
-        # Supersede previous active signals for the same symbol to prevent conflicting active setups
+        # Supersede previous active signals for the same symbol and strategy
         try:
-            db.query(Signal).filter(
+            supersede_filter = [
                 Signal.symbol == signal_resp.symbol,
                 Signal.status == "ACTIVE",
-            ).update({"status": "SUPERSEDED"})
+            ]
+            if signal_resp.strategy_name:
+                supersede_filter.append(Signal.strategy_name == signal_resp.strategy_name)
+            db.query(Signal).filter(*supersede_filter).update({"status": "SUPERSEDED"})
             db.commit()
         except Exception as e:
             db.rollback()
@@ -275,8 +280,8 @@ class SignalGenerator:
                 target_time=now_utc,
             )
 
-            # Evaluate Signal
-            sig = self.evaluate_market_signal(
+            # Evaluate Signals across all registered strategies
+            sigs = self.evaluate_market_signals_multi(
                 candles_primary=c1h,
                 symbol=sym,
                 timeframe=timeframe,
@@ -287,26 +292,32 @@ class SignalGenerator:
                 risk_percent=risk_percent,
             )
 
-            is_act = sig.direction in (SignalDirection.BUY, SignalDirection.SELL)
-            if is_act:
-                actionable_count += 1
-                if persist_qualified:
-                    db_sig = self.persist_signal_if_qualified(db, sig)
-                    if db_sig:
-                        sig.id = db_sig.id
+            has_actionable = any(s.direction in (SignalDirection.BUY, SignalDirection.SELL) for s in sigs)
 
-            results.append(
-                MarketScanSymbolResult(
-                    symbol=sym,
-                    timeframe=timeframe,
-                    direction=sig.direction,
-                    setup_score=sig.setup_score,
-                    is_actionable=is_act,
-                    signal=sig,
-                    blackout_blocked=news_res.is_blackout or not news_res.trading_allowed or news_res.is_news_unavailable,
-                    reasons=sig.reasons,
+            for sig in sigs:
+                is_act = sig.direction in (SignalDirection.BUY, SignalDirection.SELL)
+                if has_actionable and not is_act:
+                    continue
+
+                if is_act:
+                    actionable_count += 1
+                    if persist_qualified:
+                        db_sig = self.persist_signal_if_qualified(db, sig)
+                        if db_sig:
+                            sig.id = db_sig.id
+
+                results.append(
+                    MarketScanSymbolResult(
+                        symbol=sym,
+                        timeframe=timeframe,
+                        direction=sig.direction,
+                        setup_score=sig.setup_score,
+                        is_actionable=is_act,
+                        signal=sig,
+                        blackout_blocked=news_res.is_blackout or not news_res.trading_allowed or news_res.is_news_unavailable,
+                        reasons=sig.reasons,
+                    )
                 )
-            )
 
         return MarketScanResponse(
             timestamp=now_utc,

@@ -102,11 +102,13 @@ class ConfluenceEngine:
         entry_price: float,
         stop_loss: float,
         timestamp: datetime,
+        strategy_name: Optional[str] = None,
     ) -> str:
         """Generate unique SHA-256 fingerprint for deduplication."""
         ts_utc = ensure_utc_datetime(timestamp) or datetime.now(timezone.utc)
         ts_str = ts_utc.isoformat()
-        payload = f"{symbol}_{timeframe}_{direction.value}_{entry_price:.5f}_{stop_loss:.5f}_{ts_str}"
+        strat_str = f"_{strategy_name}" if strategy_name else ""
+        payload = f"{symbol}_{timeframe}_{direction.value}_{entry_price:.5f}_{stop_loss:.5f}_{ts_str}{strat_str}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     # ------------------------------------------------------------------
@@ -424,6 +426,7 @@ class ConfluenceEngine:
             entry_price=entry_p,
             stop_loss=sl_p,
             timestamp=latest_ts,
+            strategy_name=result.strategy_name,
         )
 
         return SignalResponse(
@@ -442,6 +445,7 @@ class ConfluenceEngine:
             timestamp=latest_ts,
             score_breakdown=result.score_breakdown,
             risk_parameters=risk_params,
+            strategy_name=result.strategy_name,
         )
 
     # ------------------------------------------------------------------

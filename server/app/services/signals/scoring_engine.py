@@ -17,10 +17,12 @@ from app.services.signals.evaluators import (
 
 
 class SignalScoringEngine:
-    """Unified Signal Scoring Engine (Single Source of Truth).
+    """Unified Signal Scoring Engine.
     
-    Provides deterministic scoring across Market Structure, Liquidity, Indicators,
-    and Price Action, delegating to the unified ConsensusFilter and evaluators.
+    DEPRECATED: Production signal generation has transitioned to the pluggable
+    multi-strategy engine (`app.services.strategies.smc_strategy.SMCStrategy`
+    and `app.services.strategies.momentum_strategy.MomentumStrategy`).
+    This class is maintained solely for backward compatibility with legacy tests.
     """
 
     def __init__(
