@@ -221,6 +221,74 @@ class TelegramMessageFormatter:
         return "\n".join(lines)
 
     @classmethod
+    def format_multi_strategy_alert(cls, signals: List[SignalResponse]) -> str:
+        """Format an alert when multiple independent strategies produce signals for the same symbol."""
+        if not signals:
+            return ""
+        if len(signals) == 1:
+            return cls.format_signal_alert(signals[0])
+
+        sym_clean = signals[0].symbol
+        sym = cls.escape_code(sym_clean)
+        tf = cls.escape_code(signals[0].timeframe)
+
+        # Check directions
+        directions = {s.direction for s in signals if s.direction in (SignalDirection.BUY, SignalDirection.SELL)}
+        is_conflict = len(directions) > 1
+
+        if is_conflict:
+            header = f"⚠️ *STRATEGY CONFLICT DETECTED: {sym}* ⚠️"
+            state_label = "⚠️ *Market State:* `STRATEGY CONFLICT (Opposing Biases)`"
+        else:
+            dir_val = list(directions)[0] if directions else SignalDirection.WAIT
+            dir_text = "BUY" if dir_val == SignalDirection.BUY else ("SELL" if dir_val == SignalDirection.SELL else "WAIT")
+            header = f"⚡ *STRATEGY CONFLUENCE: {sym} ({dir_text})* ⚡"
+            state_label = "✅ *Market State:* `STRATEGY CONFLUENCE (Aligned Direction)`"
+
+        lines = [
+            header,
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"📊 *Instrument:* `{sym}`",
+            f"⏱ *Timeframe:* `{tf}`",
+            state_label,
+            f"━━━━━━━━━━━━━━━━━━━━",
+        ]
+
+        for s in signals:
+            strat = s.strategy_name or "Independent Strategy"
+            dir_emoji = "🟢 BUY" if s.direction == SignalDirection.BUY else ("🔴 SELL" if s.direction == SignalDirection.SELL else "⚪ WAIT")
+            lines.append(f"🧠 *{cls.escape_markdown(strat)}:* {dir_emoji} (Score: `{s.setup_score:.1f}/100`)")
+            if s.reasons:
+                for r in s.reasons[:3]:
+                    lines.append(f"   • {cls.escape_markdown(r)}")
+            lines.append(f"────────────────────")
+
+        # Summary guidance
+        if is_conflict:
+            lines.extend([
+                f"🛡 *Analysis Note:* _Independent strategies show opposing direction. "
+                f"Exercise elevated caution or wait for structural resolution._",
+            ])
+        else:
+            actionable = [s for s in signals if s.direction in (SignalDirection.BUY, SignalDirection.SELL)]
+            if actionable:
+                primary_sig = max(actionable, key=lambda x: x.setup_score)
+                if primary_sig.entry_price is not None:
+                    lines.append(f"📍 *Confluence Entry:* `{cls.format_price(primary_sig.entry_price, sym_clean)}`")
+                if primary_sig.stop_loss is not None:
+                    lines.append(f"🛑 *Stop Loss:* `{cls.format_price(primary_sig.stop_loss, sym_clean)}`")
+                if primary_sig.take_profit_1 is not None:
+                    lines.append(f"🎯 *Take Profit 1:* `{cls.format_price(primary_sig.take_profit_1, sym_clean)}`")
+
+        lines.extend([
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"🕒 *Timestamp:* `{signals[0].timestamp.strftime('%Y-%m-%d %H:%M UTC')}`",
+            f"⚠️ *Notice:* _Rule-based multi-strategy analysis. Manage risk responsibly._",
+        ])
+
+        return "\n".join(lines)
+
+    @classmethod
     def format_tp1_hit(cls, symbol: str, price: float, realized_pnl: float, new_sl: float) -> str:
         """Format a Take Profit 1 reached notification."""
         sym = cls.escape_code(symbol)

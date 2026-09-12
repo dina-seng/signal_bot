@@ -55,7 +55,7 @@ class SMCStrategy(BaseStrategy):
 
     @property
     def name(self) -> str:
-        return "SMC Confluence"
+        return "Strategy A (SMC Sniper)"
 
     def analyze(
         self,
