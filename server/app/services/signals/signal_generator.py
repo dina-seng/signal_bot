@@ -29,6 +29,7 @@ from app.services.market_data import (
     filter_closed_candles,
     log_latest_candle,
 )
+from app.services.signals.path_validator import PathValidator
 from app.services.news import NewsFilterEngine
 from app.services.signals.confluence_engine import ConfluenceEngine
 from app.services.signals.risk_manager import RiskManager
@@ -48,6 +49,7 @@ class SignalGenerator:
         news_filter: Optional[NewsFilterEngine] = None,
         scoring_engine: Optional[SignalScoringEngine] = None,
         risk_manager: Optional[RiskManager] = None,
+        
     ):
         self.confluence_engine = confluence_engine or ConfluenceEngine(
             liquidity_service=liquidity_service,
@@ -56,6 +58,7 @@ class SignalGenerator:
             news_filter=news_filter,
             risk_manager=risk_manager,
         )
+        self.path_validator = PathValidator()
         self.liquidity_service = self.confluence_engine.liquidity_service
         self.mtf_engine = self.confluence_engine.mtf_engine
         self.indicator_service = self.confluence_engine.indicator_service

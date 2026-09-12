@@ -58,8 +58,9 @@ class TwelveDataProvider(BaseMarketDataProvider):
             "interval": interval,
             "outputsize": limit,
             "apikey": self.api_key,
-            "format": "JSON",
+            "format": "JSON"
         }
+
         if start_time:
             params["start_date"] = start_time.strftime("%Y-%m-%d %H:%M:%S")
         if end_time:
@@ -67,7 +68,7 @@ class TwelveDataProvider(BaseMarketDataProvider):
 
         try:
             # Small sleep to respect the free tier rate limit (8 requests/minute)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(8.0)
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, params=params)

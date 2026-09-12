@@ -78,7 +78,53 @@ class TelegramMessageFormatter:
 
     @classmethod
     def format_signal_alert(cls, sig: SignalResponse) -> str:
-        """Format an actionable trade setup alert."""
+        """Format an actionable trade setup alert.
+
+        Handles three cases:
+        - PATH BLOCKED rejection: shows a dedicated rejection card
+        - TP Adjusted (trade still valid): shows warning in the alert
+        - Normal trade: standard signal format
+        """
+        # Detect path validation outcomes from reasons
+        path_blocked_reason = None
+        tp_adjusted_reason = None
+        for r in (sig.reasons or []):
+            if "PATH BLOCKED" in r:
+                path_blocked_reason = r
+            elif "TP Adjusted" in r:
+                tp_adjusted_reason = r
+
+        # PATH BLOCKED rejection card — trade was killed by obstacle detection
+        if sig.direction == SignalDirection.WAIT and path_blocked_reason:
+            sym = cls.escape_code(sig.symbol)
+            tf = cls.escape_code(sig.timeframe)
+            lines = [
+                f"🚧 *TRADE REJECTED — PATH BLOCKED* 🚧",
+                f"━━━━━━━━━━━━━━━━━━━━",
+                f"📊 *Instrument:* `{sym}`",
+                f"⏱ *Timeframe:* `{tf}`",
+                f"━━━━━━━━━━━━━━━━━━━━",
+                f"🛑 *Rejection Reason:*",
+                f"  {cls.escape_markdown(path_blocked_reason)}",
+                f"━━━━━━━━━━━━━━━━━━━━",
+                f"🛡 *Risk Protection:* _Structural obstacle between entry and target "
+                f"reduces R:R below minimum threshold. Trade skipped to protect capital._",
+            ]
+            # Include other context reasons (max 3)
+            other_reasons = [r for r in (sig.reasons or []) if r != path_blocked_reason]
+            if other_reasons:
+                lines.append(f"━━━━━━━━━━━━━━━━━━━━\n💡 *Market Context:*")
+                for r in other_reasons[:3]:
+                    lines.append(f"  • {cls.escape_markdown(r)}")
+
+            lines.extend([
+                f"━━━━━━━━━━━━━━━━━━━━",
+                f"🕒 *Timestamp:* `{sig.timestamp.strftime('%Y-%m-%d %H:%M UTC')}`",
+                f"⚡ _Institutional obstacle detection is actively protecting your capital._",
+            ])
+            return "\n".join(lines)
+
+        # Normal actionable signal format (with optional TP Adjusted warning)
         dir_emoji = "🟢 *STRONG BUY (LONG)*" if sig.direction == SignalDirection.BUY else "🔴 *STRONG SELL (SHORT)*"
         rp = sig.risk_parameters
 
@@ -103,6 +149,14 @@ class TelegramMessageFormatter:
         if getattr(sig, "htf_trend", None):
             lines.append(f"📈 *1H Context:* `{cls.escape_code(sig.htf_trend)}`")
 
+        # TP Adjusted path warning — trade is valid but TP was moved
+        if tp_adjusted_reason:
+            lines.extend([
+                f"━━━━━━━━━━━━━━━━━━━━",
+                f"⚠️ *Path Warning:*",
+                f"  {cls.escape_markdown(tp_adjusted_reason)}",
+            ])
+
         lines.append(f"━━━━━━━━━━━━━━━━━━━━")
 
         if sig.entry_price is not None:
@@ -117,7 +171,8 @@ class TelegramMessageFormatter:
         if sig.take_profit_1 is not None and sig.entry_price is not None:
             formatted_tp1 = cls.format_price(sig.take_profit_1, sym_clean)
             tp1_pips = cls.calculate_pips(sig.entry_price, sig.take_profit_1, sym_clean)
-            lines.append(f"🎯 *Take Profit 1 (TP1):* `{formatted_tp1}` ({tp1_pips:.1f} pips | 2.0 R:R)")
+            rr_label = f"{sig.risk_reward:.1f}" if sig.risk_reward else "2.0"
+            lines.append(f"🎯 *Take Profit 1 (TP1):* `{formatted_tp1}` ({tp1_pips:.1f} pips | {rr_label} R:R)")
 
         if sig.take_profit_2 is not None and sig.entry_price is not None:
             formatted_tp2 = cls.format_price(sig.take_profit_2, sym_clean)
@@ -146,6 +201,9 @@ class TelegramMessageFormatter:
         if sig.reasons:
             lines.append(f"━━━━━━━━━━━━━━━━━━━━\n💡 *Key Confluence Catalysts:*")
             for r in sig.reasons[:4]:
+                # Skip the TP Adjusted reason here since it's already shown above
+                if tp_adjusted_reason and r == tp_adjusted_reason:
+                    continue
                 lines.append(f"  ✓ {cls.escape_markdown(r)}")
 
         lines.extend([

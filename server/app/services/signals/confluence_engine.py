@@ -34,6 +34,7 @@ from app.services.signals.evaluators import (
     PriceActionConsensusEvaluator,
     StructureConsensusEvaluator,
 )
+from app.services.signals.path_validator import PathValidator
 from app.services.signals.risk_manager import RiskManager
 from app.services.structure import MultiTimeframeStructureEngine
 
@@ -59,6 +60,7 @@ class ConfluenceEngine:
         self.indicator_service = indicator_service or IndicatorService()
         self.news_filter = news_filter or NewsFilterEngine()
         self.risk_manager = risk_manager or RiskManager()
+        self.path_validator = PathValidator()
         self.min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
 
         self.ltf_confirmation_engine = LTFConfirmationEngine()
@@ -357,12 +359,100 @@ class ConfluenceEngine:
             tp1_p = risk_params.take_profit_1
             tp2_p = risk_params.take_profit_2
             rr_p = risk_params.risk_reward_tp1
-        else:
-            entry_p = current_price
-            sl_p = current_price
-            tp1_p = current_price
-            tp2_p = current_price
-            rr_p = 0.0
+        # 7. Risk Management & SMC Geometric Levels + PATH VALIDATION
+        risk_params: Optional[RiskParameters] = None
+        final_reasons = list(reasons)  # Copy reasons so we can append path validation notes
+        
+        if direction in (SignalDirection.BUY, SignalDirection.SELL):
+            supp_low = structure_analysis.base_structure.key_support
+            res_high = structure_analysis.base_structure.key_resistance
+
+            # A. Calculate Initial Risk
+            risk_params = self.risk_manager.calculate_trade_risk(
+                symbol=symbol,
+                direction=direction,
+                entry_price=current_price,
+                atr_value=indicator_analysis.atr.atr_value,
+                key_support_low=supp_low,
+                key_resistance_high=res_high,
+                account_balance=account_balance,
+                risk_percent=risk_percent,
+            )
+            
+            # B. Small Account Rejection Check
+            if risk_params.suggested_lot_size == 0.0:
+                logger.warning(f"Trade REJECTED for {symbol}: Insufficient balance for safe position sizing.")
+                direction = SignalDirection.WAIT
+                total_score = 0.0
+                final_reasons = [
+                    "❌ INSUFFICIENT BALANCE: Account is too small to safely trade this setup at minimum lot size.",
+                    "Action: Awaiting larger account balance or lower volatility setup."
+                ]
+                risk_params = None
+            else:
+                # C. 🗺️ PATH VALIDATION (Adaptive Adjuster)
+                # Extract zones directly from the schemas your evaluators already use!
+                base_struct = getattr(structure_analysis, 'base_structure', structure_analysis)
+                sr_zones = getattr(base_struct, 'sr_zones', [])
+                liquidity_pools = getattr(base_struct, 'liquidity_pools', [])
+                active_fvgs = getattr(indicator_analysis, 'active_fvgs', [])
+
+                path_result = self.path_validator.validate_trade_path(
+                    direction=direction,
+                    entry_price=risk_params.entry_price,
+                    target_price=risk_params.take_profit_1,
+                    sr_zones=sr_zones,
+                    active_fvgs=active_fvgs,
+                    liquidity_pools=liquidity_pools,
+                )
+
+                if not path_result.is_clear:
+                    obstacle_price = path_result.nearest_obstacle_price
+                    obstacle_type = path_result.obstacle_type
+                    
+                    # 🎯 LIQUIDITY EXCEPTION: Equal Highs/Lows are magnets, not walls.
+                    if "Equal Highs" in obstacle_type or "Equal Lows" in obstacle_type:
+                        logger.info(f"🎯 Liquidity Magnet Detected: Allowing TP to target {obstacle_type} at {obstacle_price:.5f}")
+                        final_reasons.append(f"🎯 Targeting Liquidity Sweep at {obstacle_price:.5f}")
+                    else:
+                        # 🛡️ ADAPTIVE ADJUSTMENT: Move TP just before the obstacle
+                        pip_size = self.risk_manager.get_pip_size(symbol)
+                        buffer_pips = 2.0  # 2 pip safety buffer before the wall
+                        buffer_price = buffer_pips * pip_size
+                        
+                        if direction == SignalDirection.BUY:
+                            adjusted_tp1 = obstacle_price - buffer_price
+                        else:
+                            adjusted_tp1 = obstacle_price + buffer_price
+                            
+                        # Recalculate R:R with the new adjusted TP
+                        new_risk_price = abs(risk_params.entry_price - risk_params.stop_loss)
+                        new_reward_price = abs(adjusted_tp1 - risk_params.entry_price)
+                        new_rr = new_reward_price / new_risk_price if new_risk_price > 0 else 0.0
+                        
+                        # Minimum viable R:R check
+                        if new_rr < 1.2: 
+                            logger.warning(f"Trade REJECTED: Path adjustment ruined R:R ({new_rr:.2f}). Obstacle at {obstacle_price:.5f}.")
+                            direction = SignalDirection.WAIT
+                            total_score = 0.0
+                            final_reasons = [
+                                f"❌ PATH BLOCKED: Obstacle ({obstacle_type}) at {obstacle_price:.5f} forces TP adjustment.",
+                                f"Adjusted R:R dropped to {new_rr:.2f} (Minimum required: 1.2). Trade aborted for capital preservation."
+                            ]
+                            risk_params = None
+                        else:
+                            # Keep the trade, but update TP1 and reasons
+                            logger.info(f"✅ TP Adjusted: Moved from {risk_params.take_profit_1:.5f} to {adjusted_tp1:.5f} to avoid {obstacle_type}. New R:R: {new_rr:.2f}")
+                            risk_params.take_profit_1 = round(adjusted_tp1, 5)
+                            risk_params.risk_reward_tp1 = round(new_rr, 2)
+                            final_reasons.append(f"⚠️ TP Adjusted: Path blocked by {obstacle_type} at {obstacle_price:.5f}. TP safely moved to {adjusted_tp1:.5f} (New R:R: {new_rr:.2f}) to ensure execution.")
+
+        # 8. Build Final Response (Update your return statement to use `final_reasons` and handle WAIT properly)
+        entry_p = risk_params.entry_price if risk_params else current_price
+        sl_p = risk_params.stop_loss if risk_params else current_price
+        tp1_p = risk_params.take_profit_1 if risk_params else current_price
+        tp2_p = risk_params.take_profit_2 if risk_params else current_price
+        rr_p = risk_params.risk_reward_tp1 if risk_params else 0.0
 
         fingerprint = self.generate_fingerprint(
             symbol=symbol,
@@ -384,7 +474,7 @@ class ConfluenceEngine:
             take_profit_2=tp2_p,
             risk_reward=rr_p,
             fingerprint=fingerprint,
-            reasons=reasons,
+            reasons=final_reasons,  # 👈 USE THE UPDATED REASONS LIST
             status=SignalStatus.ACTIVE,
             timestamp=latest_ts,
             score_breakdown=breakdown,
