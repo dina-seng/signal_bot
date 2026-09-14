@@ -284,3 +284,46 @@ class TestStrategyIndependence:
         assert "Strategy B (Momentum Catcher)" in conflict_text
         assert "BUY" in conflict_text
         assert "SELL" in conflict_text
+
+    def test_momentum_strategy_score_breakdown_validation(self):
+        """Verify ScoreBreakdown does not fail Pydantic validation when final_score is high."""
+        strat_b = MomentumStrategy()
+        now = datetime.now(timezone.utc)
+        bull_div = RSIDivergence(
+            divergence_type=DivergenceType.REGULAR_BULLISH,
+            start_index=10,
+            end_index=20,
+            start_timestamp=now,
+            end_timestamp=now,
+            price_start=1990.0,
+            price_end=1985.0,
+            rsi_start=28.0,
+            rsi_end=35.0,
+            strength=0.9,
+        )
+        indicators = _build_mock_indicators(
+            golden_cross=True,
+            ema_trend="BULLISH_STACK",
+            price_vs_ema200="ABOVE",
+            rsi_value=60.0,
+            rsi_condition="BULLISH_ZONE",
+            divergences=[bull_div],
+            volatility_state="HIGH",
+        )
+        structure = _build_mock_structure()
+
+        result = strat_b.analyze(
+            symbol="XAU/USD",
+            timeframe="1h",
+            candles=[],
+            indicators=indicators,
+            structure=structure,
+        )
+
+        assert result.score_breakdown is not None
+        assert result.score_breakdown.indicators_score <= 25.0
+        assert result.score_breakdown.total_score <= 100.0
+        assert result.score_breakdown.structure_score <= 30.0
+        assert result.score_breakdown.liquidity_score <= 25.0
+        assert result.score_breakdown.price_action_score <= 20.0
+

@@ -151,13 +151,10 @@ class MomentumStrategy(BaseStrategy):
         
         pa_score = min(20.0, remaining)
 
-        capped_indicators_score = min(25.0, final_score)
-
-
         final_breakdown = ScoreBreakdown(
             structure_score=round(struct_score, 1),
             liquidity_score=round(liq_score, 1),
-            indicators_score=capped_indicators_score,
+            indicators_score=min(25.0, float(final_score)),
             price_action_score=round(pa_score, 1),
             total_score=round(final_score_capped, 1),
             is_qualified=final_score_capped >= min_threshold
