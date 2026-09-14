@@ -15,6 +15,7 @@ class CandleBase(BaseModel):
     low: float = Field(..., description="Lowest price during period")
     close: float = Field(..., description="Closing price")
     volume: float = Field(default=0.0, ge=0.0, description="Tick volume or trade volume")
+    is_closed: Optional[bool] = Field(default=None, description="Whether candle is finalized")
 
 
 class CandleCreate(CandleBase):

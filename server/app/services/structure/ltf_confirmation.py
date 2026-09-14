@@ -1,10 +1,12 @@
 """Lower Timeframe (LTF) Confirmation Engine for Multi-Timeframe Entry Validation."""
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Sequence, Union
+from typing import Any, List, Optional, Sequence, Union
+from app.core.logging import logger
 from app.schemas.candle import CandleBase
 from app.schemas.liquidity import LiquidityEventType
 from app.schemas.structure import SwingPoint, SwingType, TrendDirection
+from app.services.market_data.freshness import ensure_utc_datetime, get_timeframe_delta
 from app.services.structure.swing_detector import SwingDetector
 from app.services.structure.bos_choch_detector import BOSCHOCHDetector
 
@@ -20,8 +22,8 @@ class LTFConfirmationEngine:
         self,
         primary_timeframe: str,
         primary_direction: TrendDirection,
-        primary_candles: Sequence[Union[CandleBase, any]],
-        ltf_candles: Sequence[Union[CandleBase, any]],
+        primary_candles: Sequence[Union[CandleBase, Any]],
+        ltf_candles: Sequence[Union[CandleBase, Any]],
         max_bars_ago: int = 5,
     ) -> tuple[bool, str]:
         """
@@ -37,11 +39,66 @@ class LTFConfirmationEngine:
         Returns:
             Tuple of (is_confirmed: bool, reason: str)
         """
-        if not ltf_candles or len(ltf_candles) < 20:
+        if not ltf_candles:
             return False, "Insufficient LTF data for confirmation"
 
-        # Get recent LTF candles (last max_bars_ago + buffer)
-        recent_ltf = list(ltf_candles[-(max_bars_ago + 5):])
+        # Determine primary candle close time if available
+        primary_close_time = None
+        if primary_candles:
+            last_prim = primary_candles[-1]
+            prim_ts = getattr(last_prim, "timestamp", None)
+            if isinstance(last_prim, dict):
+                prim_ts = last_prim.get("timestamp", prim_ts)
+            if prim_ts is not None:
+                try:
+                    prim_utc = ensure_utc_datetime(prim_ts)
+                    prim_delta = get_timeframe_delta(primary_timeframe)
+                    primary_close_time = prim_utc + prim_delta
+                except Exception:
+                    primary_close_time = None
+
+        ltf_delta = None
+        try:
+            first_candle = ltf_candles[0]
+            ltf_tf = getattr(first_candle, "timeframe", "15m")
+            if isinstance(first_candle, dict):
+                ltf_tf = first_candle.get("timeframe", ltf_tf)
+            ltf_delta = get_timeframe_delta(ltf_tf)
+        except Exception:
+            ltf_delta = timedelta(minutes=15)
+
+        # Exclude currently forming / open candles:
+        # 1. Filter out candles explicitly flagged with is_closed=False
+        # 2. Filter out candles opening at or after the primary timeframe close
+        closed_ltf_candles: List[Any] = []
+        for c in ltf_candles:
+            is_closed = getattr(c, "is_closed", None)
+            if isinstance(c, dict):
+                is_closed = c.get("is_closed", is_closed)
+            if is_closed is False:
+                continue
+
+            if primary_close_time is not None:
+                c_ts = getattr(c, "timestamp", None)
+                if isinstance(c, dict):
+                    c_ts = c.get("timestamp", c_ts)
+                if c_ts is not None:
+                    c_utc = ensure_utc_datetime(c_ts)
+                    if c_utc is not None:
+                        if c_utc >= primary_close_time:
+                            continue
+                        if ltf_delta is not None and (c_utc + ltf_delta) > primary_close_time:
+                            continue
+
+            closed_ltf_candles.append(c)
+
+        logger.info(f"LTF Confirmation checked on {len(closed_ltf_candles)} fully closed candles.")
+
+        if len(closed_ltf_candles) < (max_bars_ago + 5):
+            return False, "Insufficient LTF data for confirmation"
+
+        # Get recent closed LTF candles (last max_bars_ago + buffer for swing detection)
+        recent_ltf = list(closed_ltf_candles[-(max_bars_ago + 5):])
         
         # Detect LTF structure
         ltf_swings = self.swing_detector.detect_swings(recent_ltf, lookback=2)
