@@ -222,7 +222,44 @@ class IngestionService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
     ) -> IngestionReport:
-        """Fetch candles from provider and ingest into database with defensive 0-candle handling."""
+        """Fetch candles from provider and ingest into database with smart freshness cache and defensive 0-candle handling."""
+        # ── Smart Freshness Cache Gate ────────────────────────────────────────────
+        # When no explicit historical window is specified, check if DB already has the latest closed candle.
+        if start_time is None and end_time is None:
+            try:
+                latest_candle = self.db.scalars(
+                    select(Candle)
+                    .where(Candle.symbol == symbol, Candle.timeframe == timeframe.lower())
+                    .order_by(desc(Candle.timestamp))
+                    .limit(1)
+                ).first()
+
+                if latest_candle is not None:
+                    tf_delta: timedelta = self.get_timeframe_delta(timeframe)
+                    latest_ts: datetime = ensure_utc_datetime(latest_candle.timestamp)
+                    next_candle_close: datetime = latest_ts + tf_delta
+                    now_utc: datetime = datetime.now(timezone.utc)
+
+                    if now_utc < next_candle_close:
+                        logger.info(f"Skipping API fetch for {symbol} {timeframe} - Data is fresh.")
+                        return IngestionReport(
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            fetched_count=0,
+                            inserted_count=0,
+                            skipped_duplicates_count=0,
+                            invalid_candles_count=0,
+                            gaps_detected=[],
+                            start_time=latest_ts,
+                            end_time=latest_ts,
+                        )
+            except Exception as cache_err:
+                logger.warning(
+                    f"Cache freshness check failed for {symbol} [{timeframe}] — "
+                    f"falling back to API fetch: {cache_err}"
+                )
+
+        # ── Provider API Fetch Path ───────────────────────────────────────────────
         try:
             candles = await self.provider.fetch_candles(
                 symbol=symbol,

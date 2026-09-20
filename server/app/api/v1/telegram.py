@@ -1,10 +1,10 @@
 """Telegram Bot and Background Market Scanner API Endpoints."""
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
+from app.core.database import SessionLocal, get_db
 from app.core.config import settings
 from app.core.logging import logger
 from app.api.deps import get_telegram_bot_service
@@ -21,6 +21,33 @@ from app.schemas.telegram import (
 from app.services.telegram import TelegramBotService
 
 router = APIRouter(prefix="/telegram", tags=["Telegram Bot & Automated Scanner"])
+
+# Heavy commands that fetch market data and run multi-timeframe analysis
+_HEAVY_COMMANDS = {"/scan", "/signal", "/sync"}
+
+
+async def _run_command_in_background(
+    service: TelegramBotService,
+    request: TelegramCommandRequest,
+) -> None:
+    """Execute a heavy command asynchronously in the background with an isolated DB session."""
+    db: Session = SessionLocal()
+    try:
+        await service.command_handler.handle_command(db=db, request=request)
+    except Exception as e:
+        logger.error(
+            f"❌ Background command '{request.command}' failed for chat {request.chat_id}: {e}",
+            exc_info=True,
+        )
+        try:
+            await service.client.send_message(
+                text=f"❌ Error processing command: {str(e)}",
+                chat_id=request.chat_id,
+            )
+        except Exception:
+            pass
+    finally:
+        db.close()
 
 
 @router.post("/broadcast", response_model=TelegramMessageResponse)
@@ -46,21 +73,19 @@ async def process_telegram_command(
 @router.post("/webhook")
 async def telegram_webhook(
     update: TelegramWebhookUpdate,
-    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks,
     service: TelegramBotService = Depends(get_telegram_bot_service),
 ):
     """Webhook endpoint for receiving real-time interactive updates from Telegram servers."""
-    from app.core.logging import logger
-    
     logger.info(f"🔔 TELEGRAM WEBHOOK RECEIVED")
-    
+
     # Handle both Pydantic model and dict cases
     msg = update.message or update.channel_post
     if not msg:
         logger.warning("Webhook received but no message payload found")
         return {"status": "ignored", "reason": "No message payload"}
 
-    # ✅ FIX: Safely extract data whether msg is a dict or Pydantic model
+    # Safely extract data whether msg is a dict or Pydantic model
     if isinstance(msg, dict):
         text = msg.get("text", "")
         chat = msg.get("chat", {})
@@ -76,25 +101,46 @@ async def telegram_webhook(
     logger.info(f"📩 Message from chat {chat_id}: {text}")
 
     if text.startswith("/"):
+        cmd_root = text.split()[0].split("@")[0].lower()
+        cmd_req = TelegramCommandRequest(
+            command=text,
+            chat_id=chat_id,
+            user_id=getattr(user, "id", None) if user else None,
+            user_name=getattr(user, "username", None) if user else None,
+        )
+
+        if cmd_root in _HEAVY_COMMANDS:
+            # Task 1: Immediately acknowledge receipt to the user
+            ack_text = "🔄 Processing request... analyzing market data. Please wait."
+            try:
+                await service.client.send_message(
+                    text=ack_text,
+                    chat_id=chat_id,
+                )
+            except Exception as ack_err:
+                logger.warning(f"Could not send acknowledgement message to {chat_id}: {ack_err}")
+
+            # Task 1: Offload the heavy scanning logic to BackgroundTasks so webhook returns 200 OK instantly
+            background_tasks.add_task(_run_command_in_background, service, cmd_req)
+            return {"status": "success", "command": cmd_root, "reply": ack_text}
+
+        # Lightweight commands processed inline
         try:
-            cmd_req = TelegramCommandRequest(
-                command=text,
-                chat_id=chat_id,
-                user_id=getattr(user, "id", None) if user else None,
-                user_name=getattr(user, "username", None) if user else None,
-            )
-            cmd_res = await service.process_command(db=db, request=cmd_req)
+            db: Session = SessionLocal()
+            try:
+                cmd_res = await service.command_handler.handle_command(db=db, request=cmd_req)
+            finally:
+                db.close()
             logger.info(f"✅ Command processed: {cmd_res.command}")
             return {"status": "success", "command": cmd_res.command, "reply": cmd_res.reply_text}
         except Exception as e:
             logger.error(f"❌ Error processing command: {e}", exc_info=True)
-            # Try to send error message to user
             try:
                 await service.client.send_message(
                     text=f"❌ Error processing command: {str(e)}",
                     chat_id=chat_id,
                 )
-            except:
+            except Exception:
                 pass
             return {"status": "error", "error": str(e)}
 
