@@ -15,6 +15,21 @@ from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.signals import RiskManager, SignalGenerator
 
 
+# ---------------------------------------------------------------------------
+# Timeframe → bar duration map for staleness validation
+# ---------------------------------------------------------------------------
+_TIMEFRAME_MINUTES: dict[str, float] = {
+    "1m":  1.0,
+    "3m":  3.0,
+    "5m":  5.0,
+    "15m": 15.0,
+    "30m": 30.0,
+    "1h":  60.0,
+    "4h":  240.0,
+    "1d":  1440.0,
+}
+
+
 class PaperOrderExecutor:
     """Handles order placement, execution simulation, and margin validation for paper trading."""
 
@@ -41,6 +56,153 @@ class PaperOrderExecutor:
             return float(candle.close)
         # Default pricing fallback if no candles in DB
         return 1.1000 if "EUR" in symbol else 1.3000
+
+    def validate_signal_before_execution(
+        self,
+        db: Session,
+        signal: Signal,
+        current_price: float,
+    ) -> None:
+        """Run pre-execution staleness and live-price invalidation gates.
+
+        Raises ValueError with a descriptive message if the signal is stale or
+        if the live market price has already moved past the signal's SL/TP,
+        preventing a guaranteed-loss order from being placed.
+
+        Args:
+            db: Active SQLAlchemy session (unused but kept for future real-time
+                provider injection without breaking the method signature).
+            signal: The DB Signal record to be executed.
+            current_price: Live market price fetched immediately before this call.
+
+        Raises:
+            ValueError: If the signal is too old or price has invalidated the setup.
+        """
+        now_utc = datetime.now(timezone.utc)
+
+        # ------------------------------------------------------------------
+        # Gate 1 — Timestamp Staleness Check
+        # ------------------------------------------------------------------
+        signal_ts = signal.timestamp
+        if signal_ts is not None:
+            # Normalise to UTC regardless of whether tzinfo is attached
+            if signal_ts.tzinfo is None:
+                signal_ts = signal_ts.replace(tzinfo=timezone.utc)
+            else:
+                signal_ts = signal_ts.astimezone(timezone.utc)
+
+            signal_age_minutes = (now_utc - signal_ts).total_seconds() / 60.0
+            timeframe_minutes = _TIMEFRAME_MINUTES.get(
+                (signal.timeframe or "").lower(), 60.0
+            )
+
+            # Clock-skew protection: reject signals timestamped more than 1 minute
+            # in the future (indicates a misconfigured clock or corrupted record).
+            if signal_age_minutes < -1.0:
+                msg = (
+                    f"STALE SIGNAL REJECTED (clock skew): Signal #{signal.id} for "
+                    f"{signal.symbol} [{signal.timeframe}] is timestamped "
+                    f"{abs(signal_age_minutes):.1f} minutes IN THE FUTURE "
+                    f"(signal_ts={signal_ts.isoformat()}, now={now_utc.isoformat()}). "
+                    "Order aborted to prevent corrupted execution."
+                )
+                logger.warning(msg)
+                raise ValueError(msg)
+
+            # Bar-age staleness: signal is older than one full bar of its timeframe.
+            if signal_age_minutes > timeframe_minutes:
+                msg = (
+                    f"STALE SIGNAL REJECTED: Signal #{signal.id} for "
+                    f"{signal.symbol} [{signal.timeframe}] is "
+                    f"{signal_age_minutes:.1f} minutes old "
+                    f"(max allowed: {timeframe_minutes:.0f} minutes for a {signal.timeframe} bar). "
+                    "The market has moved since signal generation; order aborted to prevent "
+                    "instant Stop Loss stop-out."
+                )
+                logger.warning(msg)
+                raise ValueError(msg)
+
+        # ------------------------------------------------------------------
+        # Gate 2 — Live Market Price Invalidation
+        # ------------------------------------------------------------------
+        direction = (signal.direction or "").upper()
+        sl = signal.stop_loss
+        tp = signal.take_profit_1
+
+        if sl is None or tp is None:
+            # Cannot validate without risk levels; skip gate (risk manager will
+            # calculate them during execution — at least staleness was checked).
+            return
+
+        # ------------------------------------------------------------------
+        # Gate 3 — Minimum SL Distance Guard
+        #
+        # If the live market price has drifted to within 1 pip of the signal's
+        # Stop Loss, the position sizing formula (Risk / SL_distance) will
+        # produce an astronomically large unit count, blowing the margin.  This
+        # catches the case where staleness has closed the price-to-SL gap to
+        # near-zero without fully crossing the SL level.
+        # ------------------------------------------------------------------
+        MIN_SL_DISTANCE_PIPS = 0.0001  # 1 pip minimum clearance
+        sl_distance = abs(current_price - sl)
+        if sl_distance < MIN_SL_DISTANCE_PIPS:
+            msg = (
+                f"DEGENERATE SETUP REJECTED: Signal #{signal.id} for "
+                f"{signal.symbol} [{signal.timeframe}] — live price "
+                f"{current_price:.5f} is within {sl_distance:.5f} of Stop Loss "
+                f"{sl:.5f} (minimum clearance: {MIN_SL_DISTANCE_PIPS} pips). "
+                "Position sizing would produce infinite units; execution aborted."
+            )
+            logger.warning(msg)
+            raise ValueError(msg)
+
+        if direction == "SELL":
+            # For a SELL setup the SL is above entry and TP is below entry.
+            # Reject if price has already traded THROUGH the SL (strictly above),
+            # meaning any fill will immediately be stopped out.
+            # Reject if price has already traded THROUGH the TP (strictly below),
+            # meaning the entry opportunity has closed.
+            if current_price > sl:
+                msg = (
+                    f"LIVE PRICE INVALIDATION (SELL): Signal #{signal.id} for "
+                    f"{signal.symbol} [{signal.timeframe}] — current price "
+                    f"{current_price:.5f} is above Stop Loss {sl:.5f}. "
+                    "Order would trigger an instant SL_HIT; execution aborted."
+                )
+                logger.warning(msg)
+                raise ValueError(msg)
+            if current_price < tp:
+                msg = (
+                    f"LIVE PRICE INVALIDATION (SELL): Signal #{signal.id} for "
+                    f"{signal.symbol} [{signal.timeframe}] — current price "
+                    f"{current_price:.5f} is below Take Profit {tp:.5f}. "
+                    "The TP has already been reached; entry opportunity has passed."
+                )
+                logger.warning(msg)
+                raise ValueError(msg)
+
+        elif direction == "BUY":
+            # For a BUY setup the SL is below entry and TP is above entry.
+            # Reject if price has already traded THROUGH the SL (strictly below)
+            # or THROUGH the TP (strictly above).
+            if current_price < sl:
+                msg = (
+                    f"LIVE PRICE INVALIDATION (BUY): Signal #{signal.id} for "
+                    f"{signal.symbol} [{signal.timeframe}] — current price "
+                    f"{current_price:.5f} is below Stop Loss {sl:.5f}. "
+                    "Order would trigger an instant SL_HIT; execution aborted."
+                )
+                logger.warning(msg)
+                raise ValueError(msg)
+            if current_price > tp:
+                msg = (
+                    f"LIVE PRICE INVALIDATION (BUY): Signal #{signal.id} for "
+                    f"{signal.symbol} [{signal.timeframe}] — current price "
+                    f"{current_price:.5f} is above Take Profit {tp:.5f}. "
+                    "The TP has already been reached; entry opportunity has passed."
+                )
+                logger.warning(msg)
+                raise ValueError(msg)
 
     def execute_order(
         self,
@@ -166,7 +328,18 @@ class PaperOrderExecutor:
         db: Session,
         request: AutoTradeSignalRequest,
     ) -> PaperTrade:
-        """Convert a trading signal into an active virtual position."""
+        """Convert a trading signal into an active virtual position.
+
+        Executes two pre-flight validation gates before placing any order:
+          1. Timestamp Staleness Gate — signal must be younger than one full bar
+             of its timeframe (e.g. < 15 min old for a 15m signal).
+          2. Live Price Invalidation Gate — the current market price must still
+             be within the signal's SL/TP corridor. If price has already moved
+             past the SL or reached the TP, the order is aborted.
+
+        These gates prevent the class of 0-second SL_HIT losses caused by
+        executing stale scanner outputs against a market that has already moved.
+        """
         target_signal: Optional[Signal] = None
 
         if request.signal_id:
@@ -207,6 +380,20 @@ class PaperOrderExecutor:
                 )
                 return existing_trade
 
+        # 2. Resolve live market price NOW (before validation and order placement).
+        #    Do NOT reuse target_signal.entry_price — that price was captured at
+        #    signal-generation time and may be 15–60 minutes stale.
+        live_price = self.get_latest_market_price(db, target_signal.symbol)
+
+        # 3. Pre-Execution Validation Gates (staleness + live price invalidation).
+        #    Raises ValueError with a descriptive message if the signal is invalid;
+        #    the caller (scanner) should catch and log, but NOT place the order.
+        self.validate_signal_before_execution(
+            db=db,
+            signal=target_signal,
+            current_price=live_price,
+        )
+
         order = PaperOrderCreate(
             account_id=request.account_id,
             symbol=target_signal.symbol,
@@ -219,4 +406,5 @@ class PaperOrderExecutor:
             signal_id=target_signal.id,
         )
 
-        return self.execute_order(db=db, order=order, current_market_price=target_signal.entry_price)
+        # 4. Execute at live market price (NOT the stale signal entry price).
+        return self.execute_order(db=db, order=order, current_market_price=live_price)

@@ -239,3 +239,153 @@ def test_ltf_confirmation_bearish_breakout():
     assert "LTF Bearish" in reason
 
 
+# =============================================================================
+# Bug Fix Tests: Stale Signal & Live Price Invalidation Gate
+# (Task 1 — PaperOrderExecutor.validate_signal_before_execution)
+# =============================================================================
+
+from datetime import timedelta
+from unittest.mock import MagicMock
+import pytest
+
+from app.services.paper_trading.order_executor import PaperOrderExecutor
+
+
+def _make_mock_signal(
+    signal_id: int = 1,
+    symbol: str = "XAU/USD",
+    timeframe: str = "15m",
+    direction: str = "SELL",
+    stop_loss: float = 1960.00,
+    take_profit_1: float = 1930.00,
+    entry_price: float = 1950.00,
+    age_minutes: float = 0.0,
+) -> MagicMock:
+    """Build a mock Signal DB object with a configurable timestamp age."""
+    signal_ts = datetime.now(timezone.utc) - timedelta(minutes=age_minutes)
+    sig = MagicMock()
+    sig.id = signal_id
+    sig.symbol = symbol
+    sig.timeframe = timeframe
+    sig.direction = direction
+    sig.stop_loss = stop_loss
+    sig.take_profit_1 = take_profit_1
+    sig.entry_price = entry_price
+    sig.status = "ACTIVE"
+    sig.timestamp = signal_ts
+    return sig
+
+
+def test_stale_sell_signal_rejected_before_order():
+    """Mandatory regression test: a 20-minute-old 15m SELL signal with live price
+    above the SL must be rejected by validate_signal_before_execution() with a
+    descriptive ValueError BEFORE any paper order or DB write occurs.
+
+    This directly reproduces the failure mode causing 0-second SL_HIT stop-outs:
+      - Scanner generates a 15m SELL at T=0 (entry=1950, SL=1960, TP=1930)
+      - Market rallies; at T+20min live price = 1965 (already above SL=1960)
+      - Old code: execute_order() is called with stale entry=1950, trade opens,
+        position_manager sees price 1965 > SL 1960, SL_HIT fires instantly.
+      - Fixed code: validate_signal_before_execution() detects:
+          (a) signal is 20 min old > 15 min timeframe window → raises ValueError
+    """
+    executor = PaperOrderExecutor()
+    mock_db = MagicMock()
+
+    # Signal is 20 minutes old (one full 15m bar beyond staleness threshold)
+    stale_signal = _make_mock_signal(
+        timeframe="15m",
+        direction="SELL",
+        stop_loss=1960.00,
+        take_profit_1=1930.00,
+        entry_price=1950.00,
+        age_minutes=20.0,   # 20 min > 15 min threshold → stale
+    )
+
+    # Live price has already rallied above the SL (would guarantee instant SL_HIT)
+    live_price_above_sl = 1965.00  # above SL=1960
+
+    with pytest.raises(ValueError) as exc_info:
+        executor.validate_signal_before_execution(
+            db=mock_db,
+            signal=stale_signal,
+            current_price=live_price_above_sl,
+        )
+
+    error_msg = str(exc_info.value)
+    # Must fail on the STALENESS gate (gate 1 fires first, before price gate 2)
+    assert "STALE SIGNAL REJECTED" in error_msg, (
+        f"Expected staleness rejection message, got: {error_msg}"
+    )
+    assert "15m" in error_msg, "Error must identify the signal timeframe"
+
+    # No DB interactions should occur — order must not be placed
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_live_price_above_sl_sell_rejected_independently():
+    """Verify the LIVE PRICE invalidation gate (Gate 2) independently blocks a SELL
+    order when the current price has already moved above the Stop Loss, even when
+    the signal timestamp is fresh (within the 15m window).
+
+    This guards against the scenario where the scheduler fires within the bar window
+    but price has still spiked past the SL within those first few minutes.
+    """
+    executor = PaperOrderExecutor()
+    mock_db = MagicMock()
+
+    # Signal is only 3 minutes old — NOT stale for a 15m bar
+    fresh_signal = _make_mock_signal(
+        timeframe="15m",
+        direction="SELL",
+        stop_loss=1960.00,
+        take_profit_1=1930.00,
+        entry_price=1950.00,
+        age_minutes=3.0,    # 3 min < 15 min → within staleness window
+    )
+
+    # But live price is ABOVE the SL — a guaranteed instant loss
+    live_price_above_sl = 1962.00   # >= SL=1960
+
+    with pytest.raises(ValueError) as exc_info:
+        executor.validate_signal_before_execution(
+            db=mock_db,
+            signal=fresh_signal,
+            current_price=live_price_above_sl,
+        )
+
+    error_msg = str(exc_info.value)
+    assert "LIVE PRICE INVALIDATION" in error_msg, (
+        f"Expected price invalidation message, got: {error_msg}"
+    )
+    assert "SL_HIT" in error_msg, "Error must mention instant SL_HIT risk"
+
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_valid_fresh_sell_signal_passes_validation():
+    """Verify that a fresh, price-valid SELL signal passes both gates without error."""
+    executor = PaperOrderExecutor()
+    mock_db = MagicMock()
+
+    # 2-minute-old 15m SELL, live price well within SL/TP corridor
+    fresh_valid_signal = _make_mock_signal(
+        timeframe="15m",
+        direction="SELL",
+        stop_loss=1960.00,
+        take_profit_1=1930.00,
+        entry_price=1950.00,
+        age_minutes=2.0,    # fresh
+    )
+    # Price strictly inside the corridor: below SL (1960), above TP (1930)
+    live_price_in_range = 1951.00
+
+    # Should not raise
+    executor.validate_signal_before_execution(
+        db=mock_db,
+        signal=fresh_valid_signal,
+        current_price=live_price_in_range,
+    )
+    # Test passes if no exception is raised
