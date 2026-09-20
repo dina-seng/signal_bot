@@ -9,6 +9,7 @@ from app.core.logging import logger
 from app.schemas.indicators import (
     DivergenceType,
     IndicatorAnalysisResponse,
+    PatternType,
 )
 from app.schemas.liquidity import AdvancedStructureAnalysisResponse
 from app.schemas.signal import ScoreBreakdown, SignalDirection
@@ -116,6 +117,44 @@ class MomentumStrategy(BaseStrategy):
         final_reasons: List[str] = []
         direction = SignalDirection.WAIT
 
+        # ------------------------------------------------------------------
+        # 3a. Divergence-Only SELL Guard
+        #
+        # A bearish divergence signal is a *warning*, not a trigger, when the
+        # EMA trend stack is firmly BULLISH.  Shorting into strong bullish
+        # momentum based solely on RSI divergence — without a rejected
+        # candlestick pattern to confirm the reversal — is the primary cause
+        # of false SELL signals that stop out instantly.
+        #
+        # Rule: if the sell setup is driven by divergence AND the EMA trend is
+        # BULLISH_STACK (i.e. Price > EMA20 > EMA50 > EMA200), require at
+        # least one bearish candlestick confirmation pattern in the most
+        # recent 3 candles.  If none is found, strip the divergence bonus.
+        # ------------------------------------------------------------------
+        if (
+            sell_score >= min_threshold
+            and bear_divs
+            and indicators.ema.ema_trend == "BULLISH_STACK"
+        ):
+            # Check the last 3 candles for a bearish rejection pattern
+            recent_patterns = indicators.recent_patterns[-3:] if indicators.recent_patterns else []
+            bearish_confirmation = any(
+                p.pattern_type in (PatternType.BEARISH_PIN_BAR, PatternType.BEARISH_ENGULFING)
+                for p in recent_patterns
+            )
+            if not bearish_confirmation:
+                stripped_pts = 25.0  # exact divergence bonus weight
+                sell_score = max(0.0, sell_score - stripped_pts)
+                sell_reasons.append(
+                    f"\u26a0\ufe0f Divergence-only SELL blocked: No bearish candlestick rejection "
+                    "confirmation (Pin Bar / Engulfing) against BULLISH EMA Stack. "
+                    f"Divergence bonus stripped (-{stripped_pts:.0f} pts)."
+                )
+                logger.warning(
+                    f"MomentumStrategy [{symbol}][{timeframe}]: Divergence-only SELL against "
+                    "BULLISH_STACK \u2014 candlestick confirmation absent; divergence bonus stripped."
+                )
+
         if buy_score >= sell_score and buy_score >= min_threshold:
             direction = SignalDirection.BUY
             final_score = buy_score
@@ -133,31 +172,63 @@ class MomentumStrategy(BaseStrategy):
             ] + best_reasons[:2]
 
         # ------------------------------------------------------------------
-        # 4. Build ScoreBreakdown (Distributed to satisfy Pydantic limits)
+        # 4. Build ScoreBreakdown with accurate per-pillar values.
+        #
+        # Previous implementation used a waterfall distribution (Structure 30,
+        # Liquidity 25, Indicators 25, PA = remainder) which always produced
+        # price_action_score = 0.0 for total scores <= 80.0, masking the fact
+        # that no candlestick confirmation was present and bypassing the
+        # ConsensusFilter PA floor gate.
+        #
+        # Now PA is derived from whether a matching directional candlestick
+        # pattern was detected, independent of the arithmetic distribution.
         # ------------------------------------------------------------------
-        # We distribute the final_score across the pillars so no single pillar 
-        # exceeds its max limit (Structure=30, Liquidity=25, Indicators=25, PA=20)
         final_score_capped = min(100.0, final_score)
-        remaining = final_score_capped
-        
-        struct_score = min(30.0, remaining)
-        remaining -= struct_score
-        
-        liq_score = min(25.0, remaining)
-        remaining -= liq_score
-        
-        ind_score = min(25.0, remaining)
-        remaining -= ind_score
-        
-        pa_score = min(20.0, remaining)
+
+        # Determine PA score from actual pattern detection
+        if direction in (SignalDirection.BUY, SignalDirection.SELL):
+            recent_patterns_all = indicators.recent_patterns[-3:] if indicators.recent_patterns else []
+            if direction == SignalDirection.BUY:
+                pa_patterns = [
+                    p for p in recent_patterns_all
+                    if p.pattern_type in (PatternType.BULLISH_PIN_BAR, PatternType.BULLISH_ENGULFING)
+                ]
+            else:
+                pa_patterns = [
+                    p for p in recent_patterns_all
+                    if p.pattern_type in (PatternType.BEARISH_PIN_BAR, PatternType.BEARISH_ENGULFING)
+                ]
+            inside_bars = [
+                p for p in recent_patterns_all
+                if p.pattern_type == PatternType.INSIDE_BAR
+            ]
+
+            if pa_patterns:
+                # Score proportional to the best pattern confidence [0–1]
+                pa_score = round(min(20.0, 20.0 * max(p.confidence for p in pa_patterns)), 1)
+            elif inside_bars:
+                pa_score = 10.0  # Inside bar = moderate compression, half marks
+            else:
+                pa_score = 0.0   # No candlestick trigger present
+        else:
+            pa_score = 0.0
+
+        # Distribute remaining score across the other three pillars proportionally
+        non_pa_score = max(0.0, final_score_capped - pa_score)
+        # Relative weights: Structure 30, Liquidity 25, Indicators 25 (total 80)
+        struct_score  = round(min(30.0, non_pa_score * (30.0 / 80.0)), 1)
+        liq_score     = round(min(25.0, non_pa_score * (25.0 / 80.0)), 1)
+        ind_score     = round(min(25.0, non_pa_score * (25.0 / 80.0)), 1)
+
+        capped_indicators_score = min(25.0, float(final_score))
 
         final_breakdown = ScoreBreakdown(
-            structure_score=round(struct_score, 1),
-            liquidity_score=round(liq_score, 1),
-            indicators_score=min(25.0, float(final_score)),
-            price_action_score=round(pa_score, 1),
-            total_score=round(final_score_capped, 1),
-            is_qualified=final_score_capped >= min_threshold
+            structure_score=0.0,
+            liquidity_score=0.0,
+            indicators_score=capped_indicators_score,  # <--- USE THE CAPPED VALUE HERE
+            price_action_score=0.0,
+            total_score=round(final_score, 1),
+            is_qualified=final_score >= min_threshold
         )
 
         logger.debug(

@@ -461,6 +461,27 @@ class ConsensusFilter:
             all_catalysts.extend(p.catalysts)
             all_opposing.extend(p.opposing_signals)
 
+        # ------------------------------------------------------------------
+        # Price Action Floor Gate
+        # Any signal that reaches the overall score threshold purely through
+        # Structure + Liquidity + Indicators (i.e. zero candlestick confirmation)
+        # is inherently unconfirmed and prone to false execution.  Require at
+        # least 10.0 / 20.0 PA points before a direction can be qualified.
+        # ------------------------------------------------------------------
+        pa_floor_blocked = False
+        if raw_pa < 10.0 and candidate_direction in (SignalDirection.BUY, SignalDirection.SELL):
+            pa_floor_blocked = True
+            all_catalysts.append(
+                f"\u26d4 Price Action Floor Not Met: {raw_pa:.1f}/20.0 "
+                "(minimum 10.0 required). No candlestick confirmation present "
+                "(Pin Bar, Engulfing, or Inside Bar). Signal disqualified to prevent "
+                "unconfirmed entry against live momentum."
+            )
+            logger.warning(
+                f"PA Floor veto [{candidate_direction.value}]: price_action_score={raw_pa:.1f}/20 "
+                "is below the 10.0 floor — signal disqualified."
+            )
+
         # Calculate directional conflict penalty
         penalty = 0.0
         fatal_conflict = False
@@ -468,16 +489,20 @@ class ConsensusFilter:
         if all_opposing:
             if len(all_opposing) == 1:
                 penalty = 15.0
-                all_catalysts.append(f"⚠️ Directional Conflict Warning: {all_opposing[0]} (Penalty: -15.0 pts)")
+                all_catalysts.append(f"\u26a0\ufe0f Directional Conflict Warning: {all_opposing[0]} (Penalty: -15.0 pts)")
             else:
                 penalty = 30.0
                 fatal_conflict = True
                 all_catalysts.append(
-                    f"⛔ Severe Directional Conflict: {', '.join(all_opposing)} (Setup Invalidated)"
+                    f"\u26d4 Severe Directional Conflict: {', '.join(all_opposing)} (Setup Invalidated)"
                 )
 
         penalized_total = max(0.0, round(raw_total - penalty, 1))
-        is_qualified = penalized_total >= self.min_score_threshold and not fatal_conflict
+        is_qualified = (
+            penalized_total >= self.min_score_threshold
+            and not fatal_conflict
+            and not pa_floor_blocked
+        )
 
         breakdown = ScoreBreakdown(
             structure_score=round(raw_struct, 1),

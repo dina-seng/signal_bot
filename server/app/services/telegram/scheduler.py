@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import settings
 from app.core.database import SessionLocal
@@ -61,7 +61,7 @@ def get_scheduler_info() -> Dict[str, Any]:
     return {
         "is_enabled": settings.SCANNER_ENABLED,
         "is_running": running,
-        "interval_minutes": settings.SCANNER_INTERVAL_MINUTES,
+        "schedule": "15-minute candle-close (:00:10, :15:10, :30:10, :45:10 UTC)",
         "scanned_symbols": settings.SUPPORTED_SYMBOLS,
         "scanned_timeframes": settings.SCANNER_TIMEFRAMES,
         "auto_paper_trade": settings.SCANNER_AUTO_TRADE_PAPER,
@@ -75,7 +75,18 @@ def get_scheduler_info() -> Dict[str, Any]:
 def start_scanner_scheduler(
     scanner: Optional[AutomatedMarketScanner] = None,
 ) -> Optional[AsyncIOScheduler]:
-    """Initialize and start the background APScheduler for automated market scanning."""
+    """Initialize and start the background APScheduler for automated market scanning.
+
+    The scheduler fires at :00:10, :15:10, :30:10, and :45:10 UTC — exactly
+    10 seconds after each 15-minute candle close boundary.  This 10-second
+    offset allows market data providers to persist the completed bar before the
+    scan reads it, eliminating the class of bugs caused by evaluating stale or
+    still-forming candles.
+
+    Previous behaviour used IntervalTrigger anchored to server-start time,
+    producing arbitrary offsets (e.g. :52 past the hour) that could evaluate
+    15m and 30m candles 20–60 minutes after their close.
+    """
     global _scheduler
     if not settings.SCANNER_ENABLED:
         logger.info("Automated market scanner is disabled (SCANNER_ENABLED=False).")
@@ -90,7 +101,10 @@ def start_scanner_scheduler(
         set_shared_scanner(scanner)
 
     logger.info("Scanner enabled")
-    logger.info(f"Scanner interval: {settings.SCANNER_INTERVAL_MINUTES} minutes")
+    logger.info(
+        "Scanner schedule: every 15 minutes aligned to candle closes "
+        "(:00:10, :15:10, :30:10, :45:10 UTC)"
+    )
     logger.info(f"Scanner timeframes: {settings.SCANNER_TIMEFRAMES}")
 
     try:
@@ -125,23 +139,34 @@ def start_scanner_scheduler(
         finally:
             db.close()
 
+    # -----------------------------------------------------------------------
+    # CronTrigger aligned to 15-minute market candle close boundaries.
+    #
+    # Fires at: HH:00:10, HH:15:10, HH:30:10, HH:45:10 (UTC)
+    #   minute="0,15,30,45" — the four 15-minute boundaries per hour
+    #   second=10           — 10-second candle-persistence offset
+    #
+    # No `next_run_time` is set here; the first execution will happen at the
+    # next aligned boundary, guaranteeing that the first scan — like all
+    # subsequent ones — operates on fully closed and persisted candle data.
+    # -----------------------------------------------------------------------
     _scheduler.add_job(
         _scheduled_scan_job,
-        trigger=IntervalTrigger(
-            minutes=settings.SCANNER_INTERVAL_MINUTES,
+        trigger=CronTrigger(
+            minute="0,15,30,45",
+            second=10,
             timezone=timezone.utc,
         ),
         id="automated_market_scanner",
-        name="Automated Market Scanner",
+        name="Automated Market Scanner (candle-close aligned)",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
         misfire_grace_time=60,
-        next_run_time=datetime.now(timezone.utc),  # Initial scan starts immediately in background
     )
 
     _scheduler.start()
-    logger.info("Scanner started")
+    logger.info("Scanner started — first scan at next :XX:10 candle-close boundary (UTC)")
     return _scheduler
 
 
@@ -153,4 +178,3 @@ def stop_scanner_scheduler():
             _scheduler.shutdown(wait=False)
             logger.info("Scanner stopped")
         _scheduler = None
-

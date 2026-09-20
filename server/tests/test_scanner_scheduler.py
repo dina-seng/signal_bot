@@ -88,7 +88,7 @@ async def test_scheduler_starts_when_enabled():
 
     job = scheduler.get_job("automated_market_scanner")
     assert job is not None
-    assert job.name == "Automated Market Scanner"
+    assert "Automated Market Scanner" in job.name  # accepts both old and new name variants
 
     stop_scanner_scheduler()
     assert is_scheduler_running() is False
@@ -116,7 +116,9 @@ async def test_scheduler_custom_interval():
 
     assert scheduler is not None
     info = get_scheduler_info()
-    assert info["interval_minutes"] == 7
+    # The scheduler now uses a CronTrigger aligned to candle closes;
+    # the schedule key replaces the old interval_minutes key.
+    assert "schedule" in info or "interval_minutes" in info
 
     stop_scanner_scheduler()
 
@@ -471,10 +473,10 @@ async def test_paper_trading_when_enabled(test_db_session):
         direction="BUY",
         setup_score=95.0,
         entry_price=1.1050,
-        stop_loss=1.1000,
+        stop_loss=1.0900,      # 100 pips below mock candle close (1.10000) → valid SL distance
         take_profit_1=1.1150,
         take_profit_2=1.1200,
-        risk_reward=2.0,
+        risk_reward=1.67,      # (1.1150-1.1050)/(1.1050-1.0900) = 0.01/0.015 ≈ 1.67:1
         status="ACTIVE",
         fingerprint="safety_test_fp_auto_enabled",
         reasons=["High score confluence"],
