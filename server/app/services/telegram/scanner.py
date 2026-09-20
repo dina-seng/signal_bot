@@ -288,8 +288,11 @@ class AutomatedMarketScanner:
             )
             market_ingest_service.db = db
 
-            for sym in target_symbols:
-                for tf in sync_timeframes:
+            # Semaphore(3) caps concurrent API calls to Twelve Data to avoid rate limit breaches
+            api_semaphore = asyncio.Semaphore(3)
+
+            async def _sync_symbol_tf(sym: str, tf: str) -> None:
+                async with api_semaphore:
                     try:
                         await market_ingest_service.sync_symbol_timeframe(
                             symbol=sym, timeframe=tf, limit=100
@@ -297,6 +300,13 @@ class AutomatedMarketScanner:
                     except Exception as e:
                         logger.error(f"Market data ingestion failed for {sym} [{tf}]: {e}")
                         db.rollback()
+
+            ingestion_tasks = [
+                _sync_symbol_tf(sym, tf)
+                for sym in target_symbols
+                for tf in sync_timeframes
+            ]
+            await asyncio.gather(*ingestion_tasks, return_exceptions=True)
 
             logger.info("Market data ingestion completed")
 
