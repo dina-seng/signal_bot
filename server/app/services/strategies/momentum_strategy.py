@@ -220,13 +220,27 @@ class MomentumStrategy(BaseStrategy):
         liq_score     = round(min(25.0, non_pa_score * (25.0 / 80.0)), 1)
         ind_score     = round(min(25.0, non_pa_score * (25.0 / 80.0)), 1)
 
-        capped_indicators_score = min(25.0, float(final_score))
+        structural_confluence = struct_score + liq_score
+
+        if structural_confluence < 15.0 and pa_score < 10.0:
+            logger.warning(
+                f"MomentumStrategy [{symbol}][{timeframe}]: Vetoed pure indicator signal. "
+                f"Struct+Liq={structural_confluence}, PA={pa_score}."
+            )
+            direction = SignalDirection.WAIT
+            final_score = 0.0
+            final_reasons = ["Vetoed: Pure indicator lag. No structural, liquidity, or price action confirmation."]
+            # Reset scores to reflect the veto
+            struct_score = 0.0
+            liq_score = 0.0
+            ind_score = 0.0
+            pa_score = 0.0
 
         final_breakdown = ScoreBreakdown(
-            structure_score=0.0,
-            liquidity_score=0.0,
-            indicators_score=capped_indicators_score,  # <--- USE THE CAPPED VALUE HERE
-            price_action_score=0.0,
+            structure_score=struct_score,      
+            liquidity_score=liq_score,        
+            indicators_score=ind_score,       
+            price_action_score=pa_score,  
             total_score=round(final_score, 1),
             is_qualified=final_score >= min_threshold
         )
