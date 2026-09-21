@@ -9,17 +9,15 @@ from app.core.normalization import normalize_utc_datetime
 from app.schemas.news import NewsEventCreate, NewsImpact
 from app.services.news.base import BaseNewsProvider
 
-from app.services.news.mock_provider import MockNewsProvider
-
 
 class ForexFactoryProvider(BaseNewsProvider):
     """Fetches real-time economic calendar events from public JSON feeds."""
 
     CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     def __init__(self, timeout_seconds: float = 10.0):
         self.timeout_seconds = timeout_seconds
-        self.mock_fallback = MockNewsProvider() # ✅ Initialize fallback
 
     @property
     def is_live_provider(self) -> bool:
@@ -51,10 +49,14 @@ class ForexFactoryProvider(BaseNewsProvider):
         end_time: Optional[datetime] = None,
         currencies: Optional[List[str]] = None,
     ) -> List[NewsEventCreate]:
-        """Fetch economic calendar events from live feed with retries and synthetic fallback."""
+        """Fetch economic calendar events from live feed with retries and exponential backoff."""
         max_retries = 3
+        headers = {
+            "User-Agent": self.USER_AGENT,
+            "Accept": "application/json, text/plain, */*",
+        }
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
+        async with httpx.AsyncClient(headers=headers, timeout=self.timeout_seconds, follow_redirects=True) as client:
             for attempt in range(1, max_retries + 1):
                 try:
                     response = await client.get(self.CALENDAR_URL)
@@ -62,7 +64,6 @@ class ForexFactoryProvider(BaseNewsProvider):
                         data = response.json()
                         events: List[NewsEventCreate] = []
 
-                        # ✅ FIX: All processing logic is now correctly INSIDE the for loop
                         for item in data:
                             curr = item.get("country", "").upper().strip()
                             title = item.get("title", "").strip()
@@ -113,11 +114,10 @@ class ForexFactoryProvider(BaseNewsProvider):
                     logger.warning(f"ForexFactory attempt {attempt}/{max_retries} failed: {e}")
                 
                 if attempt < max_retries:
-                    await asyncio.sleep(0.5 * (2 ** (attempt - 1))) # ✅ Now works because asyncio is imported
+                    # Exponential backoff: increasing delay on 429 or failure
+                    backoff_delay = 2.0 * attempt
+                    logger.info(f"Retrying ForexFactory fetch in {backoff_delay:.1f}s (attempt {attempt + 1}/{max_retries})...")
+                    await asyncio.sleep(backoff_delay)
 
-        logger.warning("ForexFactory live feed unreachable after retries. Using deterministic mock fallback.")
-        return await self.mock_fallback.fetch_events(
-            start_time=start_time,
-            end_time=end_time,
-            currencies=currencies,
-        )
+        logger.warning("ForexFactory live feed unreachable after retries. Returning empty event list.")
+        return []

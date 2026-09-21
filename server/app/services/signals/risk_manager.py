@@ -48,14 +48,22 @@ class RiskManager:
         effective_atr = atr_value if (atr_value is not None and atr_value > 0) else default_atr
         
         # 🛡️ SANITY CHECK: Cap maximum structural distance to prevent macro-level SLs
-        # 100 pips is a safe hard limit for intraday trading (100 * 0.0001 = 0.0100)
-        max_structural_distance = 100 * pip_size 
+        # 2500 pips ($25.00) on Gold, 120 pips on JPY, 100 pips on standard FX
+        s_upper = symbol.upper().replace("%2F", "/").strip()
+        if "XAU" in s_upper or "GOLD" in s_upper:
+            max_sl_pips = 2500.0
+        elif "JPY" in s_upper:
+            max_sl_pips = 120.0
+        else:
+            max_sl_pips = 100.0
+
+        max_structural_distance = max_sl_pips * pip_size
 
         if direction == SignalDirection.BUY:
             if key_support_low is not None and key_support_low < entry_price:
                 # Check if the structural support is unreasonably far away
                 if (entry_price - key_support_low) > max_structural_distance:
-                    logger.warning(f"Structural support {key_support_low} is too far from entry {entry_price} (>100 pips). Falling back to ATR-based SL.")
+                    logger.warning(f"Structural support {key_support_low} is too far from entry {entry_price} (>{max_sl_pips:.0f} pips). Falling back to ATR-based SL.")
                     stop_loss = entry_price - (effective_atr * 1.5)
                 else:
                     stop_loss = key_support_low - (effective_atr * 0.5) # atr_buffer
@@ -74,7 +82,7 @@ class RiskManager:
             if key_resistance_high is not None and key_resistance_high > entry_price:
                 # Check if the structural resistance is unreasonably far away
                 if (key_resistance_high - entry_price) > max_structural_distance:
-                    logger.warning(f"Structural resistance {key_resistance_high} is too far from entry {entry_price} (>100 pips). Falling back to ATR-based SL.")
+                    logger.warning(f"Structural resistance {key_resistance_high} is too far from entry {entry_price} (>{max_sl_pips:.0f} pips). Falling back to ATR-based SL.")
                     stop_loss = entry_price + (effective_atr * 1.5)
                 else:
                     stop_loss = key_resistance_high + (effective_atr * 0.5) # atr_buffer

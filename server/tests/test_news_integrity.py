@@ -162,7 +162,7 @@ def test_confluence_engine_blocks_trades_when_news_data_unavailable():
     engine = ConfluenceEngine()
 
     # Generate sample 1h candles
-    base_t = datetime(2026, 8, 28, 10, 0, tzinfo=timezone.utc)
+    base_t = datetime.now(timezone.utc) - timedelta(hours=25)
     candles = [
         CandleBase(
             symbol="EUR/USD",

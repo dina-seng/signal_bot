@@ -146,22 +146,25 @@ class TelegramCommandHandler:
         # 4. Economic News Calendar (/news)
         # -------------------------------------------------------------
         elif cmd_name == "/news":
-            # 1. Attempt on-demand refresh from configured news provider
+            now = datetime.now(timezone.utc)
+            news_ingest = self.news_ingestion or NewsIngestionService(
+                provider=self.news_provider, db=db
+            )
+            news_ingest.db = db
+
+            # DB-First Check: Only invoke external provider sync if database is empty or cache is stale (>2 hours)
+            is_cache_fresh = news_ingest.is_calendar_cache_fresh(reference_time=now)
             live_failed = False
-            if self.news_provider:
-                news_ingest = self.news_ingestion or NewsIngestionService(
-                    provider=self.news_provider, db=db
-                )
-                news_ingest.db = db
+
+            if not is_cache_fresh and self.news_provider:
                 try:
-                    report = await news_ingest.sync_calendar()
+                    report = await news_ingest.sync_calendar(force_refresh=True)
                     if report.status in ("UNAVAILABLE", "ERROR") or (getattr(self.news_provider, "is_live_provider", False) and report.fetched_count == 0):
                         live_failed = True
                 except Exception as e:
                     logger.warning(f"Error syncing economic news in /news command: {e}")
                     live_failed = True
 
-            now = datetime.now(timezone.utc)
             events = list(
                 db.scalars(
                     select(NewsEvent)
@@ -172,7 +175,7 @@ class TelegramCommandHandler:
             )
             event_resps = [NewsEventResponse.model_validate(e) for e in events]
 
-            if not event_resps and (live_failed or getattr(self.news_provider, "is_live_provider", False)):
+            if not event_resps and (live_failed or (getattr(self.news_provider, "is_live_provider", False) and not is_cache_fresh)):
                 reply = self.formatter.format_news_unavailable_alert()
             else:
                 reply = self.formatter.format_economic_news_alert(event_resps)

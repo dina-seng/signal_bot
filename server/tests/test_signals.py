@@ -528,3 +528,70 @@ def test_path_validator_advisory_warning_keeps_signal_qualified():
     assert "Resistance Zone (85% strength) at 1.10250" in telegram_alert
 
 
+def test_risk_manager_gold_structural_distance():
+    """Verify that RiskManager allows up to $25.00 (2500 pips) of structural distance on Gold (XAU/USD)."""
+    from app.services.signals.risk_manager import RiskManager
+    from app.schemas.signal import SignalDirection
+
+    rm = RiskManager()
+    atr_val = 2.0  # $2.00 ATR on Gold
+
+    # 1. Gold BUY with $15.00 structural swing (1500 pips)
+    # Entry: 2000.00, Support: 1985.00
+    # Expected SL = support - 0.5 * atr = 1985.00 - 1.00 = 1984.00
+    params_gold_valid = rm.calculate_trade_risk(
+        symbol="XAU/USD",
+        direction=SignalDirection.BUY,
+        entry_price=2000.00,
+        atr_value=atr_val,
+        key_support_low=1985.00,
+        account_balance=10000.0,
+        risk_percent=0.5,
+    )
+    # Must NOT fall back to ATR (which would be 2000 - 1.5*2 = 1997.00)
+    assert params_gold_valid.stop_loss == 1984.00
+    assert params_gold_valid.risk_pips == 1600.0  # (2000 - 1984) / 0.01
+
+    # 2. Gold BUY with excessive structural swing ($30.00 / 3000 pips > 2500 pips)
+    # Entry: 2000.00, Support: 1970.00 -> Should fall back to ATR SL = 2000 - 1.5*2 = 1997.00
+    params_gold_excessive = rm.calculate_trade_risk(
+        symbol="XAU/USD",
+        direction=SignalDirection.BUY,
+        entry_price=2000.00,
+        atr_value=atr_val,
+        key_support_low=1970.00,
+        account_balance=10000.0,
+        risk_percent=0.5,
+    )
+    assert params_gold_excessive.stop_loss == 1997.00
+
+    # 3. Gold SELL with $15.00 structural swing (1500 pips)
+    # Entry: 2000.00, Resistance: 2015.00
+    # Expected SL = resistance + 0.5 * atr = 2015.00 + 1.00 = 2016.00
+    params_gold_sell = rm.calculate_trade_risk(
+        symbol="XAU/USD",
+        direction=SignalDirection.SELL,
+        entry_price=2000.00,
+        atr_value=atr_val,
+        key_resistance_high=2015.00,
+        account_balance=10000.0,
+        risk_percent=0.5,
+    )
+    assert params_gold_sell.stop_loss == 2016.00
+
+    # 4. Standard FX (EUR/USD) still capped at 100 pips
+    # Entry: 1.1000, Support: 1.0850 (150 pips > 100 pips) -> Falls back to ATR
+    atr_fx = 0.0010
+    params_fx = rm.calculate_trade_risk(
+        symbol="EUR/USD",
+        direction=SignalDirection.BUY,
+        entry_price=1.1000,
+        atr_value=atr_fx,
+        key_support_low=1.0850,
+        account_balance=10000.0,
+        risk_percent=0.5,
+    )
+    assert params_fx.stop_loss == round(1.1000 - (atr_fx * 1.5), 5)
+
+
+

@@ -28,6 +28,8 @@ def generate_event_fingerprint(currency: str, event_name: str, scheduled_time: d
 class NewsIngestionService:
     """Ingests, cleans, deduplicates, and persists economic news calendar events."""
 
+    NEWS_CACHE_TTL_HOURS: float = 2.0
+
     def __init__(self, provider: BaseNewsProvider, db: Session):
         self.provider = provider
         self.db = db
@@ -38,6 +40,39 @@ class NewsIngestionService:
     @staticmethod
     def generate_fingerprint(currency: str, event_name: str, scheduled_time: datetime) -> str:
         return generate_event_fingerprint(currency, event_name, scheduled_time)
+
+    def is_calendar_cache_fresh(
+        self,
+        reference_time: Optional[datetime] = None,
+        lookahead_hours: int = 48,
+    ) -> bool:
+        """Check if recent events exist in the database and were synced within the TTL window."""
+        ref_time = normalize_utc_datetime(reference_time) or datetime.now(timezone.utc)
+
+        # 1. Check last sync / creation timestamp
+        latest_created = None
+        try:
+            stmt = select(NewsEvent.created_at).order_by(desc(NewsEvent.created_at)).limit(1)
+            latest_created = self.db.scalars(stmt).first()
+        except Exception as e:
+            logger.debug(f"Could not query latest NewsEvent.created_at: {e}")
+
+        sync_timestamp = latest_created or self._last_sync_time
+        if not sync_timestamp:
+            return False
+
+        if sync_timestamp.tzinfo is None:
+            sync_timestamp = sync_timestamp.replace(tzinfo=timezone.utc)
+        else:
+            sync_timestamp = sync_timestamp.astimezone(timezone.utc)
+
+        sync_age_hours = (ref_time - sync_timestamp).total_seconds() / 3600.0
+        if sync_age_hours > self.NEWS_CACHE_TTL_HOURS or sync_age_hours < -0.1:
+            return False
+
+        # 2. Check if events exist for the active window (today / tomorrow)
+        is_stale, _ = self.check_calendar_staleness(reference_time=ref_time, lookahead_hours=lookahead_hours)
+        return not is_stale
 
     def ingest_events(self, events: List[NewsEventCreate]) -> NewsSyncReport:
         """Process and persist economic calendar events with atomic deduplication and updates."""
@@ -160,9 +195,40 @@ class NewsIngestionService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         currencies: Optional[List[str]] = None,
+        force_refresh: bool = False,
     ) -> NewsSyncReport:
-        """Fetch from configured news provider and ingest into database with error tracking."""
+        """Fetch from configured news provider and ingest into database with caching and error tracking.
+
+        If fresh events exist in the database (synced within NEWS_CACHE_TTL_HOURS), the external
+        network fetch is bypassed unless force_refresh=True.
+        """
         is_live = getattr(self.provider, "is_live_provider", True)
+
+        # 🛡️ DB-First Caching Gate: Avoid hammering provider if DB has fresh events
+        if not force_refresh and not (start_time and end_time) and self.is_calendar_cache_fresh():
+            now = datetime.now(timezone.utc)
+            window_start = now - timedelta(hours=24)
+            window_end = now + timedelta(hours=48)
+            stmt = select(NewsEvent).where(
+                NewsEvent.scheduled_time >= window_start,
+                NewsEvent.scheduled_time <= window_end,
+            )
+            cached_events = list(self.db.scalars(stmt).all())
+            logger.info(
+                f"Economic calendar cache HIT: Found {len(cached_events)} active events in DB "
+                f"synced within last {self.NEWS_CACHE_TTL_HOURS:.0f}h. Skipping external fetch."
+            )
+            return NewsSyncReport(
+                fetched_count=len(cached_events),
+                inserted_count=0,
+                skipped_count=len(cached_events),
+                updated_count=0,
+                status="SUCCESS",
+                is_live_provider=is_live,
+                start_time=window_start,
+                end_time=window_end,
+            )
+
         try:
             events = await self.provider.fetch_events(
                 start_time=start_time,

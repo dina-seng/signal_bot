@@ -206,3 +206,47 @@ def test_news_filter_currency_isolation():
         target_time=event_time,
     )
     assert res_gold.is_blackout is True
+
+
+@pytest.mark.asyncio
+async def test_news_ingestion_db_first_caching(test_db_session):
+    """Verify that NewsIngestionService uses DB-first caching to avoid hammering provider."""
+    from unittest.mock import AsyncMock
+    from app.services.news.base import BaseNewsProvider
+
+    ref_time = datetime.now(timezone.utc)
+    mock_p = MockNewsProvider(reference_time=ref_time)
+    events = await mock_p.fetch_events()
+
+    # Create a spy provider that tracks fetch_events calls
+    class SpyProvider(BaseNewsProvider):
+        def __init__(self):
+            self.call_count = 0
+
+        @property
+        def is_live_provider(self) -> bool:
+            return True
+
+        async def fetch_events(self, *args, **kwargs):
+            self.call_count += 1
+            return events
+
+    spy_provider = SpyProvider()
+    service = NewsIngestionService(provider=spy_provider, db=test_db_session)
+
+    # 1. Initial sync: DB is empty, must call provider.fetch_events
+    report1 = await service.sync_calendar()
+    assert report1.status == "SUCCESS"
+    assert spy_provider.call_count == 1
+    assert report1.inserted_count > 0
+
+    # 2. Back-to-back sync: DB has fresh events synced within 2h -> CACHE HIT!
+    report2 = await service.sync_calendar()
+    assert report2.status == "SUCCESS"
+    # fetch_events should NOT have been called again (call_count still 1)
+    assert spy_provider.call_count == 1
+
+    # 3. Force refresh: bypasses cache even when fresh
+    report3 = await service.sync_calendar(force_refresh=True)
+    assert report3.status == "SUCCESS"
+    assert spy_provider.call_count == 2
