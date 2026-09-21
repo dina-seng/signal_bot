@@ -469,6 +469,7 @@ class ConsensusFilter:
         # least 10.0 / 20.0 PA points before a direction can be qualified.
         # ------------------------------------------------------------------
         pa_floor_blocked = False
+        confluence_blocked = False
         if raw_pa < 10.0 and candidate_direction in (SignalDirection.BUY, SignalDirection.SELL):
             pa_floor_blocked = True
             all_catalysts.append(
@@ -480,6 +481,23 @@ class ConsensusFilter:
             logger.warning(
                 f"PA Floor veto [{candidate_direction.value}]: price_action_score={raw_pa:.1f}/20 "
                 "is below the 10.0 floor — signal disqualified."
+            )
+
+        # ------------------------------------------------------------------
+        # Minimum Confluence Rule (The "No Pure Indicator" Filter)
+        # A signal cannot be driven purely by lagging indicators. 
+        # It must have at least some structural or liquidity backing.
+        # ------------------------------------------------------------------
+        structural_confluence = raw_struct + raw_liq
+        if structural_confluence < 15.0 and candidate_direction in (SignalDirection.BUY, SignalDirection.SELL):
+            confluence_blocked = True
+            all_catalysts.append(
+                f"\u26d4 Minimum Confluence Not Met: Structure + Liquidity = {structural_confluence:.1f} "
+                "(minimum 15.0 required). Pure indicator setups are prone to exhaustion and false breakouts."
+            )
+            logger.warning(
+                f"Confluence veto [{candidate_direction.value}]: Structure+Liquidity={structural_confluence:.1f} "
+                "is below the 15.0 floor \u2014 pure indicator signal disqualified."
             )
 
         # Calculate directional conflict penalty
@@ -502,6 +520,7 @@ class ConsensusFilter:
             penalized_total >= self.min_score_threshold
             and not fatal_conflict
             and not pa_floor_blocked
+            and not confluence_blocked
         )
 
         breakdown = ScoreBreakdown(
