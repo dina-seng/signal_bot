@@ -421,3 +421,110 @@ def test_confluence_engine_evaluate_dict():
     assert len(signal_resp.reasons) > 0
     assert signal_resp.fingerprint is not None
 
+
+def test_path_validator_advisory_warning_keeps_signal_qualified():
+    """Ensure that a setup encountering a path obstacle with projected R:R < 1.0
+    still returns a valid, qualified signal accompanied by the Path Advisory warning.
+    """
+    from unittest.mock import MagicMock
+    from app.schemas.liquidity import SupportResistanceZone, ZoneType
+    from app.schemas.signal import ScoreBreakdown, SignalDirection, SignalStatus
+    from app.services.signals.confluence_engine import ConfluenceEngine
+    from app.services.strategies.base import StrategyResult
+    from app.services.telegram.message_formatter import TelegramMessageFormatter
+
+    engine = ConfluenceEngine(min_score_threshold=75.0)
+
+    now = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+    entry_price = 1.1000
+
+    # Mock indicator analysis: ATR = 0.0010 (10 pips)
+    indicator_mock = MagicMock()
+    indicator_mock.current_price = entry_price
+    indicator_mock.timestamp = now
+    indicator_mock.atr.atr_value = 0.0010
+    indicator_mock.active_fvgs = []
+
+    # Mock structure analysis: Key support at 1.0960 (SL distance = 40 pips)
+    # SL is ~1.0955 (support - 0.5*ATR), TP1 at min_rr (2.0) is ~1.1090
+    structure_mock = MagicMock()
+    structure_mock.base_structure.key_support = 1.0960
+    structure_mock.base_structure.key_resistance = 1.1200
+    structure_mock.liquidity_pools = []
+
+    # Place a FRESH RESISTANCE zone at 1.1025 (25 pips from entry)
+    # Front-run TP1 = 1.1025 - 2 pips = 1.1023 (23 pips reward vs ~45 pips risk -> projected R:R ~ 0.51 < 1.0)
+    res_zone = SupportResistanceZone(
+        zone_type=ZoneType.RESISTANCE,
+        price_low=1.1020,
+        price_high=1.1030,
+        center_price=1.1025,
+        touch_count=3,
+        strength=0.85,
+        is_fresh=True,
+    )
+    structure_mock.sr_zones = [res_zone]
+
+    score_breakdown = ScoreBreakdown(
+        structure_score=28.0,
+        liquidity_score=22.0,
+        indicators_score=20.0,
+        price_action_score=15.0,
+        total_score=85.0,
+        is_qualified=True,
+    )
+
+    strategy_result = StrategyResult(
+        strategy_name="SMC Confluence",
+        direction=SignalDirection.BUY,
+        score=85.0,
+        reasons=["Bullish BOS on 1H", "Demand Zone Sweep"],
+        score_breakdown=score_breakdown,
+    )
+
+    signal_resp = engine._build_signal_response(
+        result=strategy_result,
+        symbol="EUR/USD",
+        timeframe="1h",
+        indicator_analysis=indicator_mock,
+        structure_analysis=structure_mock,
+        account_balance=10000.0,
+        risk_percent=0.5,
+    )
+
+    # 1. Signal MUST remain qualified and BUY direction (NOT demoted to WAIT)
+    assert signal_resp.direction == SignalDirection.BUY
+    assert signal_resp.status == SignalStatus.ACTIVE
+    assert signal_resp.setup_score == 85.0
+    assert signal_resp.score_breakdown.is_qualified is True
+
+    # 2. Risk parameters must retain original TP1/TP2 targets without collapsing into barrier
+    assert signal_resp.risk_parameters is not None
+    assert signal_resp.take_profit_1 is not None
+    # Original TP1 must be >= 1.1080 (not collapsed to 1.1023)
+    assert signal_resp.take_profit_1 > 1.1050
+    assert signal_resp.risk_reward >= 2.0
+
+    # 3. Path Advisory warning must be attached
+    assert len(signal_resp.warnings) > 0
+    advisory_warning = signal_resp.warnings[0]
+    assert "⚠️ Path Advisory:" in advisory_warning
+    assert "Nearest Obstacle: Resistance Zone (85% strength) at 1.10250" in advisory_warning
+    assert "Projected Obstacle R:R:" in advisory_warning
+    assert "Total Path Barriers: 1" in advisory_warning
+    assert "Manual management recommended" in advisory_warning
+
+    # Check advisory is also present in reasons
+    assert any("⚠️ Path Advisory:" in r for r in signal_resp.reasons)
+
+    # 4. Telegram alert formatting verification
+    formatter = TelegramMessageFormatter()
+    telegram_alert = formatter.format_signal_alert(signal_resp)
+
+    # Must be standard signal alert, not a rejection card
+    assert "TRADE REJECTED" not in telegram_alert
+    assert "STRONG BUY" in telegram_alert
+    assert "⚠️ *Path Advisory:*" in telegram_alert
+    assert "Resistance Zone (85% strength) at 1.10250" in telegram_alert
+
+

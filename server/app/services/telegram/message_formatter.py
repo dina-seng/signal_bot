@@ -85,16 +85,25 @@ class TelegramMessageFormatter:
         - TP Adjusted (trade still valid): shows warning in the alert
         - Normal trade: standard signal format
         """
-        # Detect path validation outcomes from reasons
+        # Detect path validation outcomes from reasons and warnings
         path_blocked_reason = None
         tp_adjusted_reason = None
+        path_advisory = None
+
+        for w in (getattr(sig, "warnings", []) or []):
+            if "Path Advisory" in w:
+                path_advisory = w
+                break
+
         for r in (sig.reasons or []):
             if "PATH BLOCKED" in r:
                 path_blocked_reason = r
             elif "TP Adjusted" in r:
                 tp_adjusted_reason = r
+            elif "Path Advisory" in r and not path_advisory:
+                path_advisory = r
 
-        # PATH BLOCKED rejection card — trade was killed by obstacle detection
+        # PATH BLOCKED rejection card — trade was killed by obstacle detection (legacy fallback)
         if sig.direction == SignalDirection.WAIT and path_blocked_reason:
             sym = cls.escape_code(sig.symbol)
             tf = cls.escape_code(sig.timeframe)
@@ -124,7 +133,7 @@ class TelegramMessageFormatter:
             ])
             return "\n".join(lines)
 
-        # Normal actionable signal format (with optional TP Adjusted warning)
+        # Normal actionable signal format (with optional Path Advisory / TP Adjusted warning)
         dir_emoji = "🟢 *STRONG BUY (LONG)*" if sig.direction == SignalDirection.BUY else "🔴 *STRONG SELL (SHORT)*"
         rp = sig.risk_parameters
 
@@ -154,8 +163,18 @@ class TelegramMessageFormatter:
         if getattr(sig, "htf_trend", None):
             lines.append(f"📈 *1H Context:* `{cls.escape_code(sig.htf_trend)}`")
 
-        # TP Adjusted path warning — trade is valid but TP was moved
-        if tp_adjusted_reason:
+        # Path Advisory section — informational obstacle notification
+        if path_advisory:
+            lines.extend([
+                f"━━━━━━━━━━━━━━━━━━━━",
+                f"⚠️ *Path Advisory:*",
+            ])
+            for line in path_advisory.strip().split("\n"):
+                clean = line.strip()
+                if clean.startswith("⚠️ Path Advisory"):
+                    continue
+                lines.append(f"  {cls.escape_markdown(clean)}")
+        elif tp_adjusted_reason:
             lines.extend([
                 f"━━━━━━━━━━━━━━━━━━━━",
                 f"⚠️ *Path Warning:*",
@@ -206,8 +225,8 @@ class TelegramMessageFormatter:
         if sig.reasons:
             lines.append(f"━━━━━━━━━━━━━━━━━━━━\n💡 *Key Confluence Catalysts:*")
             for r in sig.reasons[:4]:
-                # Skip the TP Adjusted reason here since it's already shown above
-                if tp_adjusted_reason and r == tp_adjusted_reason:
+                # Skip the TP Adjusted and Path Advisory reasons here since they're shown above
+                if (tp_adjusted_reason and r == tp_adjusted_reason) or "Path Advisory" in r:
                     continue
                 lines.append(f"  ✓ {cls.escape_markdown(r)}")
 

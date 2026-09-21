@@ -64,6 +64,7 @@ class SignalBase(BaseModel):
     risk_reward: Optional[float] = None
     fingerprint: str
     reasons: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list, description="Advisory or risk warnings attached to signal")
     status: SignalStatus = SignalStatus.ACTIVE
     trend_alignment: Optional[str] = Field(default=None, description="Trend alignment status: TREND FOLLOWING or COUNTER-TREND SCALP")
     htf_trend: Optional[str] = Field(default=None, description="Higher timeframe (1H) trend bias: BULLISH, BEARISH, RANGING")

@@ -394,6 +394,16 @@ class PaperOrderExecutor:
             current_price=live_price,
         )
 
+        # Log advisory warning if present on the signal without raising an exception
+        reasons_list = target_signal.reasons if isinstance(target_signal.reasons, list) else []
+        for r in reasons_list:
+            if "Path Advisory" in str(r):
+                logger.info(
+                    f"Paper trade proceeding under Path Advisory on {target_signal.symbol} "
+                    f"(Signal #{target_signal.id}):\n{r}"
+                )
+                break
+
         order = PaperOrderCreate(
             account_id=request.account_id,
             symbol=target_signal.symbol,

@@ -33,6 +33,9 @@ class PathValidationResult:
     obstacle_type: Optional[str] = None
     """Human-readable label of the nearest obstacle, e.g. 'Resistance Zone', 'Bearish FVG'."""
 
+    obstacle_count: int = 0
+    """Total number of structural obstacles found on the path to target."""
+
 
 class PathValidator:
     """Detects structural obstacles between a trade's entry and take-profit target.
@@ -106,6 +109,7 @@ class PathValidator:
             is_clear=False,
             nearest_obstacle_price=nearest_price,
             obstacle_type=nearest_type,
+            obstacle_count=len(obstacles),
         )
 
     # ─── Bearish Obstacles (block BUY trades) ────────────────────────

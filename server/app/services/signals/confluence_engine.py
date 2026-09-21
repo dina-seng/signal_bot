@@ -329,6 +329,7 @@ class ConfluenceEngine:
         latest_ts = indicator_analysis.timestamp
         direction = result.direction
         reasons = list(result.reasons)  # Mutable copy for path validation notes
+        warnings: List[str] = []
 
         # 7. Risk Management & SMC Geometric Levels + PATH VALIDATION
         risk_params: Optional[RiskParameters] = None
@@ -359,7 +360,7 @@ class ConfluenceEngine:
                 ]
                 risk_params = None
             else:
-                # C. 🗺️ PATH VALIDATION (Adaptive Adjuster)
+                # C. 🗺️ PATH VALIDATION (Informational Advisory Warning System)
                 sr_zones = getattr(structure_analysis, 'sr_zones', [])
                 liquidity_pools = getattr(structure_analysis, 'liquidity_pools', [])
                 active_fvgs = getattr(indicator_analysis, 'active_fvgs', [])
@@ -376,41 +377,44 @@ class ConfluenceEngine:
                 if not path_result.is_clear:
                     obstacle_price = path_result.nearest_obstacle_price
                     obstacle_type = path_result.obstacle_type or "Unknown Obstacle"
+                    obstacle_count = getattr(path_result, "obstacle_count", 0) or 1
 
                     # 🎯 LIQUIDITY EXCEPTION: Equal Highs/Lows are magnets, not walls.
                     if "Equal Highs" in obstacle_type or "Equal Lows" in obstacle_type:
                         logger.info(f"🎯 Liquidity Magnet Detected: Allowing TP to target {obstacle_type} at {obstacle_price:.5f}")
                         reasons.append(f"🎯 Targeting Liquidity Sweep at {obstacle_price:.5f}")
+
+                    # 🛡️ INFORMATIONAL ADVISORY: Calculate projected R:R if TP front-ran the barrier
+                    pip_size = self.risk_manager.get_pip_size(symbol)
+                    buffer_price = 2.0 * pip_size  # 2 pip safety buffer
+
+                    if direction == SignalDirection.BUY:
+                        projected_tp1 = obstacle_price - buffer_price
+                        distance_pips = abs(obstacle_price - risk_params.entry_price) / pip_size
                     else:
-                        # 🛡️ ADAPTIVE ADJUSTMENT: Move TP just before the obstacle
-                        pip_size = self.risk_manager.get_pip_size(symbol)
-                        buffer_price = 2.0 * pip_size  # 2 pip safety buffer
+                        projected_tp1 = obstacle_price + buffer_price
+                        distance_pips = abs(risk_params.entry_price - obstacle_price) / pip_size
 
-                        if direction == SignalDirection.BUY:
-                            adjusted_tp1 = obstacle_price - buffer_price
-                        else:
-                            adjusted_tp1 = obstacle_price + buffer_price
+                    # Recalculate projected R:R with the obstacle front-run target
+                    risk_distance = abs(risk_params.entry_price - risk_params.stop_loss)
+                    reward_distance = abs(projected_tp1 - risk_params.entry_price)
+                    projected_rr = reward_distance / risk_distance if risk_distance > 0 else 0.0
 
-                        # Recalculate R:R with the new adjusted TP
-                        new_risk_price = abs(risk_params.entry_price - risk_params.stop_loss)
-                        new_reward_price = abs(adjusted_tp1 - risk_params.entry_price)
-                        new_rr = new_reward_price / new_risk_price if new_risk_price > 0 else 0.0
+                    logger.info(
+                        f"⚠️ Path Advisory: {obstacle_type} at {obstacle_price:.5f} "
+                        f"({distance_pips:.1f} pips away). Projected R:R: {projected_rr:.2f}. "
+                        f"Total barriers: {obstacle_count}. Signal remains qualified."
+                    )
 
-                        # Minimum viable R:R check
-                        if new_rr < 1.2:
-                            logger.warning(f"Trade REJECTED: Path adjustment ruined R:R ({new_rr:.2f}). Obstacle at {obstacle_price:.5f}.")
-                            direction = SignalDirection.WAIT
-                            reasons = [
-                                f"❌ PATH BLOCKED: Obstacle ({obstacle_type}) at {obstacle_price:.5f} forces TP adjustment.",
-                                f"Adjusted R:R dropped to {new_rr:.2f} (Minimum required: 1.2). Trade aborted for capital preservation."
-                            ]
-                            risk_params = None
-                        else:
-                            # Keep the trade, but update TP1 and reasons
-                            logger.info(f"✅ TP Adjusted: Moved from {risk_params.take_profit_1:.5f} to {adjusted_tp1:.5f} to avoid {obstacle_type}. New R:R: {new_rr:.2f}")
-                            risk_params.take_profit_1 = round(adjusted_tp1, 5)
-                            risk_params.risk_reward_tp1 = round(new_rr, 2)
-                            reasons.append(f"⚠️ TP Adjusted: Path blocked by {obstacle_type} at {obstacle_price:.5f}. TP safely moved to {adjusted_tp1:.5f} (New R:R: {new_rr:.2f}) to ensure execution.")
+                    advisory_msg = (
+                        f"⚠️ Path Advisory:\n"
+                        f"  • Nearest Obstacle: {obstacle_type} at {obstacle_price:.5f} ({distance_pips:.1f} pips away)\n"
+                        f"  • Projected Obstacle R:R: {projected_rr:.2f} (Target reduced if front-running obstacle)\n"
+                        f"  • Total Path Barriers: {obstacle_count}\n"
+                        f"  • Recommendation: Manual management recommended around barrier."
+                    )
+                    reasons.append(advisory_msg)
+                    warnings.append(advisory_msg)
 
         # 8. Build Final Response
         entry_p = risk_params.entry_price if risk_params else current_price
@@ -441,6 +445,7 @@ class ConfluenceEngine:
             risk_reward=rr_p,
             fingerprint=fingerprint,
             reasons=reasons,
+            warnings=warnings,
             status=SignalStatus.ACTIVE,
             timestamp=latest_ts,
             score_breakdown=result.score_breakdown,
