@@ -156,9 +156,11 @@ class TelegramMessageFormatter:
             f"⭐ *Confluence Score:* `{score_str} / 100`",
         ]
 
-        if getattr(sig, "trend_alignment", None):
-            align_icon = "✅" if sig.trend_alignment == "TREND FOLLOWING" else "⚠️"
-            lines.append(f"🧭 *Trend Alignment:* {align_icon} `{cls.escape_code(sig.trend_alignment)}`")
+        strat_name = getattr(sig, "strategy_name", "") or ""
+        if "Range Sniper" in strat_name:
+            lines.append("🧭 *Market Regime:* 🔄 `RANGING / MEAN REVERSION`")
+        else:
+            lines.append("🧭 *Market Regime:* 🎯 `TREND FOLLOWING`")
 
         if getattr(sig, "htf_trend", None):
             lines.append(f"📈 *1H Context:* `{cls.escape_code(sig.htf_trend)}`")

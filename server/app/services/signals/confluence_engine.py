@@ -433,6 +433,9 @@ class ConfluenceEngine:
             strategy_name=result.strategy_name,
         )
 
+        strat_name = result.strategy_name or ""
+        regime = "RANGING / MEAN REVERSION" if "Range Sniper" in strat_name else "TREND FOLLOWING"
+
         return SignalResponse(
             symbol=symbol,
             timeframe=timeframe,
@@ -451,6 +454,7 @@ class ConfluenceEngine:
             score_breakdown=result.score_breakdown,
             risk_parameters=risk_params,
             strategy_name=result.strategy_name,
+            trend_alignment=regime,
         )
 
     # ------------------------------------------------------------------
