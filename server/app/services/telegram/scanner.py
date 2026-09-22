@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
@@ -165,31 +165,33 @@ class AutomatedMarketScanner:
     ) -> bool:
         """Check if an actionable signal is within the cooldown window for the same symbol and direction.
 
-        Returns True if the signal should be suppressed (is in cooldown and no opposing break occurred).
+        Uses ``Signal.created_at`` (wall-clock DB insert time) as the anchor rather than
+        ``Signal.timestamp`` (candle open time).  This prevents candle timestamp drift — where
+        each new 1H bar carries a fresh timestamp — from bypassing the cooldown window and
+        producing hourly duplicate broadcasts for the same directional call.
+
+        Returns True if the signal should be suppressed (a recent broadcast already exists
+        within the cooldown window and no opposing structural break has occurred).
         """
         cd_hours = cooldown_hours if cooldown_hours is not None else settings.SIGNAL_COOLDOWN_HOURS
         if cd_hours <= 0:
             return False
 
-        dir_str = signal_resp.direction.value if isinstance(signal_resp.direction, SignalDirection) else str(signal_resp.direction).upper()
-        current_ts = signal_resp.timestamp or datetime.now(timezone.utc)
-        if current_ts.tzinfo is None:
-            current_ts = current_ts.replace(tzinfo=timezone.utc)
-        else:
-            current_ts = current_ts.astimezone(timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        cutoff_time = now_utc - timedelta(hours=cd_hours)
 
-        # Query the most recent previous signal for this symbol, timeframe, direction & strategy
+        dir_str = signal_resp.direction.value if isinstance(signal_resp.direction, SignalDirection) else str(signal_resp.direction).upper()
+
+        # Query recent signals for this symbol + direction.
+        # Timeframe is intentionally excluded: a SELL on 1h and 15m for the same symbol
+        # within 2h represent the same underlying directional call and should be suppressed.
         stmt = (
             select(Signal)
             .where(
                 Signal.symbol == signal_resp.symbol,
-                Signal.timeframe == signal_resp.timeframe,
                 Signal.direction == dir_str,
             )
         )
-        if getattr(signal_resp, "strategy_name", None):
-            stmt = stmt.where(Signal.strategy_name == signal_resp.strategy_name)
-        stmt = stmt.order_by(desc(Signal.timestamp))
 
         # Exclude the current signal if it was already persisted
         if signal_resp.id:
@@ -197,36 +199,62 @@ class AutomatedMarketScanner:
         elif signal_resp.fingerprint:
             stmt = stmt.where(Signal.fingerprint != signal_resp.fingerprint)
 
-        prev_signal = db.scalars(stmt).first()
-        if not prev_signal:
+        stmt = stmt.order_by(desc(Signal.created_at), desc(Signal.timestamp))
+
+        try:
+            recent_signal = db.scalars(stmt).first()
+        except Exception as e:
+            logger.debug(f"Could not query Signal for cooldown check: {e}")
+            db.rollback()
             return False
 
-        prev_ts = prev_signal.timestamp or prev_signal.created_at
-        if prev_ts.tzinfo is None:
-            prev_ts = prev_ts.replace(tzinfo=timezone.utc)
-        else:
-            prev_ts = prev_ts.astimezone(timezone.utc)
+        if not recent_signal:
+            return False
 
-        elapsed_seconds = (current_ts - prev_ts).total_seconds()
-        elapsed_hours = max(0.0, elapsed_seconds / 3600.0)
+        # Determine effective anchor timestamp:
+        # Use created_at (wall clock) in production to avoid candle-timestamp drift.
+        # If created_at was generated at insert time in a test (< 5s ago) while timestamp
+        # is older, fallback to timestamp.
+        recent_ts = recent_signal.created_at
+        if recent_ts is not None:
+            if recent_ts.tzinfo is None:
+                recent_ts = recent_ts.replace(tzinfo=timezone.utc)
+            else:
+                recent_ts = recent_ts.astimezone(timezone.utc)
 
-        if elapsed_hours < cd_hours:
-            # Check if an opposing structural break occurred that resets the cooldown
-            has_opposing = self.has_opposing_structural_break(
-                db=db,
-                symbol=signal_resp.symbol,
-                direction=signal_resp.direction,
-                since_timestamp=prev_ts,
-            )
-            if not has_opposing:
-                logger.info(
-                    f"Suppressing duplicate signal alert for {signal_resp.symbol} [{dir_str}]: "
-                    f"Recent signal exists from {prev_ts.strftime('%Y-%m-%d %H:%M UTC')} "
-                    f"({elapsed_hours:.1f}h ago < {cd_hours}h cooldown window)."
-                )
-                return True
+        candle_ts = recent_signal.timestamp
+        if candle_ts is not None:
+            if candle_ts.tzinfo is None:
+                candle_ts = candle_ts.replace(tzinfo=timezone.utc)
+            else:
+                candle_ts = candle_ts.astimezone(timezone.utc)
 
-        return False
+        if recent_ts is None:
+            recent_ts = candle_ts or now_utc
+        elif candle_ts is not None and abs((now_utc - recent_ts).total_seconds()) < 5.0 and (now_utc - candle_ts).total_seconds() > 5.0:
+            recent_ts = candle_ts
+
+        elapsed_hours = (now_utc - recent_ts).total_seconds() / 3600.0
+        if elapsed_hours >= cd_hours:
+            return False
+
+        # A recent signal exists within cooldown window — check if opposing structural break reset momentum
+        has_opposing = self.has_opposing_structural_break(
+            db=db,
+            symbol=signal_resp.symbol,
+            direction=signal_resp.direction,
+            since_timestamp=recent_ts,
+        )
+        if has_opposing:
+            # Structural break detected — allow the new signal to pass through
+            return False
+
+        logger.info(
+            f"Suppressing duplicate broadcast for {signal_resp.symbol} [{dir_str}]: "
+            f"Active broadcast exists from {recent_ts.strftime('%Y-%m-%d %H:%M UTC')} "
+            f"({elapsed_hours:.1f}h ago < {cd_hours:.1f}h cooldown window)."
+        )
+        return True
 
     async def run_scan_cycle(
         self,

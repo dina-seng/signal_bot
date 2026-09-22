@@ -384,7 +384,7 @@ class ConfluenceEngine:
                         logger.info(f"🎯 Liquidity Magnet Detected: Allowing TP to target {obstacle_type} at {obstacle_price:.5f}")
                         reasons.append(f"🎯 Targeting Liquidity Sweep at {obstacle_price:.5f}")
 
-                    # 🛡️ INFORMATIONAL ADVISORY: Calculate projected R:R if TP front-ran the barrier
+                    # Calculate projected R:R if TP front-ran the barrier
                     pip_size = self.risk_manager.get_pip_size(symbol)
                     buffer_price = 2.0 * pip_size  # 2 pip safety buffer
 
@@ -400,12 +400,12 @@ class ConfluenceEngine:
                     reward_distance = abs(projected_tp1 - risk_params.entry_price)
                     projected_rr = reward_distance / risk_distance if risk_distance > 0 else 0.0
 
+                    # 🛡️ INFORMATIONAL ADVISORY — signal stays qualified
                     logger.info(
                         f"⚠️ Path Advisory: {obstacle_type} at {obstacle_price:.5f} "
                         f"({distance_pips:.1f} pips away). Projected R:R: {projected_rr:.2f}. "
                         f"Total barriers: {obstacle_count}. Signal remains qualified."
                     )
-
                     advisory_msg = (
                         f"⚠️ Path Advisory:\n"
                         f"  • Nearest Obstacle: {obstacle_type} at {obstacle_price:.5f} ({distance_pips:.1f} pips away)\n"

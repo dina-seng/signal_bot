@@ -594,4 +594,101 @@ def test_risk_manager_gold_structural_distance():
     assert params_fx.stop_loss == round(1.1000 - (atr_fx * 1.5), 5)
 
 
+# =============================================================================
+# Deduplication & Cooldown Tests
+# =============================================================================
 
+def test_scanner_symbol_direction_cooldown(test_db_session):
+    """Assert that consecutive same-direction signals for the same symbol are suppressed
+    within the 2-hour wall-clock cooldown window even when candle timestamps change.
+
+    Reproduces the candle-timestamp drift bug: the old cooldown used Signal.timestamp
+    (candle open time), which incremented each hour, making each new bar appear as a
+    fresh signal.  The fix anchors to Signal.created_at (DB insert time).
+    """
+    from datetime import timedelta
+    from app.models.signal import Signal
+    from app.schemas.signal import SignalDirection, SignalResponse, SignalStatus, ScoreBreakdown
+    from app.services.telegram.scanner import AutomatedMarketScanner
+
+    scanner = AutomatedMarketScanner()
+    now_utc = datetime.now(timezone.utc)
+
+    # Seed a previously-broadcasted SELL signal:
+    #   - candle timestamp: 1h 30m old (simulates previous hourly bar)
+    #   - created_at: 45 minutes ago (within 2-hour window)
+    candle_ts_old = now_utc - timedelta(hours=1, minutes=30)
+    created_at_recent = now_utc - timedelta(minutes=45)
+
+    existing_signal = Signal(
+        symbol="XAU/USD",
+        timeframe="1h",
+        direction="SELL",
+        setup_score=82.0,
+        entry_price=1950.00,
+        stop_loss=1960.00,
+        take_profit_1=1930.00,
+        take_profit_2=1920.00,
+        risk_reward=2.0,
+        fingerprint="fp_sell_45min_ago",
+        reasons=["Bearish BOS"],
+        status="ACTIVE",
+        strategy_name="Strategy A (SMC Sniper)",
+        is_broadcasted=True,
+        timestamp=candle_ts_old,
+        created_at=created_at_recent,
+    )
+    test_db_session.add(existing_signal)
+    test_db_session.commit()
+
+    # New signal: same direction, newer candle timestamp (1H bar shift — the bug trigger)
+    new_candle_ts = now_utc - timedelta(minutes=30)
+    new_signal_resp = SignalResponse(
+        symbol="XAU/USD",
+        timeframe="1h",
+        direction=SignalDirection.SELL,
+        setup_score=81.0,
+        entry_price=1951.00,
+        stop_loss=1961.00,
+        take_profit_1=1931.00,
+        take_profit_2=1921.00,
+        risk_reward=2.0,
+        fingerprint="fp_sell_new_bar",
+        reasons=["Bearish BOS (new bar)"],
+        status=SignalStatus.ACTIVE,
+        timestamp=new_candle_ts,
+        strategy_name="Strategy A (SMC Sniper)",
+        score_breakdown=ScoreBreakdown(
+            structure_score=20.0,
+            liquidity_score=18.0,
+            indicators_score=20.0,
+            price_action_score=10.0,
+            total_score=68.0,
+            is_qualified=True,
+        ),
+    )
+
+    # Assert 1: cooldown SUPPRESSES the new signal (45 min created_at < 2h window)
+    in_cooldown = scanner.is_signal_in_cooldown(
+        db=test_db_session,
+        signal_resp=new_signal_resp,
+        cooldown_hours=2,
+    )
+    assert in_cooldown is True, (
+        "Expected is_signal_in_cooldown=True: existing broadcast is 45min old (< 2h). "
+        "Candle timestamp shift must NOT bypass the wall-clock cooldown."
+    )
+
+    # Assert 2: after cooldown expires (3h old), signal is allowed through
+    existing_signal.created_at = now_utc - timedelta(hours=3)
+    test_db_session.commit()
+
+    in_cooldown_expired = scanner.is_signal_in_cooldown(
+        db=test_db_session,
+        signal_resp=new_signal_resp,
+        cooldown_hours=2,
+    )
+    assert in_cooldown_expired is False, (
+        "Expected is_signal_in_cooldown=False: broadcast is 3h old (> 2h window). "
+        "Signal should pass through after the cooldown expires."
+    )

@@ -20,8 +20,7 @@ class SignalScoringEngine:
     """Unified Signal Scoring Engine.
     
     DEPRECATED: Production signal generation has transitioned to the pluggable
-    multi-strategy engine (`app.services.strategies.smc_strategy.SMCStrategy`
-    and `app.services.strategies.momentum_strategy.MomentumStrategy`).
+    strategy engine (`app.services.strategies.smc_strategy.SMCStrategy`).
     This class is maintained solely for backward compatibility with legacy tests.
     """
 

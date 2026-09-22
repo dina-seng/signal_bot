@@ -41,10 +41,8 @@ class StrategyManager:
             # Lazy imports to avoid circular dependency:
             # strategy_manager -> smc_strategy -> signals.evaluators -> signals.__init__ -> confluence_engine -> strategy_manager
             from app.services.strategies.smc_strategy import SMCStrategy
-            from app.services.strategies.momentum_strategy import MomentumStrategy
             self.strategies = [
                 SMCStrategy(),
-                MomentumStrategy(),
             ]
 
     def register(self, strategy: BaseStrategy) -> None:
