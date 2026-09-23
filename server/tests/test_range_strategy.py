@@ -378,9 +378,11 @@ class TestRangeStrategy:
 
     def test_clean_integration_with_strategy_manager(self):
         """Verify RangeStrategy registers and runs via StrategyManager without breaking existing SMC strategy."""
-        manager = StrategyManager()
+        from app.services.strategies.smc_strategy import SMCStrategy
+        manager = StrategyManager(strategies=[SMCStrategy()])
         range_strat = RangeStrategy()
         manager.register(range_strat)
+
 
         names = [s.name for s in manager.strategies]
         assert "Strategy A (SMC Sniper)" in names

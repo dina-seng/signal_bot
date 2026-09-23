@@ -12,11 +12,14 @@ Import it directly when needed:
 
 from app.services.strategies.base import BaseStrategy, StrategyResult
 from app.services.strategies.range_strategy import RangeStrategy
+from app.services.strategies.crt_strategy import CRTStrategy
 from app.services.strategies.strategy_manager import StrategyManager
 
 __all__ = [
     "BaseStrategy",
+    "CRTStrategy",
     "RangeStrategy",
     "StrategyManager",
     "StrategyResult",
 ]
+

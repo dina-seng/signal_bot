@@ -335,20 +335,59 @@ class ConfluenceEngine:
         risk_params: Optional[RiskParameters] = None
 
         if direction in (SignalDirection.BUY, SignalDirection.SELL):
-            supp_low = structure_analysis.base_structure.key_support
-            res_high = structure_analysis.base_structure.key_resistance
+            # Check if strategy supplied specific custom risk levels (e.g. CRT dynamic SL/TP)
+            custom_sl = result.metadata.get("stop_loss") if result.metadata else None
+            custom_tp1 = result.metadata.get("take_profit_1") if result.metadata else None
 
-            # A. Calculate Initial Risk
-            risk_params = self.risk_manager.calculate_trade_risk(
-                symbol=symbol,
-                direction=direction,
-                entry_price=current_price,
-                atr_value=indicator_analysis.atr.atr_value,
-                key_support_low=supp_low,
-                key_resistance_high=res_high,
-                account_balance=account_balance,
-                risk_percent=risk_percent,
-            )
+            if custom_sl is not None and custom_tp1 is not None and abs(current_price - custom_sl) > 0:
+                pip_size = self.risk_manager.get_pip_size(symbol)
+                risk_price = abs(current_price - custom_sl)
+                risk_pips = round(risk_price / pip_size, 1)
+                reward_pips_tp1 = round(abs(custom_tp1 - current_price) / pip_size, 1)
+                rr_tp1 = round(reward_pips_tp1 / max(1e-6, risk_pips), 2)
+                custom_tp2 = (result.metadata.get("take_profit_2") if result.metadata else None) or (
+                    current_price + (custom_tp1 - current_price) * (2.5 / 1.5)
+                )
+                reward_pips_tp2 = round(abs(custom_tp2 - current_price) / pip_size, 1)
+                rr_tp2 = round(reward_pips_tp2 / max(1e-6, risk_pips), 2)
+
+                risk_pct = risk_percent or settings.MAX_RISK_PERCENT
+                risk_amount_usd = round(account_balance * (risk_pct / 100.0), 2)
+                pip_val = self.risk_manager.get_pip_value_per_lot(symbol)
+                raw_lots = risk_amount_usd / max(1e-6, risk_pips * pip_val)
+                suggested_lots = round(max(0.01, min(100.0, raw_lots)), 2)
+
+                risk_params = RiskParameters(
+                    entry_price=round(current_price, 5),
+                    stop_loss=round(custom_sl, 5),
+                    take_profit_1=round(custom_tp1, 5),
+                    take_profit_2=round(custom_tp2, 5),
+                    risk_pips=risk_pips,
+                    reward_pips_tp1=reward_pips_tp1,
+                    reward_pips_tp2=reward_pips_tp2,
+                    risk_reward_tp1=rr_tp1,
+                    risk_reward_tp2=rr_tp2,
+                    account_balance=account_balance,
+                    risk_percent=risk_pct,
+                    risk_amount_usd=risk_amount_usd,
+                    suggested_lot_size=suggested_lots,
+                )
+            else:
+                supp_low = structure_analysis.base_structure.key_support
+                res_high = structure_analysis.base_structure.key_resistance
+
+                # A. Calculate Initial Risk
+                risk_params = self.risk_manager.calculate_trade_risk(
+                    symbol=symbol,
+                    direction=direction,
+                    entry_price=current_price,
+                    atr_value=indicator_analysis.atr.atr_value,
+                    key_support_low=supp_low,
+                    key_resistance_high=res_high,
+                    account_balance=account_balance,
+                    risk_percent=risk_percent,
+                )
+
 
             # B. Small Account Rejection Check
             if risk_params.suggested_lot_size == 0.0:
@@ -434,7 +473,12 @@ class ConfluenceEngine:
         )
 
         strat_name = result.strategy_name or ""
-        regime = "RANGING / MEAN REVERSION" if "Range Sniper" in strat_name else "TREND FOLLOWING"
+        if "Range Sniper" in strat_name:
+            regime = "RANGING / MEAN REVERSION"
+        elif "CRT" in strat_name or "Candle Range" in strat_name:
+            regime = "CRT / AMD EXPANSION"
+        else:
+            regime = "TREND FOLLOWING"
 
         return SignalResponse(
             symbol=symbol,

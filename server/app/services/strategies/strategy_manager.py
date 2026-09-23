@@ -41,9 +41,14 @@ class StrategyManager:
             # Lazy imports to avoid circular dependency:
             # strategy_manager -> smc_strategy -> signals.evaluators -> signals.__init__ -> confluence_engine -> strategy_manager
             from app.services.strategies.smc_strategy import SMCStrategy
+            from app.services.strategies.range_strategy import RangeStrategy
+            from app.services.strategies.crt_strategy import CRTStrategy
             self.strategies = [
                 SMCStrategy(),
+                RangeStrategy(),
+                CRTStrategy(),
             ]
+
 
     def register(self, strategy: BaseStrategy) -> None:
         """Add a new strategy to the pipeline at runtime."""

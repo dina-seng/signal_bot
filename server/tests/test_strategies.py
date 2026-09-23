@@ -117,11 +117,13 @@ class TestStrategyArchitecture:
         strat_a = SMCStrategy()
         assert strat_a.name == "Strategy A (SMC Sniper)"
 
-    def test_strategy_manager_registers_only_smc_strategy(self):
+    def test_strategy_manager_registers_default_strategies(self):
         manager = StrategyManager()
         names = [s.name for s in manager.strategies]
         assert "Strategy A (SMC Sniper)" in names
-        assert len(names) == 1
+        assert "Strategy C (Range Sniper)" in names
+        assert "Candle Range Theory (CRT)" in names
+        assert len(names) == 3
 
     def test_strategy_manager_runs_registered_strategy(self):
         manager = StrategyManager()
@@ -140,8 +142,12 @@ class TestStrategyArchitecture:
             structure=structure,
         )
 
-        assert len(results) == 1
-        assert results[0].strategy_name == "Strategy A (SMC Sniper)"
+        assert len(results) == 3
+        strat_names = [r.strategy_name for r in results]
+        assert "Strategy A (SMC Sniper)" in strat_names
+        assert "Strategy C (Range Sniper)" in strat_names
+        assert "Candle Range Theory (CRT)" in strat_names
+
 
     def test_telegram_formatter_multi_strategy_confluence_and_conflict(self):
         now = datetime.now(timezone.utc)

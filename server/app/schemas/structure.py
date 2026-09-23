@@ -122,3 +122,19 @@ class MultiTimeframeStructureResponse(BaseModel):
     summary: str = Field(..., description="Human-readable executive summary of market structure")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CRTAnalysis(BaseModel):
+    """Candle Range Theory (CRT) Analysis based on Accumulation, Manipulation, and Distribution (AMD)."""
+    range_high: float
+    range_low: float
+    range_open: float
+    range_close: float
+    positive_direction: bool  # True if range_close > range_open
+    breach_point: Optional[float] = None  # The extreme low/high during manipulation
+    is_breached: bool = False
+    is_confirmed: bool = False  # True if price closed back inside the range
+    manip_depth_pct: float = 0.0  # Percentage of range size that was breached
+
+    model_config = ConfigDict(from_attributes=True)
+
