@@ -397,3 +397,221 @@ class TestCRTStrategy:
         assert crt_sig.stop_loss == 1935.0
         assert crt_sig.trend_alignment == "CRT / AMD EXPANSION"
 
+    def test_crt_htf_trend_filter_rejects_counter_trend_buy(self):
+        """Verify Bullish CRT AMD setup is REJECTED when HTF Trend is BEARISH."""
+        now = datetime.now(timezone.utc)
+        range_candle = _make_candle(2000.0, 2100.0, 1950.0, 2080.0, timestamp=now)
+        manip_candle = _make_candle(1955.0, 1960.0, 1935.0, 1945.0, timestamp=now)
+        confirm_candle = _make_candle(1945.0, 1970.0, 1940.0, 1965.0, timestamp=now)
+
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        result = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_candle],
+            htf_trend="BEARISH",
+        )
+
+        assert result.direction == SignalDirection.WAIT
+        assert result.score == 0.0
+        assert result.score_breakdown.is_qualified is False
+        assert result.metadata["gatekeeper_passed"] is False
+        assert result.metadata["trend_conflict"] is True
+        assert result.metadata["htf_trend"] == "BEARISH"
+        assert result.stop_loss == 0.0
+
+        joined_reasons = " ".join(result.reasons)
+        assert "REJECTED (Trend Conflict): HTF Trend is BEARISH. Ignoring Bullish CRT setup." in joined_reasons
+
+    def test_crt_htf_trend_filter_rejects_counter_trend_sell(self):
+        """Verify Bearish CRT AMD setup is REJECTED when HTF Trend is BULLISH."""
+        now = datetime.now(timezone.utc)
+        range_candle = _make_candle(2080.0, 2100.0, 1950.0, 1970.0, timestamp=now)
+        manip_candle = _make_candle(2095.0, 2115.0, 2085.0, 2105.0, timestamp=now)
+        confirm_candle = _make_candle(2105.0, 2108.0, 2075.0, 2085.0, timestamp=now)
+
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        result = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_candle],
+            htf_trend="BULLISH",
+        )
+
+        assert result.direction == SignalDirection.WAIT
+        assert result.score == 0.0
+        assert result.score_breakdown.is_qualified is False
+        assert result.metadata["gatekeeper_passed"] is False
+        assert result.metadata["trend_conflict"] is True
+        assert result.metadata["htf_trend"] == "BULLISH"
+
+        joined_reasons = " ".join(result.reasons)
+        assert "REJECTED (Trend Conflict): HTF Trend is BULLISH. Ignoring Bearish CRT setup." in joined_reasons
+
+    def test_crt_htf_trend_filter_accepts_aligned_and_ranging(self):
+        """Verify CRT setups are accepted when HTF trend aligns or is ranging."""
+        now = datetime.now(timezone.utc)
+        # Bullish setup
+        bull_range = _make_candle(2000.0, 2100.0, 1950.0, 2080.0, timestamp=now)
+        bull_manip = _make_candle(1955.0, 1960.0, 1935.0, 1945.0, timestamp=now)
+        bull_confirm = _make_candle(1945.0, 1970.0, 1940.0, 1965.0, timestamp=now)
+
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+
+        # Bullish setup with BULLISH HTF -> BUY
+        res_aligned_buy = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[bull_range],
+            candles_15m=[bull_manip, bull_confirm],
+            htf_trend="BULLISH",
+        )
+        assert res_aligned_buy.direction == SignalDirection.BUY
+        assert res_aligned_buy.score == 80.0
+        assert res_aligned_buy.metadata["htf_trend"] == "BULLISH"
+
+        # Bullish setup with RANGING HTF -> BUY
+        res_ranging_buy = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[bull_range],
+            candles_15m=[bull_manip, bull_confirm],
+            htf_trend="RANGING",
+        )
+        assert res_ranging_buy.direction == SignalDirection.BUY
+        assert res_ranging_buy.score == 80.0
+
+        # Bearish setup with BEARISH HTF -> SELL
+        bear_range = _make_candle(2080.0, 2100.0, 1950.0, 1970.0, timestamp=now)
+        bear_manip = _make_candle(2095.0, 2115.0, 2085.0, 2105.0, timestamp=now)
+        bear_confirm = _make_candle(2105.0, 2108.0, 2075.0, 2085.0, timestamp=now)
+
+        res_aligned_sell = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[bear_range],
+            candles_15m=[bear_manip, bear_confirm],
+            htf_trend="BEARISH",
+        )
+        assert res_aligned_sell.direction == SignalDirection.SELL
+        assert res_aligned_sell.score == 80.0
+        assert res_aligned_sell.metadata["htf_trend"] == "BEARISH"
+
+    def test_crt_infers_htf_trend_from_structure_or_mtf(self):
+        """Verify CRT automatically infers HTF trend from structure or mtf objects when htf_trend is default."""
+        now = datetime.now(timezone.utc)
+        range_candle = _make_candle(2000.0, 2100.0, 1950.0, 2080.0, timestamp=now)
+        manip_candle = _make_candle(1955.0, 1960.0, 1935.0, 1945.0, timestamp=now)
+        confirm_candle = _make_candle(1945.0, 1970.0, 1940.0, 1965.0, timestamp=now)
+
+        base_struct = StructureAnalysisResponse(
+            symbol="XAU/USD",
+            timeframe="1h",
+            trend=TrendDirection.BEARISH,
+            trend_strength=0.8,
+            key_support=1950.0,
+            key_resistance=2100.0,
+            total_candles=10,
+            total_swings=0,
+            timestamp=now,
+        )
+        struct_bearish = AdvancedStructureAnalysisResponse(
+            symbol="XAU/USD",
+            timeframe="1h",
+            timestamp=now,
+            current_price=1965.0,
+            trend=TrendDirection.BEARISH,
+            trend_strength=0.8,
+            market_state="TRENDING_BEARISH",
+            base_structure=base_struct,
+        )
+
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+
+        # Inferred from structure (BEARISH blocks BUY)
+        res_struct = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_candle],
+            structure=struct_bearish,
+        )
+        assert res_struct.direction == SignalDirection.WAIT
+        assert res_struct.metadata["trend_conflict"] is True
+        assert "REJECTED (Trend Conflict): HTF Trend is BEARISH" in " ".join(res_struct.reasons)
+
+        # Inferred from mtf (BEARISH blocks BUY)
+        from app.schemas.structure import MultiTimeframeAlignment, MultiTimeframeStructureResponse
+        mtf_bearish = MultiTimeframeStructureResponse(
+            symbol="XAU/USD",
+            primary_timeframe="4h",
+            primary_trend=TrendDirection.BEARISH,
+            alignment=MultiTimeframeAlignment.BEARISH_ALIGNED,
+            alignment_score=1.0,
+            timeframes={"1h": base_struct},
+            summary="Strong HTF downtrend",
+        )
+        res_mtf = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_candle],
+            mtf=mtf_bearish,
+        )
+        assert res_mtf.direction == SignalDirection.WAIT
+        assert res_mtf.metadata["trend_conflict"] is True
+        assert "REJECTED (Trend Conflict): HTF Trend is BEARISH" in " ".join(res_mtf.reasons)
+
+    def test_confluence_engine_passes_htf_trend_to_crt(self):
+        """Verify ConfluenceEngine forwards HTF trend into strategy.analyze and rejects counter-trend CRT."""
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        # 30 closed 1H candles
+        candles_1h = [
+            _make_candle(
+                2000.0, 2100.0, 1950.0, 2080.0,
+                timestamp=now - timedelta(hours=31 - k),
+                timeframe="1h",
+            )
+            for k in range(30)
+        ]
+        # Bullish CRT sweep low and confirm
+        candles_15m = [
+            _make_candle(
+                1955.0, 1960.0, 1935.0, 1945.0,
+                timestamp=now - timedelta(minutes=45),
+                timeframe="15m",
+            ),
+            _make_candle(
+                1945.0, 1970.0, 1940.0, 1965.0,
+                timestamp=now - timedelta(minutes=30),
+                timeframe="15m",
+            ),
+            _make_candle(
+                1965.0, 1975.0, 1960.0, 1970.0,
+                timestamp=now - timedelta(minutes=15),
+                timeframe="15m",
+            ),
+        ]
+
+        engine = ConfluenceEngine()
+        signals = engine.evaluate_multi(
+            symbol="XAU/USD",
+            timeframe="1h",
+            candles_primary=candles_1h,
+            candles_15m=candles_15m,
+            htf_trend="BEARISH",
+        )
+
+        crt_sig = next((s for s in signals if s.strategy_name == "Candle Range Theory (CRT)"), None)
+        assert crt_sig is not None
+        assert crt_sig.direction == SignalDirection.WAIT
+        assert crt_sig.setup_score == 0.0
+        assert crt_sig.htf_trend == "BEARISH"
+        joined_reasons = " ".join(crt_sig.reasons)
+        assert "REJECTED (Trend Conflict): HTF Trend is BEARISH. Ignoring Bullish CRT setup." in joined_reasons
+
+
+

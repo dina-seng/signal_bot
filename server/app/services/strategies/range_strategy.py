@@ -72,6 +72,7 @@ class RangeStrategy(BaseStrategy):
         structure: AdvancedStructureAnalysisResponse,
         mtf: Optional[MultiTimeframeStructureResponse] = None,
         candles_15m: Optional[Sequence[Any]] = None,
+        **kwargs: Any,
     ) -> StrategyResult:
         """Evaluate BUY and SELL mean-reversion setups in ranging markets."""
 

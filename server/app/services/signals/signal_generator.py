@@ -97,6 +97,7 @@ class SignalGenerator:
         news_check: Optional[NewsBlackoutCheckResponse] = None,
         account_balance: float = 10000.0,
         risk_percent: float = 0.5,
+        htf_trend: Optional[str] = None,
     ) -> SignalResponse:
         """Run full evaluation pipeline on candles and generate SignalResponse."""
         return self.confluence_engine.evaluate(
@@ -108,6 +109,7 @@ class SignalGenerator:
             news_check=news_check,
             account_balance=account_balance,
             risk_percent=risk_percent,
+            htf_trend=htf_trend,
         )
 
     def evaluate_market_signals_multi(
@@ -120,6 +122,7 @@ class SignalGenerator:
         news_check: Optional[NewsBlackoutCheckResponse] = None,
         account_balance: float = 10000.0,
         risk_percent: float = 0.5,
+        htf_trend: Optional[str] = None,
     ) -> List[SignalResponse]:
         """Run all strategies and return independent SignalResponse per qualifying strategy."""
         return self.confluence_engine.evaluate_multi(
@@ -131,6 +134,7 @@ class SignalGenerator:
             news_check=news_check,
             account_balance=account_balance,
             risk_percent=risk_percent,
+            htf_trend=htf_trend,
         )
 
 
@@ -467,6 +471,7 @@ class SignalGenerator:
                 news_check=news_res,
                 account_balance=account_balance,
                 risk_percent=risk_percent,
+                htf_trend=htf_trend,
             )
             if c15m and len(c15m) >= 20
             else None
@@ -482,6 +487,7 @@ class SignalGenerator:
                 news_check=news_res,
                 account_balance=account_balance,
                 risk_percent=risk_percent,
+                htf_trend=htf_trend,
             )
             if c30m and len(c30m) >= 20
             else None
@@ -496,6 +502,7 @@ class SignalGenerator:
             news_check=news_res,
             account_balance=account_balance,
             risk_percent=risk_percent,
+            htf_trend=htf_trend,
         )
 
         # 5. Filter Lower Timeframe (15m/30m) Candidates by Trend Alignment

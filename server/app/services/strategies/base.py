@@ -49,6 +49,7 @@ class BaseStrategy(ABC):
         structure: AdvancedStructureAnalysisResponse,
         mtf: Optional[MultiTimeframeStructureResponse] = None,
         candles_15m: Optional[Sequence[Any]] = None,
+        **kwargs: Any,
     ) -> StrategyResult:
         """Run strategy-specific analysis and return a scored result.
 

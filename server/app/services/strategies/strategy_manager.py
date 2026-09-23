@@ -64,6 +64,8 @@ class StrategyManager:
         structure: AdvancedStructureAnalysisResponse,
         mtf: Optional[MultiTimeframeStructureResponse] = None,
         candles_15m: Optional[Sequence[Any]] = None,
+        htf_trend: Optional[str] = None,
+        **kwargs: Any,
     ) -> List[StrategyResult]:
         """Execute every registered strategy and return the list of results.
 
@@ -72,8 +74,26 @@ class StrategyManager:
         """
         results: List[StrategyResult] = []
 
+        # Determine HTF trend context if not passed
+        current_htf_trend = htf_trend
+        if current_htf_trend is None:
+            if mtf is not None and hasattr(mtf, "timeframes") and "1h" in mtf.timeframes:
+                t = mtf.timeframes["1h"].trend
+                current_htf_trend = t.value if hasattr(t, "value") else str(t).upper()
+            elif structure is not None and hasattr(structure, "trend"):
+                t = structure.trend
+                current_htf_trend = t.value if hasattr(t, "value") else str(t).upper()
+            elif mtf is not None and hasattr(mtf, "primary_trend"):
+                t = mtf.primary_trend
+                current_htf_trend = t.value if hasattr(t, "value") else str(t).upper()
+            else:
+                current_htf_trend = "RANGING"
+
         for strategy in self.strategies:
             try:
+                call_kwargs = dict(kwargs)
+                call_kwargs["htf_trend"] = current_htf_trend
+
                 result = strategy.analyze(
                     symbol=symbol,
                     timeframe=timeframe,
@@ -82,6 +102,7 @@ class StrategyManager:
                     structure=structure,
                     mtf=mtf,
                     candles_15m=candles_15m,
+                    **call_kwargs,
                 )
                 results.append(result)
                 logger.debug(

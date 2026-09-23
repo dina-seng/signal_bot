@@ -63,6 +63,7 @@ class SMCStrategy(BaseStrategy):
         structure: AdvancedStructureAnalysisResponse,
         mtf: Optional[MultiTimeframeStructureResponse] = None,
         candles_15m: Optional[Sequence[Any]] = None,
+        **kwargs: Any,
     ) -> StrategyResult:
         """Evaluate BUY and SELL setups using the pure 3-pillar SMC framework."""
 

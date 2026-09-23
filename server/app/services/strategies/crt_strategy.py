@@ -71,6 +71,7 @@ class CRTStrategy(BaseStrategy):
         candles_15m: Optional[Sequence[Any]] = None,
         range_candles: Optional[Sequence[Any]] = None,
         confirm_candles: Optional[Sequence[Any]] = None,
+        htf_trend: str = "RANGING",
         **kwargs: Any,
     ) -> StrategyResult:
         """Evaluate BUY and SELL setups using the Candle Range Theory (AMD) framework.
@@ -85,6 +86,7 @@ class CRTStrategy(BaseStrategy):
             candles_15m: Lower timeframe candles for confirmation.
             range_candles: Explicit HTF accumulation candles (overrides auto-detection).
             confirm_candles: Explicit LTF manipulation/confirmation candles (overrides auto-detection).
+            htf_trend: Higher timeframe trend bias ("BULLISH", "BEARISH", "RANGING").
             **kwargs: Additional candle sets (e.g. candles_1h, candles_4h).
 
         Returns:
@@ -138,6 +140,37 @@ class CRTStrategy(BaseStrategy):
         else:
             current_price = 0.0
 
+        # Determine HTF Trend (infer from mtf or structure if default "RANGING")
+        resolved_htf_trend = (
+            htf_trend.value if hasattr(htf_trend, "value") else str(htf_trend)
+        ).upper() if htf_trend is not None else "RANGING"
+
+        if resolved_htf_trend == "RANGING":
+            if mtf is not None:
+                if hasattr(mtf, "trend") and mtf.trend:
+                    t = mtf.trend.value if hasattr(mtf.trend, "value") else str(mtf.trend).upper()
+                    if t in ("BULLISH", "BEARISH"):
+                        resolved_htf_trend = t
+                elif hasattr(mtf, "timeframes") and mtf.timeframes:
+                    for tf_key in ("1h", "4h"):
+                        if tf_key in mtf.timeframes and mtf.timeframes[tf_key].trend:
+                            t = mtf.timeframes[tf_key].trend
+                            t_val = t.value if hasattr(t, "value") else str(t).upper()
+                            if t_val in ("BULLISH", "BEARISH"):
+                                resolved_htf_trend = t_val
+                                break
+                if resolved_htf_trend == "RANGING" and hasattr(mtf, "primary_trend") and mtf.primary_trend:
+                    t = mtf.primary_trend.value if hasattr(mtf.primary_trend, "value") else str(mtf.primary_trend).upper()
+                    if t in ("BULLISH", "BEARISH"):
+                        resolved_htf_trend = t
+
+            if resolved_htf_trend == "RANGING" and structure is not None and hasattr(structure, "trend") and structure.trend:
+                t = structure.trend.value if hasattr(structure.trend, "value") else str(structure.trend).upper()
+                if t in ("BULLISH", "BEARISH"):
+                    resolved_htf_trend = t
+
+        htf_trend = resolved_htf_trend
+
         # 4. Check Setup Qualification
         is_qualified = (
             analysis.is_confirmed
@@ -183,6 +216,47 @@ class CRTStrategy(BaseStrategy):
                 f"Risk Profile: Entry={current_price:.5f}, SL={stop_loss:.5f} (Breach Point), TP1={take_profit_1:.5f} (1.5 R:R)",
             ]
 
+            # --- HTF TREND ALIGNMENT FILTER ---
+            if htf_trend == "BEARISH" and direction == SignalDirection.BUY:
+                is_qualified = False
+                reasons.append(f"REJECTED (Trend Conflict): HTF Trend is BEARISH. Ignoring Bullish CRT setup.")
+                
+            elif htf_trend == "BULLISH" and direction == SignalDirection.SELL:
+                is_qualified = False
+                reasons.append(f"REJECTED (Trend Conflict): HTF Trend is BULLISH. Ignoring Bearish CRT setup.")
+            # ----------------------------------
+
+            if not is_qualified:
+                score_breakdown = ScoreBreakdown(
+                    structure_score=0.0,
+                    liquidity_score=0.0,
+                    indicators_score=0.0,
+                    price_action_score=0.0,
+                    total_score=0.0,
+                    is_qualified=False,
+                )
+                metadata = {
+                    "crt_analysis": analysis.model_dump(),
+                    "gatekeeper_passed": False,
+                    "trend_conflict": True,
+                    "htf_trend": htf_trend,
+                }
+                result = StrategyResult(
+                    strategy_name=self.name,
+                    direction=SignalDirection.WAIT,
+                    score=0.0,
+                    reasons=reasons,
+                    metadata=metadata,
+                    score_breakdown=score_breakdown,
+                )
+                result.entry_price = round(current_price, 5) if current_price > 0 else 0.0
+                result.stop_loss = 0.0
+                result.take_profit_1 = 0.0
+                result.take_profit_2 = 0.0
+                result.risk_reward = 0.0
+                result.breach_point = analysis.breach_point
+                return result
+
             metadata: Dict[str, Any] = {
                 "entry_price": round(current_price, 5),
                 "stop_loss": round(stop_loss, 5),
@@ -193,6 +267,7 @@ class CRTStrategy(BaseStrategy):
                 "manip_depth_pct": analysis.manip_depth_pct,
                 "crt_analysis": analysis.model_dump(),
                 "positive_direction": analysis.positive_direction,
+                "htf_trend": htf_trend,
             }
 
             result = StrategyResult(

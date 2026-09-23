@@ -323,6 +323,7 @@ class ConfluenceEngine:
         structure_analysis: Any,
         account_balance: float,
         risk_percent: float,
+        htf_trend: Optional[str] = None,
     ) -> SignalResponse:
         """Convert a ``StrategyResult`` into a full ``SignalResponse`` with risk management."""
         current_price = indicator_analysis.current_price
@@ -480,6 +481,11 @@ class ConfluenceEngine:
         else:
             regime = "TREND FOLLOWING"
 
+        sig_htf_trend = (
+            htf_trend
+            or (result.metadata.get("htf_trend") if result.metadata else None)
+        )
+
         return SignalResponse(
             symbol=symbol,
             timeframe=timeframe,
@@ -499,6 +505,7 @@ class ConfluenceEngine:
             risk_parameters=risk_params,
             strategy_name=result.strategy_name,
             trend_alignment=regime,
+            htf_trend=sig_htf_trend,
         )
 
     # ------------------------------------------------------------------
@@ -516,6 +523,7 @@ class ConfluenceEngine:
         news_check: Optional[NewsBlackoutCheckResponse] = None,
         account_balance: float = 10000.0,
         risk_percent: float = 0.5,
+        htf_trend: Optional[str] = None,
     ) -> SignalResponse:
         """Run all strategies and return the single best qualifying SignalResponse.
 
@@ -531,6 +539,7 @@ class ConfluenceEngine:
             news_check=news_check,
             account_balance=account_balance,
             risk_percent=risk_percent,
+            htf_trend=htf_trend,
         )
 
         # Return the best (highest-scoring actionable) signal, or the first WAIT
@@ -555,6 +564,7 @@ class ConfluenceEngine:
         news_check: Optional[NewsBlackoutCheckResponse] = None,
         account_balance: float = 10000.0,
         risk_percent: float = 0.5,
+        htf_trend: Optional[str] = None,
     ) -> List[SignalResponse]:
         """Run all strategies and return a SignalResponse per strategy.
 
@@ -583,6 +593,24 @@ class ConfluenceEngine:
             c_15m=c_15m,
         )
 
+        # Determine 1H HTF trend context
+        current_htf_trend = htf_trend
+        if current_htf_trend is None:
+            if mtf_analysis is not None and hasattr(mtf_analysis, "timeframes") and "1h" in mtf_analysis.timeframes:
+                t = mtf_analysis.timeframes["1h"].trend
+                current_htf_trend = t.value if hasattr(t, "value") else str(t).upper()
+            elif timeframe == "1h" and structure_analysis is not None and hasattr(structure_analysis, "trend"):
+                t = structure_analysis.trend
+                current_htf_trend = t.value if hasattr(t, "value") else str(t).upper()
+            elif mtf_analysis is not None and hasattr(mtf_analysis, "primary_trend") and mtf_analysis.primary_trend:
+                t = mtf_analysis.primary_trend
+                current_htf_trend = t.value if hasattr(t, "value") else str(t).upper()
+            elif structure_analysis is not None and hasattr(structure_analysis, "trend"):
+                t = structure_analysis.trend
+                current_htf_trend = t.value if hasattr(t, "value") else str(t).upper()
+            else:
+                current_htf_trend = "RANGING"
+
         # Run all strategies
         strategy_results: List[StrategyResult] = self.strategy_manager.run_all_strategies(
             symbol=symbol,
@@ -592,6 +620,7 @@ class ConfluenceEngine:
             structure=structure_analysis,
             mtf=mtf_analysis,
             candles_15m=c_15m,
+            htf_trend=current_htf_trend,
         )
 
         # Build a SignalResponse per strategy result
@@ -605,6 +634,7 @@ class ConfluenceEngine:
                 structure_analysis=structure_analysis,
                 account_balance=account_balance,
                 risk_percent=risk_percent,
+                htf_trend=current_htf_trend,
             )
             signals.append(sig)
 
