@@ -169,6 +169,40 @@ class TestCRTStrategy:
         assert result.metadata["gatekeeper_passed"] is False
         assert result.metadata["crt_analysis"]["manip_depth_pct"] == pytest.approx(2.0)
 
+    def test_crt_excessive_manipulation_rejected(self):
+        """Manipulation depth > max_manip_pct (e.g. 200% > 100%) should be rejected (WAIT).
+
+        Prevents news spikes or massive breakouts from generating absurd Stop Losses.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Range size = 150.0 (1950.0 to 2100.0)
+        range_candle = _make_candle(2000.0, 2100.0, 1950.0, 2080.0, timestamp=now)
+
+        # Extreme news spike / massive drop to 1650.0 (depth = 300.0 / 150.0 = 200.0%)
+        spike_candle = _make_candle(1955.0, 1960.0, 1650.0, 1700.0, timestamp=now)
+        # Even if price rebounds and closes back inside the range
+        rebound_candle = _make_candle(1700.0, 1980.0, 1690.0, 1960.0, timestamp=now)
+
+        strategy = CRTStrategy(min_manip_pct=5.0, max_manip_pct=100.0, confirm_bars=1)
+        result = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="1h",
+            candles=[range_candle],
+            candles_15m=[spike_candle, rebound_candle],
+        )
+
+        assert result.direction == SignalDirection.WAIT
+        assert result.score == 0.0
+        assert result.metadata["gatekeeper_passed"] is False
+        assert result.metadata["crt_analysis"]["manip_depth_pct"] == pytest.approx(200.0)
+
+        # Check explicit rejection reason
+        joined_reasons = " ".join(result.reasons)
+        assert "REJECTED: Manipulation depth (200.0%) exceeds maximum allowed (100.0%)" in joined_reasons
+        assert "Likely a breakout/spike, not a sweep" in joined_reasons
+
+
     def test_crt_unconfirmed_breach_returns_wait(self):
         """Manipulation occurred, but price failed to close back inside range."""
         now = datetime.now(timezone.utc)

@@ -32,12 +32,14 @@ class CRTStrategy(BaseStrategy):
     def __init__(
         self,
         min_manip_pct: float = 5.0,
+        max_manip_pct: float = 100.0,
         confirm_bars: int = 1,
         base_score: float = 80.0,
         min_score_threshold: Optional[float] = None,
         analyzer: Optional[CRTAnalyzer] = None,
     ) -> None:
         self.min_manip_pct = min_manip_pct
+        self.max_manip_pct = max_manip_pct
         self.confirm_bars = confirm_bars
         self.base_score = base_score
         self._min_score_threshold = (
@@ -47,6 +49,7 @@ class CRTStrategy(BaseStrategy):
             default_min_manip_pct=min_manip_pct,
             default_confirm_bars=confirm_bars,
         )
+
 
     # ------------------------------------------------------------------
     # BaseStrategy interface
@@ -141,6 +144,7 @@ class CRTStrategy(BaseStrategy):
             and analysis.is_breached
             and analysis.breach_point is not None
             and analysis.manip_depth_pct >= self.min_manip_pct
+            and analysis.manip_depth_pct <= self.max_manip_pct
             and current_price > 0.0
         )
 
@@ -174,7 +178,7 @@ class CRTStrategy(BaseStrategy):
             reasons = [
                 f"CRT AMD Setup Confirmed ({direction.value}): {bias_str} Accumulation -> Manipulation -> Distribution",
                 f"Accumulation Range: High={analysis.range_high:.5f}, Low={analysis.range_low:.5f}, Open={analysis.range_open:.5f}, Close={analysis.range_close:.5f}",
-                f"Manipulation Phase: Extreme breach at {analysis.breach_point:.5f} ({analysis.manip_depth_pct:.1f}% depth >= {self.min_manip_pct:.1f}% min)",
+                f"Manipulation Phase: Extreme breach at {analysis.breach_point:.5f} ({analysis.manip_depth_pct:.1f}% depth >= {self.min_manip_pct:.1f}% min, <= {self.max_manip_pct:.1f}% max)",
                 f"Distribution Phase: Price closed back inside range ({'above range low' if analysis.positive_direction else 'below range high'})",
                 f"Risk Profile: Entry={current_price:.5f}, SL={stop_loss:.5f} (Breach Point), TP1={take_profit_1:.5f} (1.5 R:R)",
             ]
@@ -222,9 +226,15 @@ class CRTStrategy(BaseStrategy):
         reasons = [
             f"MARKET BIAS: NEUTRAL / WAIT (CRT Setup Not Confirmed).",
             f"Accumulation: High={analysis.range_high:.5f}, Low={analysis.range_low:.5f}, Positive={analysis.positive_direction}",
-            f"Manipulation State: Breached={analysis.is_breached}, BreachPoint={analysis.breach_point}, Depth={analysis.manip_depth_pct:.1f}% (Min {self.min_manip_pct:.1f}%)",
+            f"Manipulation State: Breached={analysis.is_breached}, BreachPoint={analysis.breach_point}, Depth={analysis.manip_depth_pct:.1f}% (Min {self.min_manip_pct:.1f}%, Max {self.max_manip_pct:.1f}%)",
             f"Distribution State: Confirmed={analysis.is_confirmed}",
         ]
+
+        if analysis.manip_depth_pct > self.max_manip_pct:
+            reasons.append(
+                f"REJECTED: Manipulation depth ({analysis.manip_depth_pct:.1f}%) exceeds maximum allowed ({self.max_manip_pct:.1f}%). Likely a breakout/spike, not a sweep."
+            )
+
 
         metadata = {
             "crt_analysis": analysis.model_dump(),
