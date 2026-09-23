@@ -106,7 +106,9 @@ class SignalScoringEngine:
         """Score a specific direction (BUY or SELL) from 0 to 100 via ConsensusFilter."""
         evals = {
             "structure": self.structure_evaluator.evaluate(direction, structure, mtf),
-            "liquidity": self.liquidity_evaluator.evaluate(direction, structure, indicators.current_price),
+            "liquidity": self.liquidity_evaluator.evaluate(
+                direction, structure, indicators.current_price, active_fvgs=indicators.active_fvgs
+            ),
             "indicators": self.indicator_evaluator.evaluate(direction, indicators),
             "price_action": self.price_action_evaluator.evaluate(direction, indicators),
         }

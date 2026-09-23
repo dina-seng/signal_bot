@@ -19,7 +19,6 @@ from app.schemas.structure import MultiTimeframeStructureResponse, TrendDirectio
 from app.services.signals.evaluators import (
     ConsensusFilter,
     LiquiditySMCConsensusEvaluator,
-    MomentumIndicatorConsensusEvaluator,
     PriceActionConsensusEvaluator,
     StructureConsensusEvaluator,
 )
@@ -28,13 +27,12 @@ from app.services.strategies.base import BaseStrategy, StrategyResult
 
 
 class SMCStrategy(BaseStrategy):
-    """Smart Money Concepts multi-pillar confluence strategy.
+    """Smart Money Concepts 3-pillar pure SMC confluence strategy.
 
     Scoring pillars (max 100 pts):
-        - Structure & MTF Alignment: 30 pts
-        - Liquidity & SMC:           25 pts
-        - Momentum Indicators:       25 pts
-        - Price Action Confirmation:  20 pts
+        - Structure & MTF Alignment: 35 pts
+        - Liquidity & SMC (Sweeps, S/R, FVGs): 40 pts
+        - Price Action Confirmation: 25 pts
 
     Directional conflict penalties and LTF confirmation are applied
     identically to the original ``ConfluenceEngine`` logic.
@@ -44,7 +42,6 @@ class SMCStrategy(BaseStrategy):
         self._min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
         self.structure_evaluator = StructureConsensusEvaluator()
         self.liquidity_evaluator = LiquiditySMCConsensusEvaluator()
-        self.indicator_evaluator = MomentumIndicatorConsensusEvaluator()
         self.price_action_evaluator = PriceActionConsensusEvaluator()
         self.consensus_filter = ConsensusFilter(min_score_threshold=self._min_score_threshold)
         self.ltf_confirmation_engine = LTFConfirmationEngine()
@@ -67,15 +64,17 @@ class SMCStrategy(BaseStrategy):
         mtf: Optional[MultiTimeframeStructureResponse] = None,
         candles_15m: Optional[Sequence[Any]] = None,
     ) -> StrategyResult:
-        """Evaluate BUY and SELL setups using the 4-pillar SMC framework."""
+        """Evaluate BUY and SELL setups using the pure 3-pillar SMC framework."""
 
         current_price = indicators.current_price
+        active_fvgs = getattr(indicators, "active_fvgs", [])
 
         # ----- Multi-Pillar Evaluations: BUY -----
         buy_evals = {
             "structure": self.structure_evaluator.evaluate(SignalDirection.BUY, structure, mtf),
-            "liquidity": self.liquidity_evaluator.evaluate(SignalDirection.BUY, structure, current_price),
-            "indicators": self.indicator_evaluator.evaluate(SignalDirection.BUY, indicators),
+            "liquidity": self.liquidity_evaluator.evaluate(
+                SignalDirection.BUY, structure, current_price, active_fvgs=active_fvgs
+            ),
             "price_action": self.price_action_evaluator.evaluate(SignalDirection.BUY, indicators),
         }
         buy_score, buy_breakdown, buy_reasons, buy_fatal = self.consensus_filter.synthesize(
@@ -85,8 +84,9 @@ class SMCStrategy(BaseStrategy):
         # ----- Multi-Pillar Evaluations: SELL -----
         sell_evals = {
             "structure": self.structure_evaluator.evaluate(SignalDirection.SELL, structure, mtf),
-            "liquidity": self.liquidity_evaluator.evaluate(SignalDirection.SELL, structure, current_price),
-            "indicators": self.indicator_evaluator.evaluate(SignalDirection.SELL, indicators),
+            "liquidity": self.liquidity_evaluator.evaluate(
+                SignalDirection.SELL, structure, current_price, active_fvgs=active_fvgs
+            ),
             "price_action": self.price_action_evaluator.evaluate(SignalDirection.SELL, indicators),
         }
         sell_score, sell_breakdown, sell_reasons, sell_fatal = self.consensus_filter.synthesize(

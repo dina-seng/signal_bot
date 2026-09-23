@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.schemas.indicators import (
     DivergenceType,
+    FairValueGap,
     FVGType,
     IndicatorAnalysisResponse,
     PatternType,
@@ -39,24 +40,38 @@ class PillarEvaluation:
 
 
 # =====================================================================
-# Pillar 1: Market Structure & MTF Alignment (30% Weight / Max 30.0 pts)
+# Pillar 1: Market Structure & MTF Alignment (35% Weight / Max 35.0 pts)
 # =====================================================================
 class StructureConsensusEvaluator:
-    """Evaluates Higher-Timeframe trend alignment, Swing Points, BOS, and CHOCH/MSS."""
+    """Evaluates Higher-Timeframe trend alignment, Swing Points, BOS, and CHOCH/MSS (Max 35.0 pts)."""
 
-    MAX_POINTS: float = 30.0
-    WEIGHT: float = 30.0
+    MAX_POINTS: float = 35.0
+    WEIGHT: float = 35.0
+
+    def __init__(self, max_bars_ago: int = 15):
+        self.max_bars_ago = max_bars_ago
 
     def evaluate(
         self,
         direction: SignalDirection,
         structure: AdvancedStructureAnalysisResponse,
         mtf: Optional[MultiTimeframeStructureResponse] = None,
+        max_bars_ago: Optional[int] = None,
     ) -> PillarEvaluation:
         """Score structure alignment and breakout signals for candidate direction."""
         score = 0.0
         catalysts: List[str] = []
         opposing: List[str] = []
+        bars_limit = max_bars_ago if max_bars_ago is not None else self.max_bars_ago
+        total_candles = structure.base_structure.total_candles if structure.base_structure else 0
+
+        def _is_recent(event_idx: Optional[int]) -> bool:
+            if event_idx is None:
+                return False
+            if total_candles <= 0:
+                return True
+            bars_ago = (total_candles - 1) - event_idx
+            return 0 <= bars_ago <= bars_limit
 
         # 1. Base Structure Trend & Strength (Max 10.0 pts)
         if direction == SignalDirection.BUY:
@@ -99,32 +114,32 @@ class StructureConsensusEvaluator:
                 elif mtf.alignment == MultiTimeframeAlignment.BULLISH_ALIGNED:
                     opposing.append("Opposing MTF Bullish Alignment")
 
-        # 3. Structural Break: BOS Continuation & CHOCH Reversal (Max 10.0 pts)
+        # 3. Structural Break: BOS Continuation & CHOCH Reversal (Max 15.0 pts with Recency Window)
         if direction == SignalDirection.BUY:
-            if structure.latest_bos and structure.latest_bos.event_type == BOSCHOCHType.BULLISH_BOS:
-                score += 10.0
+            if structure.latest_bos and structure.latest_bos.event_type == BOSCHOCHType.BULLISH_BOS and _is_recent(structure.latest_bos.index):
+                score += 15.0
                 catalysts.append("Confirmed Bullish BOS (Trend Expansion)")
-            elif structure.latest_choch and structure.latest_choch.event_type == BOSCHOCHType.BULLISH_CHOCH:
-                score += 8.0
+            elif structure.latest_choch and structure.latest_choch.event_type == BOSCHOCHType.BULLISH_CHOCH and _is_recent(structure.latest_choch.index):
+                score += 12.0
                 catalysts.append("Confirmed Bullish CHOCH/MSS (Structural Reversal)")
             
-            # Opposing break check
-            if structure.latest_choch and structure.latest_choch.event_type == BOSCHOCHType.BEARISH_CHOCH:
+            # Opposing break check (only within recency window)
+            if structure.latest_choch and structure.latest_choch.event_type == BOSCHOCHType.BEARISH_CHOCH and _is_recent(structure.latest_choch.index):
                 opposing.append("Opposing Bearish CHOCH detected")
         elif direction == SignalDirection.SELL:
-            if structure.latest_bos and structure.latest_bos.event_type == BOSCHOCHType.BEARISH_BOS:
-                score += 10.0
+            if structure.latest_bos and structure.latest_bos.event_type == BOSCHOCHType.BEARISH_BOS and _is_recent(structure.latest_bos.index):
+                score += 15.0
                 catalysts.append("Confirmed Bearish BOS (Trend Expansion)")
-            elif structure.latest_choch and structure.latest_choch.event_type == BOSCHOCHType.BEARISH_CHOCH:
-                score += 8.0
+            elif structure.latest_choch and structure.latest_choch.event_type == BOSCHOCHType.BEARISH_CHOCH and _is_recent(structure.latest_choch.index):
+                score += 12.0
                 catalysts.append("Confirmed Bearish CHOCH/MSS (Structural Reversal)")
 
-            # Opposing break check
-            if structure.latest_choch and structure.latest_choch.event_type == BOSCHOCHType.BULLISH_CHOCH:
+            # Opposing break check (only within recency window)
+            if structure.latest_choch and structure.latest_choch.event_type == BOSCHOCHType.BULLISH_CHOCH and _is_recent(structure.latest_choch.index):
                 opposing.append("Opposing Bullish CHOCH detected")
 
         final_score = min(self.MAX_POINTS, score)
-        pillar_dir = direction if final_score >= 12.0 else SignalDirection.WAIT
+        pillar_dir = direction if final_score >= 14.0 else SignalDirection.WAIT
         confidence = min(1.0, final_score / self.MAX_POINTS)
 
         return PillarEvaluation(
@@ -140,39 +155,54 @@ class StructureConsensusEvaluator:
 
 
 # =====================================================================
-# Pillar 2: Smart Money Concepts & Liquidity (25% Weight / Max 25.0 pts)
+# Pillar 2: Smart Money Concepts & Liquidity (40% Weight / Max 40.0 pts)
 # =====================================================================
 class LiquiditySMCConsensusEvaluator:
-    """Evaluates Liquidity Sweeps, Fresh S/R & Order Blocks, and Liquidity Pools."""
+    """Evaluates Liquidity Sweeps, Fresh S/R & Order Blocks, and Fair Value Gaps (Max 40.0 pts)."""
 
-    MAX_POINTS: float = 25.0
-    WEIGHT: float = 25.0
+    MAX_POINTS: float = 40.0
+    WEIGHT: float = 40.0
+
+    def __init__(self, max_bars_ago: int = 15):
+        self.max_bars_ago = max_bars_ago
 
     def evaluate(
         self,
         direction: SignalDirection,
         structure: AdvancedStructureAnalysisResponse,
         current_price: float,
+        active_fvgs: Optional[List[FairValueGap]] = None,
+        max_bars_ago: Optional[int] = None,
     ) -> PillarEvaluation:
-        """Score institutional liquidity sweeps and order block zones."""
+        """Score institutional liquidity sweeps, order block/SR zones, and active FVG retracements."""
         score = 0.0
         catalysts: List[str] = []
         opposing: List[str] = []
+        bars_limit = max_bars_ago if max_bars_ago is not None else self.max_bars_ago
+        total_candles = structure.base_structure.total_candles if structure.base_structure else 0
 
-        # 1. Institutional Liquidity Sweeps (Max 15.0 pts)
+        def _is_recent(event_idx: Optional[int]) -> bool:
+            if event_idx is None:
+                return False
+            if total_candles <= 0:
+                return True
+            bars_ago = (total_candles - 1) - event_idx
+            return 0 <= bars_ago <= bars_limit
+
+        # 1. Institutional Liquidity Sweeps (Max 20.0 pts with Recency Window)
         if direction == SignalDirection.BUY:
-            if structure.latest_sweep and structure.latest_sweep.sweep_type == LiquidityEventType.SELL_SIDE_SWEEP:
+            if structure.latest_sweep and structure.latest_sweep.sweep_type == LiquidityEventType.SELL_SIDE_SWEEP and _is_recent(structure.latest_sweep.index):
                 pips = structure.latest_sweep.pips_swept
-                score += 15.0
+                score += 20.0
                 catalysts.append(f"Sell-Side Liquidity Sweep ({pips:.1f} pips stop hunt below support)")
-            elif structure.latest_sweep and structure.latest_sweep.sweep_type == LiquidityEventType.BUY_SIDE_SWEEP:
+            elif structure.latest_sweep and structure.latest_sweep.sweep_type == LiquidityEventType.BUY_SIDE_SWEEP and _is_recent(structure.latest_sweep.index):
                 opposing.append("Recent Buy-Side Liquidity Sweep (Potential Bearish Rejection)")
         elif direction == SignalDirection.SELL:
-            if structure.latest_sweep and structure.latest_sweep.sweep_type == LiquidityEventType.BUY_SIDE_SWEEP:
+            if structure.latest_sweep and structure.latest_sweep.sweep_type == LiquidityEventType.BUY_SIDE_SWEEP and _is_recent(structure.latest_sweep.index):
                 pips = structure.latest_sweep.pips_swept
-                score += 15.0
+                score += 20.0
                 catalysts.append(f"Buy-Side Liquidity Sweep ({pips:.1f} pips stop hunt above resistance)")
-            elif structure.latest_sweep and structure.latest_sweep.sweep_type == LiquidityEventType.SELL_SIDE_SWEEP:
+            elif structure.latest_sweep and structure.latest_sweep.sweep_type == LiquidityEventType.SELL_SIDE_SWEEP and _is_recent(structure.latest_sweep.index):
                 opposing.append("Recent Sell-Side Liquidity Sweep (Potential Bullish Rejection)")
 
         # 2. Key Institutional S/R & Demand/Supply Zones (Max 10.0 pts)
@@ -191,9 +221,8 @@ class LiquiditySMCConsensusEvaluator:
             elif any(p.pool_type == LiquidityEventType.EQUAL_LOWS for p in structure.liquidity_pools):
                 score += 5.0
                 catalysts.append("Equal Lows Liquidity Resting Below Price")
-            elif score == 0.0 and structure.trend == TrendDirection.BULLISH:
-                # Baseline structural liquidity in confirmed institutional trend
-                base_liq = round(8.0 * max(0.5, structure.trend_strength), 1)
+            elif not in_demand_zone and structure.trend == TrendDirection.BULLISH:
+                base_liq = round(5.0 * max(0.5, structure.trend_strength), 1)
                 score += base_liq
                 catalysts.append(f"Institutional Trend Liquidity Alignment ({base_liq} pts)")
         elif direction == SignalDirection.SELL:
@@ -211,14 +240,38 @@ class LiquiditySMCConsensusEvaluator:
             elif any(p.pool_type == LiquidityEventType.EQUAL_HIGHS for p in structure.liquidity_pools):
                 score += 5.0
                 catalysts.append("Equal Highs Liquidity Resting Above Price")
-            elif score == 0.0 and structure.trend == TrendDirection.BEARISH:
-                # Baseline structural liquidity in confirmed institutional trend
-                base_liq = round(8.0 * max(0.5, structure.trend_strength), 1)
+            elif not in_supply_zone and structure.trend == TrendDirection.BEARISH:
+                base_liq = round(5.0 * max(0.5, structure.trend_strength), 1)
                 score += base_liq
                 catalysts.append(f"Institutional Trend Liquidity Alignment ({base_liq} pts)")
 
+        # 3. Fair Value Gaps (FVG) Active Retracement / POI Retest (Max 10.0 pts)
+        if active_fvgs:
+            if direction == SignalDirection.BUY:
+                bull_fvgs = [f for f in active_fvgs if f.fvg_type == FVGType.BULLISH_FVG and not f.is_mitigated]
+                for fvg in bull_fvgs:
+                    low_bound = min(fvg.top_price, fvg.bottom_price)
+                    high_bound = max(fvg.top_price, fvg.bottom_price)
+                    if low_bound <= current_price <= high_bound:
+                        score += 10.0
+                        catalysts.append(
+                            f"Price Retraced into Active Bullish FVG ({fvg.gap_pips:.1f} pips at {fvg.bottom_price:.5f}-{fvg.top_price:.5f})"
+                        )
+                        break
+            elif direction == SignalDirection.SELL:
+                bear_fvgs = [f for f in active_fvgs if f.fvg_type == FVGType.BEARISH_FVG and not f.is_mitigated]
+                for fvg in bear_fvgs:
+                    low_bound = min(fvg.top_price, fvg.bottom_price)
+                    high_bound = max(fvg.top_price, fvg.bottom_price)
+                    if low_bound <= current_price <= high_bound:
+                        score += 10.0
+                        catalysts.append(
+                            f"Price Retraced into Active Bearish FVG ({fvg.gap_pips:.1f} pips at {fvg.top_price:.5f}-{fvg.bottom_price:.5f})"
+                        )
+                        break
+
         final_score = min(self.MAX_POINTS, score)
-        pillar_dir = direction if final_score >= 8.0 else SignalDirection.WAIT
+        pillar_dir = direction if final_score >= 15.0 else SignalDirection.WAIT
         confidence = min(1.0, final_score / self.MAX_POINTS)
 
         return PillarEvaluation(
@@ -349,13 +402,13 @@ class MomentumIndicatorConsensusEvaluator:
 
 
 # =====================================================================
-# Pillar 4: Price Action & Execution Geometry (20% Weight / Max 20.0 pts)
+# Pillar 4: Price Action & Execution Geometry (25% Weight / Max 25.0 pts)
 # =====================================================================
 class PriceActionConsensusEvaluator:
-    """Evaluates Candlestick Triggers, Rejection Wicks, and Engulfing Impulse Candlesticks."""
+    """Evaluates Candlestick Triggers, Rejection Wicks, and Engulfing Impulse Candlesticks (Max 25.0 pts)."""
 
-    MAX_POINTS: float = 20.0
-    WEIGHT: float = 20.0
+    MAX_POINTS: float = 25.0
+    WEIGHT: float = 25.0
 
     def evaluate(
         self,
@@ -377,10 +430,10 @@ class PriceActionConsensusEvaluator:
             ]
             if bull_patterns:
                 best_pat = bull_patterns[-1]
-                score += 20.0 * best_pat.confidence
+                score += 25.0 * best_pat.confidence
                 catalysts.append(f"Candlestick Trigger: {best_pat.pattern_type.value}")
             elif any(p.pattern_type == PatternType.INSIDE_BAR for p in immediate_patterns):
-                score += 10.0
+                score += 12.0
                 catalysts.append("Inside Bar Volatility Compression")
 
             # Check opposing patterns in immediate context (last 2 bars)
@@ -397,10 +450,10 @@ class PriceActionConsensusEvaluator:
             ]
             if bear_patterns:
                 best_pat = bear_patterns[-1]
-                score += 20.0 * best_pat.confidence
+                score += 25.0 * best_pat.confidence
                 catalysts.append(f"Candlestick Trigger: {best_pat.pattern_type.value}")
             elif any(p.pattern_type == PatternType.INSIDE_BAR for p in immediate_patterns):
-                score += 10.0
+                score += 12.0
                 catalysts.append("Inside Bar Volatility Compression")
 
             # Check opposing patterns in immediate context (last 2 bars)
@@ -446,10 +499,10 @@ class ConsensusFilter:
         Returns:
             Tuple of (final_score, ScoreBreakdown, consolidated_catalysts, has_fatal_conflict)
         """
-        raw_struct = evaluations.get("structure", PillarEvaluation("Structure", SignalDirection.WAIT, 0, 30, 30, 0)).score
-        raw_liq = evaluations.get("liquidity", PillarEvaluation("Liquidity", SignalDirection.WAIT, 0, 25, 25, 0)).score
-        raw_ind = evaluations.get("indicators", PillarEvaluation("Indicators", SignalDirection.WAIT, 0, 25, 25, 0)).score
-        raw_pa = evaluations.get("price_action", PillarEvaluation("Price Action", SignalDirection.WAIT, 0, 20, 20, 0)).score
+        raw_struct = evaluations.get("structure", PillarEvaluation("Structure", SignalDirection.WAIT, 0, 35, 35, 0)).score
+        raw_liq = evaluations.get("liquidity", PillarEvaluation("Liquidity", SignalDirection.WAIT, 0, 40, 40, 0)).score
+        raw_ind = evaluations.get("indicators", PillarEvaluation("Indicators", SignalDirection.WAIT, 0, 0, 0, 0)).score
+        raw_pa = evaluations.get("price_action", PillarEvaluation("Price Action", SignalDirection.WAIT, 0, 25, 25, 0)).score
 
         raw_total = round(raw_struct + raw_liq + raw_ind + raw_pa, 1)
 
@@ -464,40 +517,39 @@ class ConsensusFilter:
         # ------------------------------------------------------------------
         # Price Action Floor Gate
         # Any signal that reaches the overall score threshold purely through
-        # Structure + Liquidity + Indicators (i.e. zero candlestick confirmation)
-        # is inherently unconfirmed and prone to false execution.  Require at
-        # least 10.0 / 20.0 PA points before a direction can be qualified.
+        # Structure + Liquidity (i.e. zero candlestick confirmation) is
+        # inherently unconfirmed and prone to false execution. Require at
+        # least 10.0 / 25.0 PA points before a direction can be qualified.
         # ------------------------------------------------------------------
         pa_floor_blocked = False
         confluence_blocked = False
         if raw_pa < 10.0 and candidate_direction in (SignalDirection.BUY, SignalDirection.SELL):
             pa_floor_blocked = True
             all_catalysts.append(
-                f"\u26d4 Price Action Floor Not Met: {raw_pa:.1f}/20.0 "
+                f"⛔ Price Action Floor Not Met: {raw_pa:.1f}/25.0 "
                 "(minimum 10.0 required). No candlestick confirmation present "
                 "(Pin Bar, Engulfing, or Inside Bar). Signal disqualified to prevent "
                 "unconfirmed entry against live momentum."
             )
             logger.warning(
-                f"PA Floor veto [{candidate_direction.value}]: price_action_score={raw_pa:.1f}/20 "
+                f"PA Floor veto [{candidate_direction.value}]: price_action_score={raw_pa:.1f}/25 "
                 "is below the 10.0 floor — signal disqualified."
             )
 
         # ------------------------------------------------------------------
-        # Minimum Confluence Rule (The "No Pure Indicator" Filter)
-        # A signal cannot be driven purely by lagging indicators. 
-        # It must have at least some structural or liquidity backing.
+        # Minimum Confluence Rule (The "Institutional Confluence" Filter)
+        # A signal must have solid structural or liquidity backing.
         # ------------------------------------------------------------------
         structural_confluence = raw_struct + raw_liq
-        if structural_confluence < 15.0 and candidate_direction in (SignalDirection.BUY, SignalDirection.SELL):
+        if structural_confluence < 20.0 and candidate_direction in (SignalDirection.BUY, SignalDirection.SELL):
             confluence_blocked = True
             all_catalysts.append(
-                f"\u26d4 Minimum Confluence Not Met: Structure + Liquidity = {structural_confluence:.1f} "
-                "(minimum 15.0 required). Pure indicator setups are prone to exhaustion and false breakouts."
+                f"⛔ Minimum Confluence Not Met: Structure + Liquidity = {structural_confluence:.1f} "
+                "(minimum 20.0 required). Institutional setups require structural or liquidity backing."
             )
             logger.warning(
                 f"Confluence veto [{candidate_direction.value}]: Structure+Liquidity={structural_confluence:.1f} "
-                "is below the 15.0 floor \u2014 pure indicator signal disqualified."
+                "is below the 20.0 floor — signal disqualified."
             )
 
         # Calculate directional conflict penalty

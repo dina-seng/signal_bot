@@ -26,10 +26,10 @@ class SignalStatus(str, Enum):
 
 class ScoreBreakdown(BaseModel):
     """Detailed score breakdown across all technical and institutional pillars."""
-    structure_score: float = Field(..., ge=0.0, le=30.0, description="Score from Trend & BOS/CHOCH (Max 30)")
-    liquidity_score: float = Field(..., ge=0.0, le=25.0, description="Score from Sweeps & S/R Zones (Max 25)")
-    indicators_score: float = Field(..., ge=0.0, le=25.0, description="Score from EMAs, RSI, ATR & FVG (Max 25)")
-    price_action_score: float = Field(..., ge=0.0, le=20.0, description="Score from Pin Bars & Engulfing (Max 20)")
+    structure_score: float = Field(..., ge=0.0, le=35.0, description="Score from Trend & BOS/CHOCH (Max 35)")
+    liquidity_score: float = Field(..., ge=0.0, le=40.0, description="Score from Sweeps, S/R Zones & FVGs (Max 40)")
+    indicators_score: float = Field(default=0.0, ge=0.0, le=25.0, description="Legacy score from EMAs, RSI, ATR (Max 25)")
+    price_action_score: float = Field(..., ge=0.0, le=25.0, description="Score from Pin Bars & Engulfing (Max 25)")
     total_score: float = Field(..., ge=0.0, le=100.0, description="Composite score (0 to 100)")
     is_qualified: bool = Field(..., description="True if total_score >= MIN_SETUP_SCORE (e.g. 75)")
 

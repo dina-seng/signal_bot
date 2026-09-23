@@ -96,18 +96,18 @@ def test_scoring_engine_high_confluence_buy():
         bos_events=[],
         choch_events=[],
         latest_bos=BreakoutEvent(
-            index=10,
+            index=45,
             timestamp=now,
             event_type=BOSCHOCHType.BULLISH_BOS,
             breakout_price=1.1050,
             broken_swing_price=1.1020,
-            broken_swing_index=5,
+            broken_swing_index=40,
             broken_swing_timestamp=now,
             displacement_strength=0.8,
         ),
         liquidity_sweeps=[],
         latest_sweep=LiquiditySweep(
-            index=8,
+            index=44,
             timestamp=now,
             sweep_type=LiquidityEventType.SELL_SIDE_SWEEP,
             swept_level=1.0980,
@@ -266,32 +266,27 @@ def test_signal_generator_fingerprint_and_persistence(test_db_session):
 
 
 def test_confluence_engine_modular_weights_and_pillars():
-    """Verify the 4 modular pillars adhere strictly to 30%, 25%, 25%, 20% weights."""
+    """Verify the 3 core SMC pillars adhere strictly to 35%, 40%, 25% weights totaling 100%."""
     from app.services.signals.evaluators import (
         StructureConsensusEvaluator,
         LiquiditySMCConsensusEvaluator,
-        MomentumIndicatorConsensusEvaluator,
         PriceActionConsensusEvaluator,
     )
 
     struct_eval = StructureConsensusEvaluator()
     liq_eval = LiquiditySMCConsensusEvaluator()
-    ind_eval = MomentumIndicatorConsensusEvaluator()
     pa_eval = PriceActionConsensusEvaluator()
 
-    assert struct_eval.MAX_POINTS == 30.0
-    assert struct_eval.WEIGHT == 30.0
+    assert struct_eval.MAX_POINTS == 35.0
+    assert struct_eval.WEIGHT == 35.0
 
-    assert liq_eval.MAX_POINTS == 25.0
-    assert liq_eval.WEIGHT == 25.0
+    assert liq_eval.MAX_POINTS == 40.0
+    assert liq_eval.WEIGHT == 40.0
 
-    assert ind_eval.MAX_POINTS == 25.0
-    assert ind_eval.WEIGHT == 25.0
+    assert pa_eval.MAX_POINTS == 25.0
+    assert pa_eval.WEIGHT == 25.0
 
-    assert pa_eval.MAX_POINTS == 20.0
-    assert pa_eval.WEIGHT == 20.0
-
-    total_weight = struct_eval.WEIGHT + liq_eval.WEIGHT + ind_eval.WEIGHT + pa_eval.WEIGHT
+    total_weight = struct_eval.WEIGHT + liq_eval.WEIGHT + pa_eval.WEIGHT
     assert total_weight == 100.0
 
 

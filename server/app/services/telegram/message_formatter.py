@@ -215,14 +215,16 @@ class TelegramMessageFormatter:
 
         if sig.score_breakdown:
             bd = sig.score_breakdown
-            lines.extend([
+            breakdown_lines = [
                 f"━━━━━━━━━━━━━━━━━━━━",
                 f"🏛 *Pillar Breakdown:*",
-                f"  • Structure & MTF: `{bd.structure_score:.0f}/30`",
-                f"  • Liquidity & S/R: `{bd.liquidity_score:.0f}/25`",
-                f"  • Indicators: `{bd.indicators_score:.0f}/25`",
-                f"  • Price Action: `{bd.price_action_score:.0f}/20`",
-            ])
+                f"  • Structure & MTF: `{bd.structure_score:.0f}/35`",
+                f"  • Liquidity & POIs: `{bd.liquidity_score:.0f}/40`",
+                f"  • Price Action: `{bd.price_action_score:.0f}/25`",
+            ]
+            if bd.indicators_score > 0:
+                breakdown_lines.append(f"  • Indicators (Aux): `{bd.indicators_score:.0f}/25`")
+            lines.extend(breakdown_lines)
 
         if sig.reasons:
             lines.append(f"━━━━━━━━━━━━━━━━━━━━\n💡 *Key Confluence Catalysts:*")
