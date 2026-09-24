@@ -1,9 +1,9 @@
 """Twelve Data Market Data Provider for reliable Forex and Commodity candles."""
 
 import asyncio
-import httpx
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
+import httpx
 
 from app.core.logging import logger
 from app.schemas.candle import CandleCreate
@@ -26,10 +26,11 @@ class TwelveDataProvider(BaseMarketDataProvider):
         "XAUUSD", "USDJPY",
     ]
 
-    def __init__(self, api_key: str, timeout: float = 10.0):
+    def __init__(self, api_key: str, timeout: float = 12.0):
         self.api_key = api_key
         self.base_url = "https://api.twelvedata.com"
         self.timeout = timeout
+        self._last_call_time: float = 0.0
 
     def _map_timeframe(self, timeframe: str) -> str:
         """Map standard timeframes to Twelve Data interval strings."""
@@ -40,6 +41,15 @@ class TwelveDataProvider(BaseMarketDataProvider):
         clean = (symbol or "").replace(" ", "").upper()
         return clean in self.SUPPORTED_SYMBOLS
 
+    async def _rate_limit(self, min_interval: float = 7.5) -> None:
+        """Enforce spacing only when necessary, preventing redundant blocking sleeps."""
+        loop = asyncio.get_event_loop()
+        now = loop.time()
+        elapsed = now - self._last_call_time
+        if elapsed < min_interval:
+            await asyncio.sleep(min_interval - elapsed)
+        self._last_call_time = loop.time()
+
     async def fetch_candles(
         self,
         symbol: str,
@@ -47,18 +57,22 @@ class TwelveDataProvider(BaseMarketDataProvider):
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 100,
+        drop_unclosed: bool = True,
     ) -> List[CandleCreate]:
-        """Fetch historical candles from Twelve Data."""
+        """Fetch historical candles from Twelve Data in verified UTC."""
         interval = self._map_timeframe(timeframe)
         url = f"{self.base_url}/time_series"
-        
-        # Twelve Data accepts standard symbols like "EUR/USD" and "XAU/USD" natively!
+
+        # Request extra bar if dropping the active in-progress candle
+        fetch_limit = limit + 1 if drop_unclosed else limit
+
         params = {
             "symbol": symbol,
             "interval": interval,
-            "outputsize": limit,
+            "outputsize": fetch_limit,
+            "timezone": "UTC",
             "apikey": self.api_key,
-            "format": "JSON"
+            "format": "JSON",
         }
 
         if start_time:
@@ -67,43 +81,57 @@ class TwelveDataProvider(BaseMarketDataProvider):
             params["end_date"] = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
         try:
-            # Small sleep to respect the free tier rate limit (8 requests/minute)
-            await asyncio.sleep(8.0)
+            await self._rate_limit(min_interval=7.5)
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, params=params)
                 data = response.json()
 
-                # Check for API errors
-                if "code" in data and data["code"] != 200:
+                if data.get("status") == "error" or ("code" in data and data["code"] != 200):
                     logger.error(f"Twelve Data API Error [{symbol} {timeframe}]: {data.get('message')}")
                     return []
 
-                candles: List[CandleCreate] = []
-                # Twelve Data returns newest first; our ingestion expects oldest first
-                values = data.get("values", [])
-                values.reverse()
+                raw_values = data.get("values", [])
+                if not raw_values:
+                    return []
 
-                for v in values:
+                # Twelve Data returns newest first. 
+                # If drop_unclosed is True, drop the active in-progress candle at index 0.
+                if drop_unclosed and len(raw_values) > 1:
+                    raw_values = raw_values[1:]
+
+                # Reverse so earliest is first (chronological order)
+                raw_values.reverse()
+
+                # Slice to requested limit
+                if len(raw_values) > limit:
+                    raw_values = raw_values[-limit:]
+
+                candles: List[CandleCreate] = []
+                for v in raw_values:
                     try:
-                        # Parse timestamp (Twelve Data returns "YYYY-MM-DD HH:MM:SS" in UTC)
                         ts_str = v.get("datetime")
-                        ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                        
-                        candles.append(CandleCreate(
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            timestamp=ts,
-                            open=float(v["open"]),
-                            high=float(v["high"]),
-                            low=float(v["low"]),
-                            close=float(v["close"]),
-                            volume=float(v.get("volume", 0)),
-                        ))
-                    except Exception as e:
-                        logger.warning(f"Failed to parse candle for {symbol}: {e}")
-                
-                logger.info(f"Successfully fetched {len(candles)} candles for {symbol} [{timeframe}] from Twelve Data.")
+                        if len(ts_str) == 10:
+                            ts = datetime.strptime(ts_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                        else:
+                            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+                        candles.append(
+                            CandleCreate(
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                timestamp=ts,
+                                open=float(v["open"]),
+                                high=float(v["high"]),
+                                low=float(v["low"]),
+                                close=float(v["close"]),
+                                volume=float(v.get("volume", 0)),
+                            )
+                        )
+                    except Exception as parse_err:
+                        logger.warning(f"Failed to parse candle for {symbol}: {parse_err}")
+
+                logger.info(f"Successfully fetched {len(candles)} closed candles for {symbol} [{timeframe}] in UTC.")
                 return candles
 
         except Exception as e:
@@ -113,5 +141,5 @@ class TwelveDataProvider(BaseMarketDataProvider):
     async def fetch_latest(
         self, symbol: str, timeframe: str, count: int = 50
     ) -> List[CandleCreate]:
-        """Fetch the most recent candles for a given symbol and timeframe."""
-        return await self.fetch_candles(symbol, timeframe, limit=count)
+        """Fetch the most recent closed candles for a given symbol and timeframe."""
+        return await self.fetch_candles(symbol, timeframe, limit=count, drop_unclosed=True)
