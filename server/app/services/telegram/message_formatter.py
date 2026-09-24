@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import html
 from typing import Any, List, Optional
 
+from app.core.time_utils import format_local_time
 from app.schemas.news import NewsEventResponse
 from app.schemas.paper_trading import PaperPortfolioPerformance, VirtualAccountResponse
 from app.schemas.signal import MarketScanResponse, SignalDirection, SignalResponse
@@ -128,7 +129,7 @@ class TelegramMessageFormatter:
 
             lines.extend([
                 f"━━━━━━━━━━━━━━━━━━━━",
-                f"🕒 *Timestamp:* `{sig.timestamp.strftime('%Y-%m-%d %H:%M UTC')}`",
+                f"🕒 *Timestamp:* `{format_local_time(sig.timestamp)}`",
                 f"⚡ _Institutional obstacle detection is actively protecting your capital._",
             ])
             return "\n".join(lines)
@@ -237,7 +238,7 @@ class TelegramMessageFormatter:
         lines.extend([
             f"━━━━━━━━━━━━━━━━━━━━",
             f"🛡 *News Blackout Status:* `✅ CLEAR - Safe to trade`",
-            f"🕒 *Timestamp:* `{sig.timestamp.strftime('%Y-%m-%d %H:%M UTC')}`",
+            f"🕒 *Timestamp:* `{format_local_time(sig.timestamp)}`",
             f"⚠️ *Notice:* _Rule-based analysis only. Always manage your capital responsibly._",
         ])
 
@@ -305,7 +306,7 @@ class TelegramMessageFormatter:
 
         lines.extend([
             f"━━━━━━━━━━━━━━━━━━━━",
-            f"🕒 *Timestamp:* `{signals[0].timestamp.strftime('%Y-%m-%d %H:%M UTC')}`",
+            f"🕒 *Timestamp:* `{format_local_time(signals[0].timestamp)}`",
             f"⚠️ *Notice:* _Rule-based multi-strategy analysis. Manage risk responsibly._",
         ])
 
@@ -325,7 +326,7 @@ class TelegramMessageFormatter:
             f"💵 *Locked-in Profit:* `+${realized_pnl:,.2f}`\n"
             f"🔒 *Action Taken:* `Closed 50% lots. Stop Loss moved to Break-Even ({formatted_sl})`\n"
             f"🏃 *Runner:* `50% position remaining active for TP2 target.`\n"
-            f"🕒 `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"
+            f"🕒 `{format_local_time(datetime.now(timezone.utc))}`"
         )
 
     @classmethod
@@ -341,7 +342,7 @@ class TelegramMessageFormatter:
             f"💵 *Total Realized PnL:* `+${total_pnl:,.2f}`\n"
             f"📈 *Payoff Return:* `+{return_r:.2f} R-Multiple`\n"
             f"🎉 *Status:* `Trade fully completed with maximum target profit!`\n"
-            f"🕒 `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"
+            f"🕒 `{format_local_time(datetime.now(timezone.utc))}`"
         )
 
     @classmethod
@@ -358,7 +359,7 @@ class TelegramMessageFormatter:
             f"📍 *Exit Price:* `{formatted_price}`\n"
             f"💵 *Realized PnL:* `{pnl_str}`\n"
             f"🛡 *Capital Protected:* `Position closed per strict risk management rules.`\n"
-            f"🕒 `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"
+            f"🕒 `{format_local_time(datetime.now(timezone.utc))}`"
         )
 
     @classmethod
@@ -367,7 +368,7 @@ class TelegramMessageFormatter:
         lines = [
             f"📡 *UNIFIED SCANNER DIGEST* 📡",
             f"━━━━━━━━━━━━━━━━━━━━",
-            f"🕒 *Scan Time:* `{scan_result.timestamp.strftime('%Y-%m-%d %H:%M UTC')}`",
+            f"🕒 *Scan Time:* `{format_local_time(scan_result.timestamp)}`",
             f"🔍 *Markets Scanned:* `{scan_result.scanned_count}` | 🎯 *Actionable:* `{scan_result.actionable_count}`",
             f"━━━━━━━━━━━━━━━━━━━━",
         ]
@@ -469,7 +470,7 @@ class TelegramMessageFormatter:
             f"  • *Profit Factor:* `{perf.profit_factor:.2f}`\n"
             f"  • *Active Positions:* `{perf.open_trades}`\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🕒 `{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}`"
+            f"🕒 `{format_local_time(datetime.now(timezone.utc))}`"
         )
 
     @staticmethod

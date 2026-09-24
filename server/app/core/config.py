@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_CHAT_ID: Optional[str] = None
 
+    # User / Presentation Timezone
+    # IANA timezone string for formatting Telegram notifications and display (e.g., "Asia/Bangkok", "America/New_York", "Europe/London", "UTC")
+    USER_TIMEZONE: str = "UTC"
+
     # Automated Background Scanner & Signal Dispatching (Milestone 9)
     SCANNER_ENABLED: bool = True
     SCANNER_INTERVAL_MINUTES: int = 15
