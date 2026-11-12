@@ -1,6 +1,6 @@
 export type TradeDirection = 'BUY' | 'SELL';
 
-export type PairSymbol = 'XAU/USD' | 'USD/JPY';
+export type PairSymbol = 'XAU/USD' | 'US100';
 
 export interface PerformanceStats {
   winRate: number; // e.g. 68.4
@@ -42,6 +42,8 @@ export interface TradeSignal {
   notifyEnabled: boolean;
   status: 'ACTIVE' | 'PENDING' | 'TRIGGERED' | 'SCANNING' | 'NO_SETUP';
   hasActiveSignal: boolean;
+  aiConfidence?: number; // 0 - 100%
+  aiReasoning?: string;
 }
 
 export interface Position {

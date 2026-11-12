@@ -13,14 +13,11 @@ import {
   Scale,
   Hash,
   TrendingDown,
-  ArrowUpRight,
-  ArrowDownRight,
-  Calendar,
   Sparkles,
-  Info,
 } from 'lucide-react';
 import { PerformanceStats, EquityDataPoint, AccountSummary, ClosedTrade } from '../types';
 import { equityHistoryData } from '../data/mockData';
+import { KPICard } from './KPICard';
 
 interface PerformanceDashboardProps {
   stats: PerformanceStats;
@@ -47,7 +44,6 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
     const currentEq = account.equity;
 
     if (closedTrades.length === 0) {
-      // If no closed trades yet, show baseline trajectory to current balance/equity
       const startBal = 10000;
       return [
         { timestamp: 'Deposit', balance: startBal, equity: startBal, drawdown: 0 },
@@ -62,7 +58,6 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
       return ta - tb;
     });
 
-    // Determine cutoff based on activeTimeframe
     const now = Date.now();
     let cutoffMs = 0;
     if (activeTimeframe === '1W') cutoffMs = now - 7 * 24 * 3600 * 1000;
@@ -73,7 +68,6 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
       ? sortedTrades.filter((t) => !t.closedAt || new Date(t.closedAt).getTime() >= cutoffMs)
       : sortedTrades;
 
-    // Calculate starting balance for the timeframe
     let runningBalance = 10000.0;
     const totalPnlAll = sortedTrades.reduce((acc, t) => acc + (t.realizedPnl || 0), 0);
     const initialDeposit = Number((currentBal - totalPnlAll).toFixed(2));
@@ -81,7 +75,6 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
 
     const points: EquityDataPoint[] = [];
 
-    // Initial start point
     points.push({
       timestamp: activeTimeframe === '1W' ? 'Start of Wk' : activeTimeframe === '1M' ? 'Start of Mo' : 'Deposit',
       balance: runningBalance,
@@ -112,7 +105,6 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
       });
     }
 
-    // Current point with floating equity
     const currentDd = Math.max(0, Number((((peakEquity - currentEq) / (peakEquity || 1)) * 100).toFixed(1)));
     points.push({
       timestamp: 'Current',
@@ -132,145 +124,96 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* 4 Stats Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* 4 Stats Cards Grid - Glassmorphism & Modern Typography */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         {/* Win Rate */}
-        <div className="p-3.5 rounded-lg bg-[#111319] border border-[#1d2230] hover:border-[#282f42] transition-colors font-mono">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-              Win Rate
-            </span>
-            <div className="p-1.5 rounded bg-[#00e676]/10 text-[#00e676]">
-              <Trophy className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="mt-1.5 flex items-baseline gap-2">
-            <span className="text-xl font-extrabold text-white">
-              {computedWinRate !== null ? `${computedWinRate}%` : '—'}
-            </span>
-            {computedWinRate !== null && stats.winRateDelta !== 0 && (
-              <span className="flex items-center text-[11px] text-[#00e676]">
-                <ArrowUpRight className="w-3 h-3" />
-                +{stats.winRateDelta}%
-              </span>
-            )}
-          </div>
-          <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 border-t border-[#1d2230]/70 pt-1.5">
-            <span>Sample size:</span>
-            <span className="text-slate-300 font-medium">n = {sampleSize} trades</span>
-          </div>
-        </div>
+        <KPICard
+          label="Win Rate"
+          value={computedWinRate !== null ? `${computedWinRate}%` : '—'}
+          delta={computedWinRate !== null && stats.winRateDelta !== 0 ? `+${stats.winRateDelta}%` : undefined}
+          deltaType="positive"
+          icon={Trophy}
+          iconColor="text-emerald-400"
+          iconBg="bg-emerald-500/10 border-emerald-500/20"
+          subLabel="Sample size"
+          subValue={`n = ${sampleSize} trades`}
+          tooltip="Percentage of closed positions resulting in net positive profit"
+        />
 
         {/* Profit Factor */}
-        <div className="p-3.5 rounded-lg bg-[#111319] border border-[#1d2230] hover:border-[#282f42] transition-colors font-mono">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-              Profit Factor
-            </span>
-            <div className="p-1.5 rounded bg-cyan-500/10 text-cyan-400">
-              <Scale className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="mt-1.5 flex items-baseline gap-2">
-            <span className="text-xl font-extrabold text-white">
-              {sampleSize > 0 && stats.profitFactor > 0 ? stats.profitFactor.toFixed(2) : '—'}
-            </span>
-            {sampleSize > 0 && stats.profitFactorDelta !== 0 && (
-              <span className="flex items-center text-[11px] text-[#00e676]">
-                <ArrowUpRight className="w-3 h-3" />
-                +{stats.profitFactorDelta}
-              </span>
-            )}
-          </div>
-          <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 border-t border-[#1d2230]/70 pt-1.5">
-            <span>Metric:</span>
-            <span className="text-slate-300 font-medium">Gross Win / Gross Loss</span>
-          </div>
-        </div>
+        <KPICard
+          label="Profit Factor"
+          value={sampleSize > 0 && stats.profitFactor > 0 ? stats.profitFactor.toFixed(2) : '—'}
+          delta={sampleSize > 0 && stats.profitFactorDelta !== 0 ? `+${stats.profitFactorDelta}` : undefined}
+          deltaType="positive"
+          icon={Scale}
+          iconColor="text-cyan-400"
+          iconBg="bg-cyan-500/10 border-cyan-500/20"
+          subLabel="Metric"
+          subValue="Gross Win / Gross Loss"
+          tooltip="Gross institutional profits divided by gross losses"
+        />
 
         {/* Total Trades & Expectancy */}
-        <div className="p-3.5 rounded-lg bg-[#111319] border border-[#1d2230] hover:border-[#282f42] transition-colors font-mono">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-              Total Trades
-            </span>
-            <div className="p-1.5 rounded bg-purple-500/10 text-purple-400">
-              <Hash className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="mt-1.5 flex items-baseline gap-2">
-            <span className="text-xl font-extrabold text-white">
-              {sampleSize}
-            </span>
-            {sampleSize > 0 && stats.totalTradesDelta > 0 && (
-              <span className="flex items-center text-[11px] text-purple-400">
-                +{stats.totalTradesDelta} this cycle
-              </span>
-            )}
-          </div>
-          <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 border-t border-[#1d2230]/70 pt-1.5">
-            <span>Expectancy:</span>
-            <span className="text-slate-300 font-medium">
-              {sampleSize > 0 ? `+${stats.expectancyPips} pips` : '—'}
-            </span>
-          </div>
-        </div>
+        <KPICard
+          label="Total Trades"
+          value={sampleSize}
+          delta={sampleSize > 0 && stats.totalTradesDelta > 0 ? `+${stats.totalTradesDelta}` : undefined}
+          deltaLabel="this cycle"
+          deltaType="neutral"
+          icon={Hash}
+          iconColor="text-indigo-400"
+          iconBg="bg-indigo-500/10 border-indigo-500/20"
+          subLabel="Expectancy"
+          subValue={sampleSize > 0 ? `+${stats.expectancyPips} pips` : '—'}
+          tooltip="Total closed market executions and mathematical pip expectancy"
+        />
 
         {/* Max Drawdown & Sharpe */}
-        <div className="p-3.5 rounded-lg bg-[#111319] border border-[#1d2230] hover:border-[#282f42] transition-colors font-mono">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-              Max Drawdown
-            </span>
-            <div className="p-1.5 rounded bg-[#ff3366]/10 text-[#ff3366]">
-              <TrendingDown className="w-3.5 h-3.5" />
-            </div>
-          </div>
-          <div className="mt-1.5 flex items-baseline gap-2">
-            <span className="text-xl font-extrabold text-[#00e676]">
-              {stats.maxDrawdown}%
-            </span>
-            {stats.maxDrawdownDelta !== 0 && (
-              <span className="flex items-center text-[11px] text-[#00e676]">
-                <ArrowDownRight className="w-3 h-3" />
-                {stats.maxDrawdownDelta}%
-              </span>
-            )}
-          </div>
-          <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 border-t border-[#1d2230]/70 pt-1.5">
-            <span>Sharpe Ratio:</span>
-            <span className="text-slate-300 font-medium">
-              {sampleSize > 0 ? stats.sharpeRatio : '—'}
-            </span>
-          </div>
-        </div>
+        <KPICard
+          label="Max Drawdown"
+          value={`${stats.maxDrawdown}%`}
+          delta={stats.maxDrawdownDelta !== 0 ? `${stats.maxDrawdownDelta}%` : undefined}
+          deltaType={stats.maxDrawdown > 5 ? 'negative' : 'positive'}
+          icon={TrendingDown}
+          iconColor={stats.maxDrawdown > 5 ? 'text-rose-400' : 'text-emerald-400'}
+          iconBg={stats.maxDrawdown > 5 ? 'bg-rose-500/10 border-rose-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}
+          subLabel="Sharpe Ratio"
+          subValue={sampleSize > 0 ? stats.sharpeRatio : '—'}
+          tooltip="Peak-to-trough equity decline with risk-adjusted Sharpe ratio"
+        />
       </div>
 
-      {/* Equity Curve Area Chart */}
-      <div className="p-4 rounded-lg bg-[#111319] border border-[#1d2230]">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-[#1d2230]">
+      {/* Equity Curve Area Chart - Glassmorphic Linear-Inspired Container */}
+      <div className="relative overflow-hidden rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-5 shadow-2xl transition-all duration-300">
+        {/* Subtle top edge highlight */}
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-white/10">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-white tracking-wide">Portfolio Equity Trajectory</h2>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase bg-[#161922] text-slate-400 border border-[#1d2230]">
+              <h2 className="text-sm font-semibold text-white tracking-wide">
+                Portfolio Equity Trajectory
+              </h2>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-white/5 text-zinc-400 border border-white/10">
                 Mark-to-Market
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
-              Walk-forward equity curve with floating drawdown calculation
+            <p className="text-xs text-zinc-400 mt-1 font-sans">
+              Walk-forward institutional equity curve with continuous floating drawdown estimation
             </p>
           </div>
 
-          {/* Timeframe selector */}
-          <div className="flex items-center p-0.5 rounded bg-[#0a0b10] border border-[#1d2230]">
+          {/* Timeframe selector pill */}
+          <div className="flex items-center p-1 rounded-xl bg-zinc-950/60 border border-white/10">
             {(['1W', '1M', '3M', 'ALL'] as TimeframeKey[]).map((tf) => (
               <button
                 key={tf}
                 onClick={() => setActiveTimeframe(tf)}
-                className={`px-2.5 py-1 text-xs font-mono font-semibold rounded transition-colors cursor-pointer ${
+                className={`px-3 py-1 text-xs font-mono font-medium rounded-lg transition-all cursor-pointer ${
                   activeTimeframe === tf
-                    ? 'bg-[#161922] text-[#00e676] border border-[#1d2230]'
-                    : 'text-slate-500 hover:text-slate-300'
+                    ? 'bg-white/15 text-white shadow-sm border border-white/10'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5'
                 }`}
               >
                 {tf}
@@ -280,31 +223,31 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         </div>
 
         {/* Chart Canvas */}
-        <div className="h-64 w-full pt-3">
+        <div className="h-64 w-full pt-4">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#00e676" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#00e676" stopOpacity={0.0} />
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
                 </linearGradient>
                 <linearGradient id="balanceGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#00d2ff" stopOpacity={0.12} />
-                  <stop offset="95%" stopColor="#00d2ff" stopOpacity={0.0} />
+                  <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.12} />
+                  <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.0} />
                 </linearGradient>
               </defs>
 
-              <CartesianGrid strokeDasharray="3 3" stroke="#151824" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
 
               <XAxis
                 dataKey="timestamp"
-                stroke="#475569"
+                stroke="#71717a"
                 fontSize={10}
                 tickLine={false}
                 fontFamily="JetBrains Mono"
               />
               <YAxis
-                stroke="#475569"
+                stroke="#71717a"
                 fontSize={10}
                 tickLine={false}
                 axisLine={false}
@@ -318,24 +261,24 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
                   if (active && payload && payload.length) {
                     const data = payload[0].payload as EquityDataPoint;
                     return (
-                      <div className="p-2.5 bg-[#111319] border border-[#1d2230] rounded shadow-lg font-mono text-xs backdrop-blur-md">
-                        <p className="text-slate-400 font-semibold mb-1 border-b border-[#1d2230] pb-1">{label}</p>
-                        <div className="space-y-1 text-[11px]">
-                          <div className="flex items-center justify-between gap-4 text-[#00e676]">
+                      <div className="p-3 bg-zinc-950/90 border border-white/15 rounded-xl shadow-2xl font-mono text-xs backdrop-blur-md">
+                        <p className="text-zinc-400 font-medium mb-1.5 border-b border-white/10 pb-1">{label}</p>
+                        <div className="space-y-1.5 text-[11px]">
+                          <div className="flex items-center justify-between gap-4 text-emerald-400">
                             <span>Equity:</span>
-                            <span className="font-bold">
+                            <span className="font-semibold text-white">
                               ${data.equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between gap-4 text-cyan-400">
+                          <div className="flex items-center justify-between gap-4 text-sky-400">
                             <span>Balance:</span>
-                            <span className="font-bold">
+                            <span className="font-semibold text-white">
                               ${data.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between gap-4 text-slate-400 border-t border-[#1d2230] pt-1">
+                          <div className="flex items-center justify-between gap-4 text-zinc-400 border-t border-white/10 pt-1">
                             <span>Drawdown:</span>
-                            <span className="text-[#ff3366]">-{data.drawdown}%</span>
+                            <span className="text-rose-400 font-semibold">-{data.drawdown}%</span>
                           </div>
                         </div>
                       </div>
@@ -348,7 +291,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
               <Area
                 type="monotone"
                 dataKey="equity"
-                stroke="#00e676"
+                stroke="#10b981"
                 strokeWidth={2}
                 fillOpacity={1}
                 fill="url(#equityGradient)"
@@ -356,7 +299,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
               <Area
                 type="monotone"
                 dataKey="balance"
-                stroke="#00d2ff"
+                stroke="#38bdf8"
                 strokeWidth={1.5}
                 strokeDasharray="4 4"
                 fillOpacity={1}
@@ -367,19 +310,19 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         </div>
 
         {/* Legend */}
-        <div className="flex items-center justify-between pt-2.5 border-t border-[#1d2230] text-[11px] font-mono text-slate-400">
+        <div className="flex items-center justify-between pt-3 border-t border-white/10 text-xs font-mono text-zinc-400">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-0.5 bg-[#00e676] rounded-full inline-block" />
-              <span className="text-slate-300">Live Equity</span>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-0.5 bg-emerald-400 rounded-full inline-block" />
+              <span className="text-zinc-300">Live Equity</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-0.5 bg-cyan-400 border-dashed rounded-full inline-block" />
-              <span className="text-slate-300">Closed Balance</span>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-0.5 bg-sky-400 border-dashed rounded-full inline-block" />
+              <span className="text-zinc-300">Closed Balance</span>
             </div>
           </div>
-          <span className="text-[10px] text-slate-500">
-            Source: FastAPI Paper Database
+          <span className="text-[11px] text-zinc-500">
+            Source: FastAPI Paper Database &bull; XAU/USD &amp; US100
           </span>
         </div>
       </div>

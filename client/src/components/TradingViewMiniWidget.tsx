@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 
 export const TRADINGVIEW_SYMBOLS: Record<string, string> = {
   'XAU/USD': 'TVC:GOLD',
-  'USD/JPY': 'FX:USDJPY',
+  'US100': 'NASDAQ:NDX',
 };
 
 interface TradingViewMiniWidgetProps {

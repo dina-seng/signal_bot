@@ -62,7 +62,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [structureData, setStructureData] = useState<BackendStructureAnalysis | null>(null);
 
   const isGold = selectedSymbol === 'XAU/USD';
-  const priceDecimals = isGold ? 2 : selectedSymbol === 'USD/JPY' ? 3 : 5;
+  const priceDecimals = 2;
 
   // Fetch real candles, indicators, SMC liquidity zones, and structure from backend
   useEffect(() => {
@@ -158,7 +158,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         <div className="flex items-center gap-2.5 flex-wrap">
           {/* Symbol Select Buttons */}
           <div className="flex items-center p-0.5 rounded bg-[#0a0b10] border border-[#1d2230]">
-            {(['XAU/USD', 'USD/JPY'] as PairSymbol[]).map((sym) => (
+            {(['XAU/USD', 'US100'] as PairSymbol[]).map((sym) => (
               <button
                 key={sym}
                 onClick={() => onSymbolChange(sym)}

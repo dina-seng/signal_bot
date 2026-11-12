@@ -41,7 +41,7 @@ import {
 import { formatPrice, getTimeUntil } from './utils/formatters';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
-const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD', 'USD/JPY'];
+const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD', 'US100'];
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
@@ -665,7 +665,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0b10] text-slate-200 flex flex-col font-sans">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-white">
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
@@ -718,10 +718,10 @@ export const App: React.FC = () => {
         )}
 
         {/* Workspace Context Bar */}
-        <div className="px-4 lg:px-5 py-2 flex items-center justify-between border-b border-[#1d2230] text-xs font-mono bg-[#0e1015]/70">
+        <div className="px-4 lg:px-6 py-2 flex items-center justify-between border-b border-white/10 text-xs font-mono bg-zinc-950/60 backdrop-blur-md">
           <div className="flex items-center gap-2">
-            <span className="text-slate-500 uppercase text-[10px] tracking-wider">Workspace:</span>
-            <span className="font-bold text-slate-200 uppercase text-xs">
+            <span className="text-zinc-500 uppercase text-[10px] tracking-wider">Workspace:</span>
+            <span className="font-semibold text-zinc-200 uppercase text-xs">
               {currentTab === 'dashboard' && 'Unified Trading Desk'}
               {currentTab === 'signals' && 'Multi-Timeframe Confluence Matrix'}
               {currentTab === 'positions' && 'Position & Order Management'}
@@ -731,14 +731,14 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3 text-[11px]">
-            <span className="hidden sm:inline text-slate-500">
-              Pairs: <strong className="text-slate-300">XAU/USD • USD/JPY</strong>
+            <span className="hidden sm:inline text-zinc-400">
+              Pairs: <strong className="text-zinc-200">XAU/USD • US100</strong>
             </span>
-            <span className="text-slate-700 hidden sm:inline">|</span>
+            <span className="text-zinc-700 hidden sm:inline">|</span>
             <span
-              className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+              className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${
                 isApiConnected
-                  ? 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
                   : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
               }`}
             >
@@ -759,7 +759,7 @@ export const App: React.FC = () => {
                 closedTrades={closedTrades}
               />
 
-              {/* Signal Matrix Grid (2 Cards: XAU/USD, USD/JPY) */}
+              {/* Signal Matrix Grid (2 Cards: XAU/USD, US100) */}
               <SignalMatrix
                 signals={signals}
                 livePrices={livePrices}

@@ -5,6 +5,7 @@
 /**
  * Format price according to symbol specification:
  * - Gold (XAU / GOLD): 2 decimals
+ * - US100 / Nasdaq: 1 or 2 decimals
  * - JPY pairs: 3 decimals
  * - Standard Forex: 5 decimals
  */
@@ -16,6 +17,9 @@ export function formatPrice(symbol: string = '', price: number | null | undefine
   if (sym.includes('XAU') || sym.includes('GOLD')) {
     return price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
+  if (sym.includes('US100') || sym.includes('NAS') || sym.includes('NDX')) {
+    return price.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+  }
   if (sym.includes('JPY')) {
     return price.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
   }
@@ -23,7 +27,7 @@ export function formatPrice(symbol: string = '', price: number | null | undefine
 }
 
 /**
- * Format PnL with +/- sign and color indicator
+ * Format PnL with +/- sign and color indicator (soft emerald / rose)
  */
 export function formatPnL(pnl: number | null | undefined): {
   formatted: string;
@@ -31,7 +35,7 @@ export function formatPnL(pnl: number | null | undefined): {
   colorClass: string;
 } {
   if (pnl === null || pnl === undefined || isNaN(pnl)) {
-    return { formatted: '$0.00', isPositive: true, colorClass: 'text-slate-400' };
+    return { formatted: '$0.00', isPositive: true, colorClass: 'text-zinc-400' };
   }
   const isPositive = pnl >= 0;
   const absFormatted = Math.abs(pnl).toLocaleString('en-US', {
@@ -39,7 +43,7 @@ export function formatPnL(pnl: number | null | undefined): {
     maximumFractionDigits: 2,
   });
   const formatted = `${isPositive ? '+' : '-'}$${absFormatted}`;
-  const colorClass = isPositive ? 'text-[#00e676]' : 'text-[#ff3366]';
+  const colorClass = isPositive ? 'text-emerald-400' : 'text-rose-500';
 
   return { formatted, isPositive, colorClass };
 }

@@ -11,8 +11,8 @@ import {
 } from '../types';
 
 export const initialAccountSummary: AccountSummary = {
-  balance: 8048.00,
-  equity: 8071.52,
+  balance: 100,
+  equity: 100,
   unrealizedPnl: 23.52,
   unrealizedPnlPercent: 0.29,
   marginUsed: 155.39,
@@ -88,24 +88,28 @@ export const initialSignals: TradeSignal[] = [
     notifyEnabled: true,
     status: 'ACTIVE',
     hasActiveSignal: true,
+    aiConfidence: 94,
+    aiReasoning: 'Order-flow imbalance detected on XAU/USD. Clean liquidity sweep beneath local support followed by institutional displacement into Bullish FVG with heavy spot bid volume.',
   },
   {
-    id: 'SIG-USDJPY-01',
-    symbol: 'USD/JPY',
+    id: 'SIG-US100-01',
+    symbol: 'US100',
     direction: 'SELL',
-    confluenceScore: 76,
+    confluenceScore: 84,
     timeframe: '15m',
-    entryPrice: 154.35983,
-    stopLoss: 154.84742,
-    takeProfit1: 153.38466,
-    takeProfit2: 152.89707,
+    entryPrice: 20450.50,
+    stopLoss: 20520.00,
+    takeProfit1: 20310.00,
+    takeProfit2: 20180.00,
     riskRewardRatio: '1:2.0',
-    pipsAtRisk: 48.7,
+    pipsAtRisk: 69.5,
     timestamp: 'Just now',
-    setupReason: 'Confirmed Bearish BOS + Buy-Side Liquidity Sweep + Pin Bar Trigger',
+    setupReason: 'Confirmed Bearish BOS + Buy-Side Liquidity Sweep into 15m Premium FVG',
     notifyEnabled: true,
     status: 'ACTIVE',
     hasActiveSignal: true,
+    aiConfidence: 89,
+    aiReasoning: 'Institutional supply zone test on US100 following aggressive opening drive. Sweep of Asian session highs followed by strong displacement down. Bearish fair value gap mitigated with delta divergence.',
   },
 ];
 
@@ -126,16 +130,16 @@ export const initialPositions: Position[] = [
   },
   {
     id: '3',
-    symbol: 'USD/JPY',
+    symbol: 'US100',
     side: 'SELL',
-    size: 0.02,
-    entryPrice: 154.398,
-    currentPrice: 153.547,
-    stopLoss: 156.407,
-    takeProfit: 150.394,
-    pnl: 17.02,
-    pnlPercent: 0.11,
-    pips: 85.1,
+    size: 1.0,
+    entryPrice: 20455.00,
+    currentPrice: 20412.50,
+    stopLoss: 20520.00,
+    takeProfit: 20310.00,
+    pnl: 42.50,
+    pnlPercent: 0.21,
+    pips: 42.5,
     openTime: '13:50 UTC',
   },
 ];
@@ -232,10 +236,10 @@ export const generateCandles = (symbol: PairSymbol): CandleData[] => {
   let volatility = 8.5;
   let precision = 2;
 
-  if (symbol === 'USD/JPY') {
-    basePrice = 153.70;
-    volatility = 0.25;
-    precision = 3;
+  if (symbol === 'US100') {
+    basePrice = 20450.00;
+    volatility = 35.0;
+    precision = 2;
   } else if (symbol === 'XAU/USD') {
     basePrice = 4410.00;
     volatility = 8.5;

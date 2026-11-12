@@ -1,17 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  Activity,
   RefreshCw,
-  Wallet,
-  TrendingUp,
-  TrendingDown,
-  ShieldAlert,
-  ShieldCheck,
   Menu,
   Clock,
   Radio,
+  ChevronDown,
+  ShieldCheck,
+  ShieldAlert,
+  Zap,
+  Activity,
   CheckCircle2,
-  AlertCircle,
 } from 'lucide-react';
 import { AccountSummary, RiskStatus } from '../types';
 import { formatCurrency, formatPnL } from '../utils/formatters';
@@ -42,6 +40,8 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleBlackout,
 }) => {
   const [utcTime, setUtcTime] = useState<string>('');
+  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState<boolean>(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const updateTime = () => {
@@ -61,118 +61,213 @@ export const Header: React.FC<HeaderProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsStatusDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const pnlMeta = formatPnL(account.unrealizedPnl);
 
+  // Status computation for unified pill
+  const isAllGood = isApiConnected && !riskStatus.isBlackout;
+  const statusLabel = riskStatus.isBlackout
+    ? 'Blackout Active'
+    : isApiConnected
+    ? 'System Operational'
+    : 'Simulation Active';
+
   return (
-    <header className="sticky top-0 z-30 w-full bg-[#111319]/95 backdrop-blur-md border-b border-[#1d2230] px-4 lg:px-5 py-2.5">
+    <header className="sticky top-0 z-30 w-full bg-zinc-950/80 backdrop-blur-md border-b border-white/10 px-4 lg:px-6 py-2.5 transition-colors">
       <div className="flex items-center justify-between gap-3 flex-wrap xl:flex-nowrap">
-        {/* Left: Terminal Branding & Environment Telemetry */}
+        {/* Left: Terminal Branding & Unified System Status Pill */}
         <div className="flex items-center gap-3">
           <button
             onClick={onToggleMobileSidebar}
-            className="lg:hidden p-1.5 rounded bg-[#161922] text-slate-400 hover:text-white border border-[#1d2230] cursor-pointer"
+            className="lg:hidden p-2 rounded-xl bg-white/5 text-zinc-400 hover:text-white border border-white/10 transition-colors cursor-pointer"
             aria-label="Toggle navigation menu"
           >
             <Menu className="w-4 h-4" />
           </button>
 
-          {/* Terminal Identifier & Mode Badge */}
-          <div className="flex items-center gap-2.5">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-mono font-bold tracking-widest text-slate-100 uppercase">
-                QUANT<span className="text-[#00e676]">VIEW</span>
-              </span>
-              <span className="text-[10px] font-mono text-slate-500 uppercase">TERMINAL</span>
-            </div>
+          {/* Terminal Identifier */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono font-bold tracking-widest text-white uppercase">
+              QUANT<span className="text-emerald-400">VIEW</span>
+            </span>
+            <span className="text-[10px] font-mono text-zinc-500 uppercase">OS</span>
+          </div>
 
-            {/* Live Data / Simulation Mode Badge */}
-            <span
-              className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold tracking-wider uppercase border flex items-center gap-1.5 ${
-                isApiConnected
-                  ? 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30'
-                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+          {/* Unified System Status Dropdown Pill (Consolidates LIVE DATA, BROKER, RISK SAFE) */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={() => setIsStatusDropdownOpen((prev) => !prev)}
+              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-medium border transition-all duration-300 cursor-pointer ${
+                riskStatus.isBlackout
+                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                  : isApiConnected
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/15'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
               }`}
+              title="Click to view detailed system telemetry & risk controls"
             >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  isApiConnected ? 'bg-[#00e676]' : 'bg-amber-400'
+              {/* Pulsing Status Dot */}
+              <span className="relative flex h-2 w-2">
+                <span
+                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                    riskStatus.isBlackout
+                      ? 'bg-rose-400'
+                      : isApiConnected
+                      ? 'bg-emerald-400'
+                      : 'bg-amber-400'
+                  }`}
+                />
+                <span
+                  className={`relative inline-flex rounded-full h-2 w-2 ${
+                    riskStatus.isBlackout
+                      ? 'bg-rose-400'
+                      : isApiConnected
+                      ? 'bg-emerald-400'
+                      : 'bg-amber-400'
+                  }`}
+                />
+              </span>
+
+              <span>{statusLabel}</span>
+
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                  isStatusDropdownOpen ? 'rotate-180' : ''
                 }`}
               />
-              {isApiConnected ? 'LIVE DATA' : 'SIMULATION'}
-            </span>
-          </div>
+            </button>
 
-          {/* Telemetry separator */}
-          <div className="hidden sm:flex items-center gap-2 text-[11px] font-mono text-slate-400 pl-2 border-l border-[#1d2230]">
-            <span className="flex items-center gap-1 text-slate-300">
-              <Radio className={`w-3 h-3 ${isApiConnected ? 'text-[#00e676]' : 'text-slate-500'}`} />
-              <span>{isApiConnected ? 'BROKER' : 'OFFLINE'}</span>
-            </span>
-            <span className="text-slate-600">|</span>
-            <span className="text-slate-300">{account.latencyMs}ms</span>
-            <span className="text-slate-600">|</span>
-            <span className="flex items-center gap-1 text-slate-300">
-              <Clock className="w-3 h-3 text-slate-500" />
-              <span>{utcTime || '00:00:00 UTC'}</span>
-            </span>
-            <span className="text-slate-600">|</span>
-            <span className="text-slate-500 text-[10px]">
-              T-{lastUpdatedSecondsAgo}s
-            </span>
-          </div>
+            {/* De-cluttered Interactive Telemetry Popover */}
+            {isStatusDropdownOpen && (
+              <div className="absolute left-0 mt-2 w-72 rounded-2xl bg-zinc-950/95 backdrop-blur-xl border border-white/15 p-3.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 font-mono text-xs">
+                <div className="flex items-center justify-between pb-2.5 border-b border-white/10">
+                  <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    System Telemetry
+                  </span>
+                  <span className="text-[10px] text-zinc-500">{utcTime || 'UTC Clock'}</span>
+                </div>
 
-          {/* Quick Risk Pill */}
-          <button
-            onClick={onToggleBlackout}
-            title="Click to toggle macroeconomic blackout window simulation"
-            className={`hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-semibold border transition-all cursor-pointer ${
-              riskStatus.isBlackout
-                ? 'bg-[#ff3366]/15 text-[#ff3366] border-[#ff3366]/40 hover:bg-[#ff3366]/25'
-                : 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30 hover:bg-[#00e676]/20'
-            }`}
-          >
-            {riskStatus.isBlackout ? (
-              <>
-                <ShieldAlert className="w-3 h-3" />
-                <span>BLACKOUT ACTIVE</span>
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="w-3 h-3" />
-                <span>RISK SAFE</span>
-              </>
+                <div className="space-y-2.5 py-2.5 text-xs">
+                  {/* Market Data Feed */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400 flex items-center gap-1.5">
+                      <Radio className="w-3.5 h-3.5 text-zinc-500" />
+                      Data Feed
+                    </span>
+                    <span
+                      className={`font-semibold flex items-center gap-1 ${
+                        isApiConnected ? 'text-emerald-400' : 'text-amber-400'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-3 h-3" />
+                      {isApiConnected ? 'Live FastFeed' : 'Simulated'}
+                    </span>
+                  </div>
+
+                  {/* Broker & Latency */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400 flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5 text-zinc-500" />
+                      Broker Gateway
+                    </span>
+                    <span className="text-white font-medium">
+                      MetaTrader / FIX ({account.latencyMs}ms)
+                    </span>
+                  </div>
+
+                  {/* Sync Age */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-zinc-500" />
+                      Last Sync
+                    </span>
+                    <span className="text-zinc-300">T-{lastUpdatedSecondsAgo}s ago</span>
+                  </div>
+
+                  {/* Risk Gate Status */}
+                  <div className="flex items-center justify-between pt-1 border-t border-white/10">
+                    <span className="text-zinc-400 flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-zinc-500" />
+                      Risk Firewall
+                    </span>
+                    <span
+                      className={`font-semibold ${
+                        riskStatus.isBlackout ? 'text-rose-400' : 'text-emerald-400'
+                      }`}
+                    >
+                      {riskStatus.isBlackout ? 'Blackout Enforced' : 'Risk Cleared'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Macro Blackout Toggle */}
+                <div className="pt-2 border-t border-white/10">
+                  <button
+                    onClick={() => {
+                      onToggleBlackout();
+                    }}
+                    className={`w-full py-1.5 px-2.5 rounded-xl font-medium text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      riskStatus.isBlackout
+                        ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40'
+                        : 'bg-white/5 text-zinc-300 hover:bg-white/10 border border-white/10'
+                    }`}
+                  >
+                    {riskStatus.isBlackout ? (
+                      <>
+                        <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Disable Blackout Override</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldAlert className="w-3.5 h-3.5 text-zinc-400" />
+                        <span>Simulate High-Impact Blackout</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             )}
-          </button>
+          </div>
         </div>
 
-        {/* Right: Financial Metrics & Synchronization Controls */}
-        <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-end">
+        {/* Right: Glassmorphic Financial Metrics & Synchronization Controls */}
+        <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap justify-end">
           {/* Account Balance */}
-          <div className="flex items-baseline gap-1.5 px-2.5 py-1 rounded bg-[#0a0b10] border border-[#1d2230] font-mono">
-            <span className="text-[10px] uppercase text-slate-500 font-semibold">Bal:</span>
-            <span className="text-xs sm:text-sm font-bold text-slate-100">
+          <div className="flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08]">
+            <span className="text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">BAL:</span>
+            <span className="text-xs sm:text-sm font-semibold text-white">
               {formatCurrency(account.balance)}
             </span>
           </div>
 
           {/* Equity */}
-          <div className="flex items-baseline gap-1.5 px-2.5 py-1 rounded bg-[#0a0b10] border border-[#1d2230] font-mono">
-            <span className="text-[10px] uppercase text-slate-500 font-semibold">Eq:</span>
-            <span className="text-xs sm:text-sm font-bold text-slate-100">
+          <div className="flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08]">
+            <span className="text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">EQ:</span>
+            <span className="text-xs sm:text-sm font-semibold text-white">
               {formatCurrency(account.equity)}
             </span>
           </div>
 
           {/* Floating P&L */}
           <div
-            className={`flex items-baseline gap-1.5 px-2.5 py-1 rounded border font-mono ${
+            className={`flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md border font-mono transition-all ${
               pnlMeta.isPositive
-                ? 'bg-[#00e676]/10 border-[#00e676]/30 text-[#00e676]'
-                : 'bg-[#ff3366]/10 border-[#ff3366]/30 text-[#ff3366]'
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/15'
+                : 'bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500/15'
             }`}
           >
-            <span className="text-[10px] uppercase opacity-75 font-semibold">P&L:</span>
-            <span className="text-xs sm:text-sm font-bold">
+            <span className="text-[10px] uppercase opacity-75 font-semibold tracking-wider">P&amp;L:</span>
+            <span className="text-xs sm:text-sm font-semibold">
               {pnlMeta.formatted}
             </span>
             <span className="text-[10px] opacity-80">
@@ -182,12 +277,12 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Polling Countdown Indicator */}
           <div
-            className="hidden lg:flex items-center gap-1.5 px-2 py-1 rounded bg-[#161922] border border-[#1d2230] text-[10px] font-mono text-slate-400"
-            title="Automated sync countdown"
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-mono text-zinc-400"
+            title="Automated backend sync countdown"
           >
             <span
               className={`w-1.5 h-1.5 rounded-full ${
-                isRefreshing ? 'bg-cyan-400 animate-ping' : 'bg-slate-500'
+                isRefreshing ? 'bg-cyan-400 animate-ping' : 'bg-zinc-500'
               }`}
             />
             <span>SYNC {pollSecondsRemaining}s</span>
@@ -197,10 +292,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onRefresh}
             disabled={isRefreshing}
-            className={`px-2.5 py-1 rounded bg-[#161922] hover:bg-[#1d212d] text-slate-300 hover:text-white border border-[#1d2230] hover:border-[#282f42] text-xs font-mono font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 hover:border-white/20 text-xs font-mono font-medium flex items-center gap-1.5 transition-all duration-300 cursor-pointer ${
               isRefreshing ? 'opacity-70 cursor-wait' : ''
             }`}
-            title="Trigger full sync across all endpoints"
+            title="Trigger manual sync across all API endpoints"
             aria-label="Refresh Data"
           >
             <RefreshCw
