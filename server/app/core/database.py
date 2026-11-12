@@ -6,13 +6,19 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from app.core.config import settings
 from app.core.logging import logger
 
+# Normalize DATABASE_URL for compatibility across Render, Neon, Heroku, Supabase
+db_url = settings.DATABASE_URL
+if db_url.startswith("postgres://"):
+    # Render and Heroku default to postgres:// which SQLAlchemy 1.4+ rejects
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
 # Build engine kwargs dynamically based on dialect
 engine_kwargs = {
     "echo": (settings.LOG_LEVEL.upper() == "DEBUG"),
     "pool_pre_ping": True,
 }
 
-if settings.DATABASE_URL.startswith("sqlite"):
+if db_url.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
 else:
     # PostgreSQL cloud settings (Neon/Supabase) to handle idle sleep and reconnects
@@ -21,7 +27,7 @@ else:
     engine_kwargs["max_overflow"] = 10
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    db_url,
     **engine_kwargs,
 )
 
