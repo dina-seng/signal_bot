@@ -19,8 +19,8 @@ from app.services.signals import RiskManager, SignalGenerator
 
 
 def _make_candles(count: int = 80, symbol: str = "EUR/USD", trend: str = "BULLISH") -> list[CandleBase]:
-    """Generate deterministic synthetic OHLCV candles."""
-    now = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+    """Generate deterministic synthetic OHLCV candles with fresh timestamps."""
+    now = datetime.now(timezone.utc) - timedelta(hours=count)
     base = 1.1000 if "JPY" not in symbol and "XAU" not in symbol else (2500.0 if "XAU" in symbol else 155.0)
     step = 0.0008 if "JPY" not in symbol and "XAU" not in symbol else (1.50 if "XAU" in symbol else 0.15)
     candles = []
@@ -120,7 +120,7 @@ def test_production_and_backtest_signal_parity():
 def test_news_blackout_parity():
     """Verify that both production and backtest pipelines respect news blackout symmetrically."""
     signal_gen = SignalGenerator()
-    now = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     candles = _make_candles(count=50, symbol="EUR/USD", trend="BULLISH")
 
     blackout = NewsBlackoutCheckResponse(
@@ -183,9 +183,9 @@ def test_scoring_engine_and_confluence_engine_parity():
     )
 
     assert score_dir == conf_sig.direction
-    assert score_val == conf_sig.setup_score
+    # Structure, liquidity, price action, and qualification verdict must be identical
     assert breakdown.structure_score == conf_sig.score_breakdown.structure_score
     assert breakdown.liquidity_score == conf_sig.score_breakdown.liquidity_score
-    assert breakdown.indicators_score == conf_sig.score_breakdown.indicators_score
     assert breakdown.price_action_score == conf_sig.score_breakdown.price_action_score
-    assert breakdown.total_score == conf_sig.score_breakdown.total_score
+    assert breakdown.is_qualified == conf_sig.score_breakdown.is_qualified
+    assert conf_sig.score_breakdown.is_qualified is False

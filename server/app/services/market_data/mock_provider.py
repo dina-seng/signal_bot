@@ -9,7 +9,7 @@ from app.services.market_data.base import BaseMarketDataProvider
 class MockMarketDataProvider(BaseMarketDataProvider):
     """Generates synthetic, deterministic OHLCV candles for testing pipelines and strategies."""
 
-    SUPPORTED_SYMBOLS = ["XAU/USD", "USD/JPY"]
+    SUPPORTED_SYMBOLS = ["XAU/USD", "US100"]
 
     def __init__(self, base_price: float = 1.1000, volatility: float = 0.0010):
         self.base_price = base_price
@@ -47,7 +47,10 @@ class MockMarketDataProvider(BaseMarketDataProvider):
         current_price = self.base_price
 
         # Specific base prices for realistic mock test data
-        if "JPY" in symbol:
+        if "US100" in symbol or "NAS" in symbol or "NDX" in symbol:
+            current_price = 20000.00
+            self.volatility = 25.0
+        elif "JPY" in symbol:
             current_price = 150.00
             self.volatility = 0.15
         elif "XAU" in symbol:

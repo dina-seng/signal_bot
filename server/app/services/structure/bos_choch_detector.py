@@ -46,6 +46,7 @@ class BOSCHOCHDetector:
         swings: List[SwingPoint],
         current_trend: TrendDirection = TrendDirection.RANGING,
         min_displacement_ratio: float = 0.1,
+        lookback_right: int = 1,
     ) -> tuple[List[BreakoutEvent], List[BreakoutEvent]]:
         """Identify all confirmed BOS and CHOCH breakout events across candle history.
 
@@ -82,9 +83,11 @@ class BOSCHOCHDetector:
             ts, o, h, l, c = parsed_candles[i]
             candle_range = max(1e-6, h - l)
 
-            # If a new confirmed swing formed at this index, activate it
-            if i in swings_by_idx:
-                sw = swings_by_idx[i]
+            # A swing confirmed at index k requires lookback_right bars to close beyond it.
+            # Activating it only when i >= k + lookback_right eliminates lookahead bias.
+            confirm_idx = i - lookback_right
+            if confirm_idx >= 0 and confirm_idx in swings_by_idx:
+                sw = swings_by_idx[confirm_idx]
                 if sw.swing_type == SwingType.SWING_HIGH:
                     active_highs.append(sw)
                 elif sw.swing_type == SwingType.SWING_LOW:

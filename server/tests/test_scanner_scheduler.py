@@ -472,11 +472,11 @@ async def test_paper_trading_when_enabled(test_db_session):
         timeframe="1h",
         direction="BUY",
         setup_score=95.0,
-        entry_price=1.1050,
-        stop_loss=1.0900,      # 100 pips below mock candle close (1.10000) → valid SL distance
-        take_profit_1=1.1150,
-        take_profit_2=1.1200,
-        risk_reward=1.67,      # (1.1150-1.1050)/(1.1050-1.0900) = 0.01/0.015 ≈ 1.67:1
+        entry_price=1.1200,
+        stop_loss=1.1050,      # Valid SL distance below 1.1200
+        take_profit_1=1.1350,
+        take_profit_2=1.1400,
+        risk_reward=1.0,
         status="ACTIVE",
         fingerprint="safety_test_fp_auto_enabled",
         reasons=["High score confluence"],

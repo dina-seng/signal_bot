@@ -31,6 +31,13 @@ SYMBOL_METADATA = {
         pip_size=0.01,
         description="US Dollar / Japanese Yen",
     ),
+    "US100": MarketSymbolInfo(
+        symbol="US100",
+        base_currency="US100",
+        quote_currency="USD",
+        pip_size=1.0,
+        description="Nasdaq 100 Index CFD",
+    ),
 }
 
 

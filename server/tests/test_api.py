@@ -8,7 +8,7 @@ def test_health_endpoint(client):
     assert data["status"] == "healthy"
     assert data["database_connected"] is True
     assert "XAU/USD" in data["supported_symbols"]
-    assert "USD/JPY" in data["supported_symbols"]
+    assert "US100" in data["supported_symbols"]
     assert "EUR/USD" not in data["supported_symbols"]
 
 
@@ -20,7 +20,7 @@ def test_symbols_endpoint(client):
     assert len(symbols) == 2
     symbols_names = [s["symbol"] for s in symbols]
     assert "XAU/USD" in symbols_names
-    assert "USD/JPY" in symbols_names
+    assert "US100" in symbols_names
     assert "EUR/USD" not in symbols_names
 
 

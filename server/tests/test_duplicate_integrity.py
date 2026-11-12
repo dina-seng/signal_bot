@@ -105,7 +105,7 @@ def test_paper_trade_idempotency_from_signal(test_db_session):
         direction="BUY",
         setup_score=80.0,
         entry_price=1.1050,
-        stop_loss=1.1000,
+        stop_loss=1.0950,
         take_profit_1=1.1150,
         take_profit_2=1.1200,
         risk_reward=2.0,

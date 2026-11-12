@@ -46,6 +46,8 @@ class LiquiditySweepDetector:
         s = symbol.upper()
         if "JPY" in s or "XAU" in s or "GOLD" in s:
             return 0.01
+        if "US100" in s or "NAS" in s or "NDX" in s:
+            return 1.0  # Index CFD: 1 full index point
         return 0.0001
 
     def detect_sweeps(
@@ -54,6 +56,7 @@ class LiquiditySweepDetector:
         swings: List[SwingPoint],
         symbol: str = "XAU/USD",
         min_wick_ratio: Optional[float] = None,
+        lookback_right: int = 1,
     ) -> List[LiquiditySweep]:
         """Identify all Buy-Side Liquidity (BSL) and Sell-Side Liquidity (SSL) sweeps.
 
@@ -87,8 +90,11 @@ class LiquiditySweepDetector:
             ts, o, h, l, c = parsed_candles[i]
             candle_range = max(1e-6, h - l)
 
-            if i in swings_by_idx:
-                sw = swings_by_idx[i]
+            # A swing confirmed at index k requires lookback_right bars beyond it.
+            # Activating only when i >= k + lookback_right eliminates lookahead bias.
+            confirm_idx = i - lookback_right
+            if confirm_idx >= 0 and confirm_idx in swings_by_idx:
+                sw = swings_by_idx[confirm_idx]
                 if sw.swing_type == SwingType.SWING_HIGH:
                     active_highs.append(sw)
                 elif sw.swing_type == SwingType.SWING_LOW:

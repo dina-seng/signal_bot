@@ -22,15 +22,17 @@ class TwelveDataProvider(BaseMarketDataProvider):
     }
 
     SUPPORTED_SYMBOLS: List[str] = [
-        "XAU/USD", "USD/JPY",
-        "XAUUSD", "USDJPY",
+        "XAU/USD", "US100",
+        "XAUUSD",          # Twelve Data slash-free alias for gold
+        "NDX", "IXIC",     # Twelve Data index tickers for Nasdaq 100 / Composite
     ]
 
-    def __init__(self, api_key: str, timeout: float = 12.0):
+    def __init__(self, api_key: str, timeout: float = 12.0, http_client: Optional[httpx.AsyncClient] = None):
         self.api_key = api_key
         self.base_url = "https://api.twelvedata.com"
         self.timeout = timeout
         self._last_call_time: float = 0.0
+        self._http_client = http_client  # Injected shared client; falls back to per-request if None
 
     def _map_timeframe(self, timeframe: str) -> str:
         """Map standard timeframes to Twelve Data interval strings."""
@@ -83,9 +85,15 @@ class TwelveDataProvider(BaseMarketDataProvider):
         try:
             await self._rate_limit(min_interval=7.5)
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(url, params=params)
+            if self._http_client:
+                # Use shared persistent client (preferred: no TCP/TLS overhead per call)
+                response = await self._http_client.get(url, params=params)
                 data = response.json()
+            else:
+                # Fallback: create a one-shot client (e.g., during testing or scheduler cold-path)
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.get(url, params=params)
+                    data = response.json()
 
                 if data.get("status") == "error" or ("code" in data and data["code"] != 200):
                     logger.error(f"Twelve Data API Error [{symbol} {timeframe}]: {data.get('message')}")

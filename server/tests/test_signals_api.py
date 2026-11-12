@@ -67,7 +67,7 @@ def test_get_signals_empty_and_populated(client, test_db_session):
 
 def test_scan_markets_endpoint(client, test_db_session):
     """Test GET /api/v1/signals/scan endpoint."""
-    seed_candles(test_db_session, symbol="EUR/USD", count=50)
+    seed_candles(test_db_session, symbol="XAU/USD", count=50)
 
     response = client.get("/api/v1/signals/scan?timeframe=1h&account_balance=10000&risk_percent=0.5")
     assert response.status_code == 200
@@ -75,7 +75,7 @@ def test_scan_markets_endpoint(client, test_db_session):
 
     assert "scanned_count" in data
     assert "results" in data
-    assert len(data["results"]) == 4  # EUR/USD, GBP/USD, USD/JPY, XAU/USD
+    assert len(data["results"]) == 2  # Strictly restricted to XAU/USD and US100
 
 
 def test_post_evaluate_stateless_signal(client):

@@ -12,7 +12,7 @@ async def test_mock_provider_generation():
     """Test synthetic candle generation from MockMarketDataProvider."""
     provider = MockMarketDataProvider()
     assert provider.is_symbol_supported("XAU/USD")
-    assert provider.is_symbol_supported("USD/JPY")
+    assert provider.is_symbol_supported("US100")
     assert not provider.is_symbol_supported("EUR/USD")
     assert not provider.is_symbol_supported("INVALID_SYM")
 
@@ -38,7 +38,7 @@ def test_twelve_data_mappings():
     """Test TwelveDataProvider mappings."""
     provider = TwelveDataProvider(api_key="test_key")
     assert provider.is_symbol_supported("XAU/USD")
-    assert provider.is_symbol_supported("USD/JPY")
+    assert provider.is_symbol_supported("US100")
     assert not provider.is_symbol_supported("EUR/USD")
     assert provider.INTERVAL_MAP["15m"] == "15min"
     assert provider.INTERVAL_MAP["1h"] == "1h"

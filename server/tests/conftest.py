@@ -29,6 +29,19 @@ def disable_background_scanner():
     stop_scanner_scheduler()
 
 
+@pytest.fixture(autouse=True)
+def enforce_test_symbols():
+    """Pin SUPPORTED_SYMBOLS to the two production assets for all tests.
+
+    This ensures tests are hermetically isolated from whatever is in the .env
+    file, and that symbol-specific assertions match XAU/USD & US100 only.
+    """
+    orig = settings.SUPPORTED_SYMBOLS
+    settings.SUPPORTED_SYMBOLS = ["XAU/USD", "US100"]
+    yield
+    settings.SUPPORTED_SYMBOLS = orig
+
+
 @pytest.fixture(scope="function")
 def test_db_session():
     """Create a fresh in-memory SQLite database session for each test function."""

@@ -85,12 +85,14 @@ class TelegramClient(BaseTelegramClient):
         self,
         bot_token: Optional[str] = None,
         default_chat_id: Optional[str] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
     ):
         self.bot_token = bot_token or settings.TELEGRAM_BOT_TOKEN
         self.default_chat_id = default_chat_id or settings.TELEGRAM_CHAT_ID
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}" if self.bot_token else None
         self.messages_sent_count = 0
         self.last_sent_at: Optional[datetime] = None
+        self._http_client = http_client  # Injected shared client; falls back to per-request if None
 
     async def send_message(
         self,
@@ -122,31 +124,36 @@ class TelegramClient(BaseTelegramClient):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    msg_id = data.get("result", {}).get("message_id", 0)
-                    self.messages_sent_count += 1
-                    self.last_sent_at = now
-                    logger.info(f"Telegram message #{msg_id} sent successfully to chat {target_chat}.")
-                    return TelegramMessageResponse(
-                        success=True,
-                        message_id=msg_id,
-                        chat_id=target_chat,
-                        text_sent=text,
-                        sent_at=now,
-                    )
-                else:
-                    err_msg = f"Telegram API error {resp.status_code}: {resp.text}"
-                    logger.error(err_msg)
-                    return TelegramMessageResponse(
-                        success=False,
-                        chat_id=target_chat,
-                        text_sent=text,
-                        sent_at=now,
-                        error=err_msg,
-                    )
+            if self._http_client:
+                # Use shared persistent client
+                resp = await self._http_client.post(url, json=payload)
+            else:
+                # Fallback: one-shot client
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                msg_id = data.get("result", {}).get("message_id", 0)
+                self.messages_sent_count += 1
+                self.last_sent_at = now
+                logger.info(f"Telegram message #{msg_id} sent successfully to chat {target_chat}.")
+                return TelegramMessageResponse(
+                    success=True,
+                    message_id=msg_id,
+                    chat_id=target_chat,
+                    text_sent=text,
+                    sent_at=now,
+                )
+            else:
+                err_msg = f"Telegram API error {resp.status_code}: {resp.text}"
+                logger.error(err_msg)
+                return TelegramMessageResponse(
+                    success=False,
+                    chat_id=target_chat,
+                    text_sent=text,
+                    sent_at=now,
+                    error=err_msg,
+                )
         except Exception as e:
             err_msg = f"Failed to send Telegram message: {str(e)}"
             logger.error(err_msg)

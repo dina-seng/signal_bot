@@ -1,6 +1,7 @@
 """FastAPI Main Application Entrypoint."""
 
 from contextlib import asynccontextmanager
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -21,6 +22,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.PROJECT_NAME} in [{settings.APP_ENV}] mode...")
     init_db()
 
+    # Persistent shared HTTP client — eliminates per-request TCP/TLS handshake overhead.
+    # Providers receive this via dependency injection for high-frequency paths.
+    app.state.http_client = httpx.AsyncClient(
+        timeout=15.0,
+        limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+    )
+
     if settings.SCANNER_ENABLED:
         start_scanner_scheduler()
     else:
@@ -30,6 +38,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Application shutting down...")
     stop_scanner_scheduler()
+    await app.state.http_client.aclose()
     logger.info("Application shutdown complete.")
 
 

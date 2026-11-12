@@ -13,17 +13,42 @@ class RiskManager:
     def get_pip_size(symbol: str) -> float:
         """Get currency pip multiplier."""
         s = symbol.upper().replace("%2F", "/").strip()
-        if "JPY" in s or "XAU" in s or "GOLD" in s:
+        if "JPY" in s:
             return 0.01
+        if "XAU" in s or "GOLD" in s:
+            return 0.01  # Gold: minimum tick is 0.01 (1 pip = $1 on 100 oz lot)
+        if "US100" in s or "NAS" in s or "NDX" in s:
+            return 1.0   # Index CFD: 1 full index point = 1 pip
         return 0.0001
 
     @staticmethod
-    def get_pip_value_per_lot(symbol: str) -> float:
-        """Approximate USD value per pip for 1 standard lot (100,000 units)."""
+    def get_pip_value_per_lot(symbol: str, current_price: float = 1.0) -> float:
+        """
+        Returns USD value per pip for 1 standard lot.
+
+        XAU/USD : 100 oz contract, pip=0.01  → $1.00 per pip per lot
+                  (100 oz × $0.01 = $1.00)
+        US100   : 1 CFD contract, pip=1.0    → $1.00 per index point per lot
+                  (standard index CFD convention: $1 per point)
+        FX USD-quote (EUR/USD etc.): $10.00 per pip per standard lot
+        FX USD-base (USD/JPY etc.): 10 / current_price ≈ $10 at par
+        """
         s = symbol.upper().replace("%2F", "/").strip()
         if "XAU" in s or "GOLD" in s:
-            return 1.0  # 1 lot of gold (100 oz): 0.01 price move = $1.00
-        return 10.0  # Standard FX pairs: 1 pip = $10.00 per standard lot
+            return 1.0   # 100 oz × 0.01 pip = $1.00
+        if "US100" in s or "NAS" in s or "NDX" in s:
+            return 1.0   # $1 per index point per contract
+        # FX pairs
+        if "/" in s:
+            base, quote = s.split("/", 1)
+        else:
+            base, quote = s[:3], s[3:]
+        if quote == "USD":
+            return 10.0  # EUR/USD, GBP/USD, XAG/USD etc.
+        elif base == "USD":
+            # USD/JPY etc.: pip value varies inversely with price
+            return 10.0 / current_price if current_price > 0 else 10.0
+        return 10.0
 
     def calculate_trade_risk(
         self,
@@ -48,10 +73,12 @@ class RiskManager:
         effective_atr = atr_value if (atr_value is not None and atr_value > 0) else default_atr
         
         # 🛡️ SANITY CHECK: Cap maximum structural distance to prevent macro-level SLs
-        # 2500 pips ($25.00) on Gold, 120 pips on JPY, 100 pips on standard FX
+        # XAU/USD: 2500 pips ($25.00), US100: 500 index points ($500), JPY: 120 pips, standard FX: 100 pips
         s_upper = symbol.upper().replace("%2F", "/").strip()
         if "XAU" in s_upper or "GOLD" in s_upper:
             max_sl_pips = 2500.0
+        elif "US100" in s_upper or "NAS" in s_upper or "NDX" in s_upper:
+            max_sl_pips = 500.0  # 500 index points = $500 per lot
         elif "JPY" in s_upper:
             max_sl_pips = 120.0
         else:
