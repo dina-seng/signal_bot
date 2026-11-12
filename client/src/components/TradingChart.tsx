@@ -158,7 +158,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         <div className="flex items-center gap-2.5 flex-wrap">
           {/* Symbol Select Buttons */}
           <div className="flex items-center p-0.5 rounded bg-[#0a0b10] border border-[#1d2230]">
-            {(['XAU/USD', 'US100'] as PairSymbol[]).map((sym) => (
+            {(['XAU/USD'] as PairSymbol[]).map((sym) => (
               <button
                 key={sym}
                 onClick={() => onSymbolChange(sym)}

@@ -8,7 +8,7 @@ def test_health_endpoint(client):
     assert data["status"] == "healthy"
     assert data["database_connected"] is True
     assert "XAU/USD" in data["supported_symbols"]
-    assert "US100" in data["supported_symbols"]
+    assert "US100" not in data["supported_symbols"]  # Quarantined
     assert "EUR/USD" not in data["supported_symbols"]
 
 
@@ -17,10 +17,10 @@ def test_symbols_endpoint(client):
     response = client.get("/api/v1/market/symbols")
     assert response.status_code == 200
     symbols = response.json()
-    assert len(symbols) == 2
+    assert len(symbols) == 1
     symbols_names = [s["symbol"] for s in symbols]
     assert "XAU/USD" in symbols_names
-    assert "US100" in symbols_names
+    assert "US100" not in symbols_names  # Quarantined
     assert "EUR/USD" not in symbols_names
 
 

@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./trade.db"
 
-    # Market Instruments and Timeframes
-    SUPPORTED_SYMBOLS: List[str] = ["XAU/USD", "US100"]
+    # Market Instruments and Timeframes (Strict Single-Asset: US100 quarantined due to API paywall)
+    SUPPORTED_SYMBOLS: List[str] = ["XAU/USD"]
     SUPPORTED_TIMEFRAMES: List[str] = ["15m", "1h", "4h"]
 
     # Market Structure & Analysis Strategy Config (Milestones 2-6)

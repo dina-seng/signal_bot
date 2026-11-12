@@ -488,7 +488,7 @@ export const quantViewApi = {
 
   // 17. Fetch latest market prices for all pairs
   async getLatestPrices(): Promise<Record<string, number>> {
-    const symbols = ['XAU/USD', 'US100'];
+    const symbols = ['XAU/USD'];
     const prices: Record<string, number> = {};
 
     await Promise.allSettled(

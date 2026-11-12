@@ -91,6 +91,8 @@ export const initialSignals: TradeSignal[] = [
     aiConfidence: 94,
     aiReasoning: 'Order-flow imbalance detected on XAU/USD. Clean liquidity sweep beneath local support followed by institutional displacement into Bullish FVG with heavy spot bid volume.',
   },
+  // Quarantined: US100 suspended due to API paywall
+  /*
   {
     id: 'SIG-US100-01',
     symbol: 'US100',
@@ -111,6 +113,7 @@ export const initialSignals: TradeSignal[] = [
     aiConfidence: 89,
     aiReasoning: 'Institutional supply zone test on US100 following aggressive opening drive. Sweep of Asian session highs followed by strong displacement down. Bearish fair value gap mitigated with delta divergence.',
   },
+  */
 ];
 
 export const initialPositions: Position[] = [
@@ -128,6 +131,8 @@ export const initialPositions: Position[] = [
     pips: 23.0,
     openTime: '14:28 UTC',
   },
+  // Quarantined: US100 suspended due to API paywall
+  /*
   {
     id: '3',
     symbol: 'US100',
@@ -142,6 +147,7 @@ export const initialPositions: Position[] = [
     pips: 42.5,
     openTime: '13:50 UTC',
   },
+  */
 ];
 
 export const initialAlertConfig: AlertConfiguration = {

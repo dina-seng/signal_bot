@@ -75,7 +75,7 @@ def test_scan_markets_endpoint(client, test_db_session):
 
     assert "scanned_count" in data
     assert "results" in data
-    assert len(data["results"]) == 2  # Strictly restricted to XAU/USD and US100
+    assert len(data["results"]) == 1  # Strictly restricted to single-asset XAU/USD during US100 quarantine
 
 
 def test_post_evaluate_stateless_signal(client):

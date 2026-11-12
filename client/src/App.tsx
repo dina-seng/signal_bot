@@ -41,7 +41,7 @@ import {
 import { formatPrice, getTimeUntil } from './utils/formatters';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
-const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD', 'US100'];
+const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD'];
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
@@ -732,7 +732,7 @@ export const App: React.FC = () => {
 
           <div className="flex items-center gap-3 text-[11px]">
             <span className="hidden sm:inline text-zinc-400">
-              Pairs: <strong className="text-zinc-200">XAU/USD • US100</strong>
+              Active Instrument: <strong className="text-zinc-200">XAU/USD (Gold Focus)</strong>
             </span>
             <span className="text-zinc-700 hidden sm:inline">|</span>
             <span
@@ -759,7 +759,7 @@ export const App: React.FC = () => {
                 closedTrades={closedTrades}
               />
 
-              {/* Signal Matrix Grid (2 Cards: XAU/USD, US100) */}
+              {/* Signal Matrix (Single Card: XAU/USD) */}
               <SignalMatrix
                 signals={signals}
                 livePrices={livePrices}

@@ -97,50 +97,58 @@ class TelegramCommandHandler:
         # -------------------------------------------------------------
         elif cmd_name == "/signal":
             if len(parts) < 2:
-                reply = "⚠️ *Usage:* `/signal <symbol>`\n_Example:_ `/signal XAU/USD` or `/signal USD/JPY`"
+                reply = "⚠️ *Usage:* `/signal <symbol>`\n_Example:_ `/signal XAU/USD`"
             else:
                 sym = self._normalize_symbol(parts[1])
 
-                # 1. Provider <-> DB Synchronization: Refresh fresh candle data from provider
-                if self.market_provider:
-                    ingest_svc = self.market_ingestion or IngestionService(
-                        provider=self.market_provider, db=db
-                    )
-                    ingest_svc.db = db
-                    for tf in ["1h", "4h", "30m", "15m"]:
-                        try:
-                            await ingest_svc.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
-                        except Exception as e:
-                            logger.warning(f"Failed to refresh market data for {sym} [{tf}] via provider: {e}")
-
-                # 2. Evaluate Unified Multi-Timeframe Signal
-                scan_res = self.signal_generator.scan_unified(
-                    db=db,
-                    symbol=sym,
-                    account_balance=10000.0,
-                    risk_percent=0.5,
-                    persist_qualified=True,
-                )
-
-                if scan_res.is_actionable and scan_res.signal:
-                    reply = self.formatter.format_signal_alert(scan_res.signal)
-                else:
-                    sym_code = self.formatter.escape_code(sym)
-                    htf_txt = self.formatter.escape_code(scan_res.htf_trend or "NEUTRAL")
-                    score_txt = f"{scan_res.setup_score:.0f}/100"
-                    align_txt = f" • Alignment: `{scan_res.trend_alignment}`" if scan_res.trend_alignment else ""
-                    reasons_lines = "\n".join([f"  • {self.formatter.escape_markdown(r)}" for r in scan_res.reasons[:4]])
+                if sym not in settings.SUPPORTED_SYMBOLS:
                     reply = (
-                        f"⚪ *UNIFIED SIGNAL STATUS: WAIT*\n"
+                        f"⚠️ *Asset Quarantined / Inactive*\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📊 *Pair:* `{sym_code}` [{scan_res.timeframe}]\n"
-                        f"📈 *1H Context:* `{htf_txt}`{align_txt}\n"
-                        f"⭐ *Confluence Score:* `{score_txt}` (Min: `{settings.MIN_SETUP_SCORE:.0f}`)\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"💡 *Current Market Analysis:*\n"
-                        f"{reasons_lines}\n\n"
-                        f"⚠️ _Awaiting 15m/30m/1H confirmation before generating actionable entry._"
+                        f"`{self.formatter.escape_code(sym)}` is temporarily suspended due to market data API paywalls.\n"
+                        f"Active instrument: `{self.formatter.escape_code(settings.SUPPORTED_SYMBOLS[0])}` (Gold)."
                     )
+                else:
+                    # 1. Provider <-> DB Synchronization: Refresh fresh candle data from provider
+                    if self.market_provider:
+                        ingest_svc = self.market_ingestion or IngestionService(
+                            provider=self.market_provider, db=db
+                        )
+                        ingest_svc.db = db
+                        for tf in ["1h", "4h", "30m", "15m"]:
+                            try:
+                                await ingest_svc.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
+                            except Exception as e:
+                                logger.warning(f"Failed to refresh market data for {sym} [{tf}] via provider: {e}")
+
+                    # 2. Evaluate Unified Multi-Timeframe Signal
+                    scan_res = self.signal_generator.scan_unified(
+                        db=db,
+                        symbol=sym,
+                        account_balance=10000.0,
+                        risk_percent=0.5,
+                        persist_qualified=True,
+                    )
+
+                    if scan_res.is_actionable and scan_res.signal:
+                        reply = self.formatter.format_signal_alert(scan_res.signal)
+                    else:
+                        sym_code = self.formatter.escape_code(sym)
+                        htf_txt = self.formatter.escape_code(scan_res.htf_trend or "NEUTRAL")
+                        score_txt = f"{scan_res.setup_score:.0f}/100"
+                        align_txt = f" • Alignment: `{scan_res.trend_alignment}`" if scan_res.trend_alignment else ""
+                        reasons_lines = "\n".join([f"  • {self.formatter.escape_markdown(r)}" for r in scan_res.reasons[:4]])
+                        reply = (
+                            f"⚪ *UNIFIED SIGNAL STATUS: WAIT*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📊 *Pair:* `{sym_code}` [{scan_res.timeframe}]\n"
+                            f"📈 *1H Context:* `{htf_txt}`{align_txt}\n"
+                            f"⭐ *Confluence Score:* `{score_txt}` (Min: `{settings.MIN_SETUP_SCORE:.0f}`)\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"💡 *Current Market Analysis:*\n"
+                            f"{reasons_lines}\n\n"
+                            f"⚠️ _Awaiting 15m/30m/1H confirmation before generating actionable entry._"
+                        )
 
         # -------------------------------------------------------------
         # 4. Economic News Calendar (/news)

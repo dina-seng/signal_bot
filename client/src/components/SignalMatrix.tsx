@@ -22,8 +22,8 @@ interface SignalMatrixProps {
 }
 
 const DEFAULT_PRICES: Record<string, number> = {
-  'XAU/USD': 4411.60,
-  'US100': 20450.50,
+  'XAU/USD': 2685.50,
+  // 'US100': 20450.50, // Quarantined: US100 suspended due to API paywall
 };
 
 type TickDirection = 'up' | 'down' | null;
@@ -88,7 +88,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
 
         const updatedPrices: Record<string, number> = {};
         const newTicks: Record<string, TickDirection> = {};
-        const supported = ['XAU/USD', 'US100'];
+        const supported = ['XAU/USD'];
 
         supported.forEach((sym) => {
           const currentBase = basePrices[sym] || DEFAULT_PRICES[sym] || 100.0;
@@ -98,9 +98,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
 
           // Simulate realistic micro-ticks if backend doesn't push a tick
           if (newPrice === undefined || newPrice === oldPrice) {
-            const isGold = sym.includes('XAU');
-            const isNasdaq = sym.includes('US100');
-            const pipStep = isGold ? 0.05 : isNasdaq ? 0.25 : 0.01;
+            const pipStep = 0.05; // Gold micro-tick
             const decimals = 2;
 
             if (Math.random() > 0.35) {
@@ -162,8 +160,8 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
     };
   }, [signals, externalLivePrices]);
 
-  // Filter signals strictly to supported symbols: XAU/USD & US100
-  const activeSignals = signals.filter((s) => s.symbol === 'XAU/USD' || s.symbol === 'US100');
+  // Filter signals strictly to supported symbols: XAU/USD (US100 quarantined)
+  const activeSignals = signals.filter((s) => s.symbol === 'XAU/USD');
 
   return (
     <div className="space-y-4">
@@ -184,7 +182,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
           </span>
 
           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-white/5 text-zinc-400 border border-white/10 hidden md:flex items-center gap-1.5">
-            SMC &bull; Order Flow &bull; FVG
+            Single-Asset Focus &bull; XAU/USD
           </span>
         </div>
 
@@ -196,7 +194,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
               className={`px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 hover:border-white/20 text-xs font-mono font-medium flex items-center gap-2 transition-all duration-300 cursor-pointer ${
                 isScanning ? 'opacity-70 cursor-wait' : ''
               }`}
-              title="Run on-demand market scan across XAU/USD and US100 via GET /api/v1/signals/scan"
+              title="Run on-demand market scan across XAU/USD via GET /api/v1/signals/scan"
             >
               <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isScanning ? 'animate-spin' : ''}`} />
               <span>{isScanning ? 'Scanning...' : 'Scan Markets'}</span>
@@ -212,20 +210,29 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
         </div>
       </div>
 
-      {/* 2 Institutional Signal Cards: XAU/USD & US100 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4.5">
-        {activeSignals.map((sig) => (
-          <ConfluenceCard
-            key={sig.id}
-            signal={sig}
-            livePrice={livePrices[sig.symbol]}
-            tickDirection={tickDirections[sig.symbol]}
-            onToggleNotify={onToggleNotify}
-            onSelectSignalForChart={onSelectSignalForChart}
-            onTradeFromSignal={onTradeFromSignal}
-          />
-        ))}
-      </div>
+      {/* Signal Cards Display - Graceful Degradation for Single-Asset */}
+      {activeSignals.length === 0 ? (
+        <div className="rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-10 text-center font-mono">
+          <p className="text-sm text-zinc-300 font-semibold mb-1">No Active Signals For XAU/USD</p>
+          <p className="text-xs text-zinc-500">
+            Awaiting confirmed liquidity sweep and order-flow imbalance before triggering trade setup.
+          </p>
+        </div>
+      ) : (
+        <div className={activeSignals.length === 1 ? "grid grid-cols-1 max-w-3xl mx-auto" : "grid grid-cols-1 lg:grid-cols-2 gap-4.5"}>
+          {activeSignals.map((sig) => (
+            <ConfluenceCard
+              key={sig.id}
+              signal={sig}
+              livePrice={livePrices[sig.symbol]}
+              tickDirection={tickDirections[sig.symbol]}
+              onToggleNotify={onToggleNotify}
+              onSelectSignalForChart={onSelectSignalForChart}
+              onTradeFromSignal={onTradeFromSignal}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 };

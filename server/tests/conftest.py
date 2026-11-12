@@ -31,13 +31,13 @@ def disable_background_scanner():
 
 @pytest.fixture(autouse=True)
 def enforce_test_symbols():
-    """Pin SUPPORTED_SYMBOLS to the two production assets for all tests.
+    """Pin SUPPORTED_SYMBOLS to the active single-asset (XAU/USD) for all tests.
 
     This ensures tests are hermetically isolated from whatever is in the .env
-    file, and that symbol-specific assertions match XAU/USD & US100 only.
+    file, and that symbol-specific assertions match XAU/USD only while US100 is quarantined.
     """
     orig = settings.SUPPORTED_SYMBOLS
-    settings.SUPPORTED_SYMBOLS = ["XAU/USD", "US100"]
+    settings.SUPPORTED_SYMBOLS = ["XAU/USD"]
     yield
     settings.SUPPORTED_SYMBOLS = orig
 

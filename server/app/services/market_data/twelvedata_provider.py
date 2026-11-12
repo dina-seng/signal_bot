@@ -22,9 +22,10 @@ class TwelveDataProvider(BaseMarketDataProvider):
     }
 
     SUPPORTED_SYMBOLS: List[str] = [
-        "XAU/USD", "US100",
+        "XAU/USD",
         "XAUUSD",          # Twelve Data slash-free alias for gold
-        "NDX", "IXIC",     # Twelve Data index tickers for Nasdaq 100 / Composite
+        # Quarantined: US100 suspended due to API paywalls
+        # "US100", "NDX", "IXIC",
     ]
 
     def __init__(self, api_key: str, timeout: float = 12.0, http_client: Optional[httpx.AsyncClient] = None):
@@ -62,6 +63,10 @@ class TwelveDataProvider(BaseMarketDataProvider):
         drop_unclosed: bool = True,
     ) -> List[CandleCreate]:
         """Fetch historical candles from Twelve Data in verified UTC."""
+        if not self.is_symbol_supported(symbol):
+            logger.warning(f"Twelve Data skipping unsupported or quarantined symbol: {symbol}")
+            return []
+
         interval = self._map_timeframe(timeframe)
         url = f"{self.base_url}/time_series"
 
