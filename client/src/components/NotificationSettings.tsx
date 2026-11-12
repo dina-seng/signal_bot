@@ -60,7 +60,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
   };
 
   return (
-    <div className="space-y-4 max-w-4xl font-mono">
+    <div className="space-y-4 w-full min-w-0 font-mono">
       {/* Header */}
       <div>
         <div className="flex items-center gap-2">

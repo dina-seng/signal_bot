@@ -40,7 +40,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
     : '0.0';
 
   return (
-    <div className="space-y-3 font-mono">
+    <div className="space-y-3 font-mono min-w-0 w-full overflow-hidden">
       {/* Top Header & Tab Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -97,8 +97,8 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
         </div>
       </div>
 
-      {/* Table Container */}
-      <div className="overflow-x-auto rounded-lg border border-[#1d2230] bg-[#111319]">
+      {/* Table Container - Scrollable without breaking page boundaries */}
+      <div className="overflow-x-auto rounded-2xl border border-white/10 bg-zinc-900/40 backdrop-blur-md min-w-0 w-full shadow-xl">
         {activeTab === 'open' ? (
           /* OPEN POSITIONS TABLE */
           <table className="w-full text-left text-xs">

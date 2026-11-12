@@ -665,7 +665,31 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-white">
+    <div className="relative min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-white overflow-x-hidden">
+      {/* Dynamic Animated Abstract Mesh Gradient Layer */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0" aria-hidden="true">
+        {/* Deep base darkness */}
+        <div className="absolute inset-0 bg-zinc-950" />
+
+        {/* Mesh Orb 1: Emerald Drift (Slow floating top-left) */}
+        <div className="absolute -top-[15%] -left-[10%] w-[55vw] h-[55vw] max-w-[850px] max-h-[850px] rounded-full bg-emerald-500/10 blur-[130px] animate-mesh-1 transform-gpu" />
+
+        {/* Mesh Orb 2: Deep Violet Drift (Slow floating bottom-right) */}
+        <div className="absolute -bottom-[20%] -right-[10%] w-[60vw] h-[60vw] max-w-[900px] max-h-[900px] rounded-full bg-violet-600/12 blur-[140px] animate-mesh-2 transform-gpu" />
+
+        {/* Mesh Orb 3: Subtle Sky/Cyan Accent Breathing (Center-right floating) */}
+        <div className="absolute top-[30%] left-[25%] w-[45vw] h-[45vw] max-w-[650px] max-h-[650px] rounded-full bg-sky-500/6 blur-[110px] animate-mesh-3 transform-gpu" />
+
+        {/* Fintech Grid Overlay with Radial Spotlight Mask */}
+        <div
+          className="absolute inset-0 bg-fintech-grid bg-[size:36px_36px] opacity-70"
+          style={{
+            maskImage: 'radial-gradient(ellipse 70% 55% at 50% 35%, black 25%, transparent 85%)',
+            WebkitMaskImage: 'radial-gradient(ellipse 70% 55% at 50% 35%, black 25%, transparent 85%)',
+          }}
+        />
+      </div>
+
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
@@ -682,8 +706,8 @@ export const App: React.FC = () => {
         isScannerRunning={scannerStatus?.is_running}
       />
 
-      {/* Main Content Wrapper */}
-      <div className="lg:pl-56 flex flex-col min-h-screen">
+      {/* Main Content Wrapper (Elevated above background mesh) */}
+      <div className="relative z-10 lg:pl-56 flex flex-col min-h-screen">
         {/* Top Header with Real Balance, LIVE DATA badge, and Refresh Data button */}
         <Header
           account={account}
@@ -718,10 +742,10 @@ export const App: React.FC = () => {
         )}
 
         {/* Workspace Context Bar */}
-        <div className="px-4 lg:px-6 py-2 flex items-center justify-between border-b border-white/10 text-xs font-mono bg-zinc-950/60 backdrop-blur-md">
-          <div className="flex items-center gap-2">
-            <span className="text-zinc-500 uppercase text-[10px] tracking-wider">Workspace:</span>
-            <span className="font-semibold text-zinc-200 uppercase text-xs">
+        <div className="px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 text-xs font-mono bg-zinc-950/60 backdrop-blur-md min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-zinc-500 uppercase text-[10px] tracking-wider shrink-0">Workspace:</span>
+            <span className="font-semibold text-zinc-200 uppercase text-xs truncate">
               {currentTab === 'dashboard' && 'Unified Trading Desk'}
               {currentTab === 'signals' && 'Multi-Timeframe Confluence Matrix'}
               {currentTab === 'positions' && 'Position & Order Management'}
@@ -730,7 +754,7 @@ export const App: React.FC = () => {
             </span>
           </div>
 
-          <div className="flex items-center gap-3 text-[11px]">
+          <div className="flex items-center gap-3 text-[11px] shrink-0">
             <span className="hidden sm:inline text-zinc-400">
               Active Instrument: <strong className="text-zinc-200">XAU/USD (Gold Focus)</strong>
             </span>
@@ -747,8 +771,8 @@ export const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Main Content Body */}
-        <main className="flex-1 p-4 lg:p-6 space-y-6 max-w-[1600px] w-full mx-auto">
+        {/* Main Content Body - Responsive Padding & Overflow Boundary */}
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 space-y-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-hidden">
           {/* 1. UNIFIED DASHBOARD TAB */}
           {currentTab === 'dashboard' && (
             <>

@@ -123,9 +123,9 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
     : stats.totalTrades > 0 ? stats.winRate : null;
 
   return (
-    <div className="space-y-4">
-      {/* 4 Stats Cards Grid - Glassmorphism & Modern Typography */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+    <div className="space-y-4 w-full min-w-0">
+      {/* 4 Stats Cards Grid - Responsive CSS Grid & Auto-stretch */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 w-full min-w-0">
         {/* Win Rate */}
         <KPICard
           label="Win Rate"
@@ -184,28 +184,28 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         />
       </div>
 
-      {/* Equity Curve Area Chart - Glassmorphic Linear-Inspired Container */}
-      <div className="relative overflow-hidden rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-5 shadow-2xl transition-all duration-300">
+      {/* Equity Curve Area Chart - Responsive Fluid Container */}
+      <div className="relative min-w-0 w-full overflow-hidden rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-4 sm:p-5 lg:p-6 shadow-2xl transition-all duration-300">
         {/* Subtle top edge highlight */}
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-white/10">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-white tracking-wide">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-white/10 min-w-0">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-semibold text-white tracking-wide truncate">
                 Portfolio Equity Trajectory
               </h2>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-white/5 text-zinc-400 border border-white/10">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono uppercase bg-white/5 text-zinc-400 border border-white/10 shrink-0">
                 Mark-to-Market
               </span>
             </div>
-            <p className="text-xs text-zinc-400 mt-1 font-sans">
+            <p className="text-xs text-zinc-400 mt-1 font-sans line-clamp-1 sm:line-clamp-none">
               Walk-forward institutional equity curve with continuous floating drawdown estimation
             </p>
           </div>
 
           {/* Timeframe selector pill */}
-          <div className="flex items-center p-1 rounded-xl bg-zinc-950/60 border border-white/10">
+          <div className="flex items-center p-1 rounded-xl bg-zinc-950/60 border border-white/10 shrink-0 self-start sm:self-auto">
             {(['1W', '1M', '3M', 'ALL'] as TimeframeKey[]).map((tf) => (
               <button
                 key={tf}
@@ -223,7 +223,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         </div>
 
         {/* Chart Canvas */}
-        <div className="h-64 w-full pt-4">
+        <div className="h-64 sm:h-72 w-full pt-4 min-w-0 overflow-hidden">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <defs>

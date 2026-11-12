@@ -32,7 +32,7 @@ export const NewsRiskMonitor: React.FC<NewsRiskMonitorProps> = ({
   onSyncCalendar,
 }) => {
   return (
-    <div className="space-y-4 font-mono">
+    <div className="space-y-4 font-mono w-full min-w-0">
       {/* Risk Status Banner */}
       <div
         className={`rounded-lg p-4 border transition-colors ${

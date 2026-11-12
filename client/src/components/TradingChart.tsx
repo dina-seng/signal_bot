@@ -152,7 +152,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   };
 
   return (
-    <div className="rounded-lg p-4 bg-[#111319] border border-[#1d2230] space-y-3 font-mono">
+    <div className="relative min-w-0 w-full overflow-hidden rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-4 sm:p-5 space-y-3 font-mono shadow-2xl">
       {/* Chart Top Header & Toolbar */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-2.5 border-b border-[#1d2230]">
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -356,7 +356,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       </div>
 
       {/* SVG Candlestick Canvas & Custom High-Resolution Visualizer */}
-      <div className="relative w-full h-80 bg-[#0a0b10] rounded border border-[#1d2230] overflow-hidden p-2">
+      <div className="relative w-full min-w-0 h-80 bg-zinc-950/80 rounded-xl border border-white/10 overflow-hidden p-2">
         <ResponsiveContainer width="100%" height="80%">
           <ComposedChart data={candles} margin={{ top: 12, right: 15, left: 5, bottom: 0 }}>
             <CartesianGrid strokeDasharray="2 2" stroke="#151824" vertical={false} />

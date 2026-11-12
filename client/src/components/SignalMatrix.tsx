@@ -164,29 +164,29 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
   const activeSignals = signals.filter((s) => s.symbol === 'XAU/USD');
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 w-full min-w-0 overflow-hidden">
       {/* Sleek Glassmorphic Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 min-w-0">
+        <div className="flex items-center gap-3 flex-wrap min-w-0">
+          <div className="flex items-center gap-2 shrink-0">
             <Layers className="w-4 h-4 text-emerald-400" />
-            <h2 className="text-sm font-semibold text-white tracking-wide uppercase font-mono">
+            <h2 className="text-sm font-semibold text-white tracking-wide uppercase font-mono truncate">
               Confluence Matrix
             </h2>
           </div>
 
           {/* Real-time Ticking Indicator */}
-          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)]">
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)] shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             LIVE TICKING &bull; 1s
           </span>
 
-          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-white/5 text-zinc-400 border border-white/10 hidden md:flex items-center gap-1.5">
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-white/5 text-zinc-400 border border-white/10 hidden md:flex items-center gap-1.5 shrink-0">
             Single-Asset Focus &bull; XAU/USD
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0 self-start sm:self-auto">
           {onTriggerScan && (
             <button
               onClick={onTriggerScan}
@@ -210,16 +210,16 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
         </div>
       </div>
 
-      {/* Signal Cards Display - Graceful Degradation for Single-Asset */}
+      {/* Signal Cards Display - Responsive Grid with min-w-0 overflow safety */}
       {activeSignals.length === 0 ? (
-        <div className="rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-10 text-center font-mono">
+        <div className="rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-8 sm:p-10 text-center font-mono w-full min-w-0">
           <p className="text-sm text-zinc-300 font-semibold mb-1">No Active Signals For XAU/USD</p>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-zinc-500 max-w-md mx-auto">
             Awaiting confirmed liquidity sweep and order-flow imbalance before triggering trade setup.
           </p>
         </div>
       ) : (
-        <div className={activeSignals.length === 1 ? "grid grid-cols-1 max-w-3xl mx-auto" : "grid grid-cols-1 lg:grid-cols-2 gap-4.5"}>
+        <div className={activeSignals.length === 1 ? "w-full min-w-0" : "grid grid-cols-1 xl:grid-cols-2 gap-6 w-full min-w-0"}>
           {activeSignals.map((sig) => (
             <ConfluenceCard
               key={sig.id}

@@ -101,7 +101,7 @@ class TelegramCommandHandler:
             else:
                 sym = self._normalize_symbol(parts[1])
 
-                if sym not in settings.SUPPORTED_SYMBOLS:
+                if sym == "US100":
                     reply = (
                         f"⚠️ *Asset Quarantined / Inactive*\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"

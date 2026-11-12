@@ -83,10 +83,10 @@ export const Header: React.FC<HeaderProps> = ({
     : 'Simulation Active';
 
   return (
-    <header className="sticky top-0 z-30 w-full bg-zinc-950/80 backdrop-blur-md border-b border-white/10 px-4 lg:px-6 py-2.5 transition-colors">
-      <div className="flex items-center justify-between gap-3 flex-wrap xl:flex-nowrap">
+    <header className="sticky top-0 z-30 w-full bg-zinc-950/80 backdrop-blur-md border-b border-white/10 px-4 sm:px-6 lg:px-8 py-2.5 transition-colors">
+      <div className="flex items-center justify-between gap-3 flex-wrap lg:flex-nowrap min-w-0">
         {/* Left: Terminal Branding & Unified System Status Pill */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={onToggleMobileSidebar}
             className="lg:hidden p-2 rounded-xl bg-white/5 text-zinc-400 hover:text-white border border-white/10 transition-colors cursor-pointer"
@@ -240,10 +240,10 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Right: Glassmorphic Financial Metrics & Synchronization Controls */}
-        <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap justify-end">
+        {/* Right: Glassmorphic Financial Metrics & Synchronization Controls (Fluid wrapping & no squish) */}
+        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap sm:flex-nowrap overflow-x-auto max-w-full py-0.5 justify-end">
           {/* Account Balance */}
-          <div className="flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08]">
+          <div className="flex items-baseline gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
             <span className="text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">BAL:</span>
             <span className="text-xs sm:text-sm font-semibold text-white">
               {formatCurrency(account.balance)}
@@ -251,7 +251,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Equity */}
-          <div className="flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08]">
+          <div className="flex items-baseline gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
             <span className="text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">EQ:</span>
             <span className="text-xs sm:text-sm font-semibold text-white">
               {formatCurrency(account.equity)}
@@ -260,7 +260,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Floating P&L */}
           <div
-            className={`flex items-baseline gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md border font-mono transition-all ${
+            className={`flex items-baseline gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl backdrop-blur-md border font-mono transition-all shrink-0 ${
               pnlMeta.isPositive
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/15'
                 : 'bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500/15'
@@ -277,7 +277,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Polling Countdown Indicator */}
           <div
-            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-mono text-zinc-400"
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[10px] font-mono text-zinc-400 shrink-0"
             title="Automated backend sync countdown"
           >
             <span
@@ -292,7 +292,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onRefresh}
             disabled={isRefreshing}
-            className={`px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 hover:border-white/20 text-xs font-mono font-medium flex items-center gap-1.5 transition-all duration-300 cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 hover:border-white/20 text-xs font-mono font-medium flex items-center gap-1.5 transition-all duration-300 cursor-pointer shrink-0 ${
               isRefreshing ? 'opacity-70 cursor-wait' : ''
             }`}
             title="Trigger manual sync across all API endpoints"
