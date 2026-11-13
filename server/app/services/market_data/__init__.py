@@ -5,6 +5,7 @@ from app.core.logging import logger
 
 from app.services.market_data.base import BaseMarketDataProvider
 from app.services.market_data.twelvedata_provider import TwelveDataProvider
+from app.services.market_data.yfinance_provider import YahooFinanceProvider
 from app.services.market_data.mock_provider import MockMarketDataProvider
 from app.services.market_data.ingestion import IngestionService
 
@@ -30,24 +31,25 @@ def get_market_data_provider(provider_name: str = "twelvedata") -> BaseMarketDat
     
     if name in ("twelvedata", "twelve", "twelve_data"):
         api_key = getattr(settings, "TWELVE_DATA_API_KEY", None) or getattr(settings, "TWELVEDATA_API_KEY", None)
-        if not api_key:
-            logger.warning("TWELVE_DATA_API_KEY is missing in environment variables. Falling back to Mock provider.")
-            return MockMarketDataProvider()
-        
+        # Even if api_key is None, TwelveDataProvider automatically falls back to YahooFinanceProvider
         return TwelveDataProvider(api_key=api_key) 
         
+    elif name in ("yfinance", "yahoo", "yahoofinance"):
+        return YahooFinanceProvider()
+
     elif name == "mock":
         return MockMarketDataProvider()
         
     else:
         # Safe default fallback
-        logger.warning(f"Provider '{name}' not found or unavailable. Falling back to Mock provider.")
-        return MockMarketDataProvider()
+        logger.warning(f"Provider '{name}' not found or unavailable. Falling back to TwelveDataProvider with Yahoo fallback.")
+        return TwelveDataProvider(api_key=getattr(settings, "TWELVE_DATA_API_KEY", None))
 
 
 __all__ = [
     "BaseMarketDataProvider",
     "TwelveDataProvider",
+    "YahooFinanceProvider",
     "MockMarketDataProvider",
     "IngestionService",
     "get_market_data_provider",

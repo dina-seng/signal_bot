@@ -209,7 +209,11 @@ class SignalGenerator:
         persist_qualified: bool = True,
     ) -> MarketScanResponse:
         """Scan multiple currency pairs, evaluate setups, check news blackouts, and generate signals."""
-        target_symbols = symbols or settings.SUPPORTED_SYMBOLS
+        raw_symbols = symbols or settings.SUPPORTED_SYMBOLS
+        target_symbols = [
+            s for s in raw_symbols 
+            if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+        ] or ["XAU/USD"]
         results: List[MarketScanSymbolResult] = []
         actionable_count = 0
         now_utc = datetime.now(timezone.utc)
@@ -603,7 +607,11 @@ class SignalGenerator:
         persist_qualified: bool = True,
     ) -> MarketScanResponse:
         """Execute unified multi-timeframe scan across all target symbols."""
-        target_symbols = symbols or settings.SUPPORTED_SYMBOLS
+        raw_symbols = symbols or settings.SUPPORTED_SYMBOLS
+        target_symbols = [
+            s for s in raw_symbols 
+            if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+        ] or ["XAU/USD"]
         results: List[MarketScanSymbolResult] = []
         actionable_count = 0
         now_utc = datetime.now(timezone.utc)

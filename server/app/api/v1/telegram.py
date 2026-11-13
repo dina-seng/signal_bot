@@ -1,5 +1,6 @@
 """Telegram Bot and Background Market Scanner API Endpoints."""
 
+import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -110,17 +111,27 @@ async def telegram_webhook(
         )
 
         if cmd_root in _HEAVY_COMMANDS:
-            # Task 1: Immediately acknowledge receipt to the user
-            ack_text = "🔄 Processing request... analyzing market data. Please wait."
-            try:
-                await service.client.send_message(
-                    text=ack_text,
-                    chat_id=chat_id,
-                )
-            except Exception as ack_err:
-                logger.warning(f"Could not send acknowledgement message to {chat_id}: {ack_err}")
+            # Task 4: Fast instant acknowledgement and non-blocking background dispatch
+            if cmd_root == "/scan":
+                ack_text = "⚡ Scanning XAU/USD... Please wait while fresh market data is analyzed."
+            elif cmd_root == "/sync":
+                ack_text = "🔄 Syncing fresh market data for XAU/USD... Please wait."
+            else:
+                ack_text = "🔄 Processing request... analyzing market data. Please wait."
 
-            # Task 1: Offload the heavy scanning logic to BackgroundTasks so webhook returns 200 OK instantly
+            if chat_id:
+                try:
+                    await asyncio.wait_for(
+                        service.client.send_message(
+                            text=ack_text,
+                            chat_id=chat_id,
+                        ),
+                        timeout=2.0,
+                    )
+                except Exception as ack_err:
+                    logger.warning(f"Could not send acknowledgement message to {chat_id}: {ack_err}")
+
+            # Offload heavy multi-timeframe analysis & DB sync to BackgroundTasks so webhook returns 200 OK instantly
             background_tasks.add_task(_run_command_in_background, service, cmd_req)
             return {"status": "success", "command": cmd_root, "reply": ack_text}
 

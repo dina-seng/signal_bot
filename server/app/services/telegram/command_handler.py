@@ -17,6 +17,7 @@ from app.services.market_data import (
     BaseMarketDataProvider,
     IngestionService,
     check_data_staleness,
+    ensure_utc_datetime,
     filter_closed_candles,
     get_market_data_provider,
     log_latest_candle,
@@ -60,9 +61,13 @@ class TelegramCommandHandler:
         self.formatter = TelegramMessageFormatter()
 
     def _normalize_symbol(self, raw: str) -> str:
-        """Normalize currency symbol string."""
+        """Normalize currency symbol string with strict quarantine of unsupported assets."""
         s = raw.upper().replace("%2F", "/").strip()
-        for sym in settings.SUPPORTED_SYMBOLS:
+        active_symbols = [
+            sym for sym in settings.SUPPORTED_SYMBOLS 
+            if "US100" not in sym.upper() and "NDX" not in sym.upper() and "IXIC" not in sym.upper()
+        ] or ["XAU/USD"]
+        for sym in active_symbols:
             if sym.replace("/", "") == s.replace("/", ""):
                 return sym
         return s
@@ -83,9 +88,61 @@ class TelegramCommandHandler:
         # 2. Unified Multi-Timeframe Market Scanner (/scan)
         # -------------------------------------------------------------
         elif cmd_name == "/scan":
+            # Strict single-asset enforcement: strictly scan XAU/USD (US100 quarantined)
+            scan_symbols = [
+                s for s in settings.SUPPORTED_SYMBOLS 
+                if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+            ] or ["XAU/USD"]
+
+            # Auto-Refresh When Stale on /scan:
+            # Check latest candle age for XAU/USD. If older than 20 minutes (STALE), sync fresh data.
+            now_utc = datetime.now(timezone.utc)
+            latest_candle = db.scalars(
+                select(Candle)
+                .where(Candle.symbol == "XAU/USD", Candle.timeframe == "15m")
+                .order_by(desc(Candle.timestamp))
+                .limit(1)
+            ).first()
+            if not latest_candle:
+                latest_candle = db.scalars(
+                    select(Candle)
+                    .where(Candle.symbol == "XAU/USD")
+                    .order_by(desc(Candle.timestamp))
+                    .limit(1)
+                ).first()
+
+            is_stale = False
+            if not latest_candle or not latest_candle.timestamp:
+                is_stale = True
+            else:
+                candle_ts = ensure_utc_datetime(latest_candle.timestamp)
+                candle_age_seconds = (now_utc - candle_ts).total_seconds()
+                if candle_age_seconds > 20 * 60:
+                    is_stale = True
+
+            if is_stale:
+                logger.info("XAU/USD candles are STALE (>20m) on /scan. Auto-syncing fresh 15m, 30m, 1h candles...")
+                provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
+                ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
+                ingest_svc.db = db
+                for tf in ["15m", "30m", "1h", "4h"]:
+                    try:
+                        await ingest_svc.sync_symbol_timeframe(
+                            symbol="XAU/USD",
+                            timeframe=tf,
+                            limit=100,
+                            force_refresh=True,
+                        )
+                    except Exception as e:
+                        logger.error(f"Auto-refresh sync failed for XAU/USD [{tf}]: {e}")
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
             scan_res = self.signal_generator.scan_unified_all(
                 db=db,
-                symbols=settings.SUPPORTED_SYMBOLS,
+                symbols=scan_symbols,
                 account_balance=10000.0,
                 risk_percent=0.5,
                 persist_qualified=True,
@@ -101,12 +158,12 @@ class TelegramCommandHandler:
             else:
                 sym = self._normalize_symbol(parts[1])
 
-                if sym == "US100":
+                if sym in ("US100", "NDX", "IXIC"):
                     reply = (
                         f"⚠️ *Asset Quarantined / Inactive*\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"`{self.formatter.escape_code(sym)}` is temporarily suspended due to market data API paywalls.\n"
-                        f"Active instrument: `{self.formatter.escape_code(settings.SUPPORTED_SYMBOLS[0])}` (Gold)."
+                        f"`{self.formatter.escape_code(sym)}` is completely quarantined due to market data API paywalls.\n"
+                        f"Active instrument: `XAU/USD` (Gold)."
                     )
                 else:
                     # 1. Provider <-> DB Synchronization: Refresh fresh candle data from provider
@@ -282,17 +339,28 @@ class TelegramCommandHandler:
 
             synced_count = 0
             target_timeframes = ["15m", "30m", "1h"] 
+            sync_symbols = [
+                s for s in settings.SUPPORTED_SYMBOLS 
+                if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+            ] or ["XAU/USD"]
 
-            for sym in settings.SUPPORTED_SYMBOLS:
+            for sym in sync_symbols:
                 for tf in target_timeframes:
                     try:
-                        await ingest_svc.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
+                        await ingest_svc.sync_symbol_timeframe(
+                            symbol=sym, timeframe=tf, limit=100, force_refresh=True
+                        )
                         synced_count += 1
                     except Exception as e:
                         logger.error(f"Manual sync failed for {sym} [{tf}]: {e}")
 
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+
             reply += f"✅ *Sync Complete!*\n"
-            reply += f"📊 *Pairs Synced:* {len(settings.SUPPORTED_SYMBOLS)}\n"
+            reply += f"📊 *Pairs Synced:* {len(sync_symbols)}\n"
             reply += f"⏱ *Timeframes:* {', '.join(target_timeframes)}\n"
             reply += f"🔄 *Total API Fetches:* {synced_count}\n"
             reply += "━━━━━━━━━━━━━━━━━━━━\n"

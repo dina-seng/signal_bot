@@ -31,19 +31,17 @@ SYMBOL_METADATA = {
         pip_size=0.01,
         description="US Dollar / Japanese Yen",
     ),
-    "US100": MarketSymbolInfo(
-        symbol="US100",
-        base_currency="US100",
-        quote_currency="USD",
-        pip_size=1.0,
-        description="Nasdaq 100 Index CFD",
-    ),
+    # US100 completely quarantined due to API paywall
 }
 
 
 @router.get("/symbols", response_model=List[MarketSymbolInfo])
 def get_supported_symbols():
     """Retrieve list of supported Forex & Commodity symbols."""
+    active_symbols = [
+        s for s in settings.SUPPORTED_SYMBOLS 
+        if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+    ] or ["XAU/USD"]
     return [
         SYMBOL_METADATA.get(
             sym,
@@ -55,7 +53,7 @@ def get_supported_symbols():
                 description=f"Forex pair {sym}",
             ),
         )
-        for sym in settings.SUPPORTED_SYMBOLS
+        for sym in active_symbols
     ]
 
 

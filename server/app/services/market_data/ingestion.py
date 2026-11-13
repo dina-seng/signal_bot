@@ -221,11 +221,12 @@ class IngestionService:
         limit: int = 200,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
+        force_refresh: bool = False,
     ) -> IngestionReport:
         """Fetch candles from provider and ingest into database with smart freshness cache and defensive 0-candle handling."""
         # ── Smart Freshness Cache Gate ────────────────────────────────────────────
-        # When no explicit historical window is specified, check if DB already has the latest closed candle.
-        if start_time is None and end_time is None:
+        # When no explicit historical window is specified and not forcing refresh, check if DB already has the latest closed candle.
+        if start_time is None and end_time is None and not force_refresh:
             try:
                 latest_candle = self.db.scalars(
                     select(Candle)
@@ -271,11 +272,41 @@ class IngestionService:
             if not candles:
                 logger.warning(
                     f"Market data provider returned 0 candles for {symbol} [{timeframe}]. "
+                    f"Attempting fallback to YahooFinanceProvider..."
+                )
+                from app.services.market_data.yfinance_provider import YahooFinanceProvider
+                fallback_provider = YahooFinanceProvider()
+                candles = await fallback_provider.fetch_candles(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_time=start_time,
+                    end_time=end_time,
+                    limit=limit,
+                )
+
+            if not candles:
+                logger.warning(
+                    f"All market data providers returned 0 candles for {symbol} [{timeframe}]. "
                     f"Ingestion cycle skipped defensively."
                 )
             return self.ingest_candles(candles, symbol, timeframe)
         except Exception as e:
             logger.error(f"Ingestion sync failed for {symbol} [{timeframe}]: {e}", exc_info=True)
+            try:
+                from app.services.market_data.yfinance_provider import YahooFinanceProvider
+                fallback_provider = YahooFinanceProvider()
+                candles = await fallback_provider.fetch_candles(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_time=start_time,
+                    end_time=end_time,
+                    limit=limit,
+                )
+                if candles:
+                    return self.ingest_candles(candles, symbol, timeframe)
+            except Exception as fb_e:
+                logger.error(f"Fallback ingestion failed for {symbol} [{timeframe}]: {fb_e}")
+
             return IngestionReport(
                 symbol=symbol,
                 timeframe=timeframe,

@@ -92,5 +92,15 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("SUPPORTED_SYMBOLS", mode="after")
+    @classmethod
+    def quarantine_unsupported_symbols(cls, value: List[str]) -> List[str]:
+        # Strict single-asset gold enforcement: completely quarantine US100 / index CFDs
+        filtered = [
+            s for s in value 
+            if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+        ]
+        return filtered if filtered else ["XAU/USD"]
+
 
 settings = Settings()

@@ -58,11 +58,15 @@ def get_scheduler_info() -> Dict[str, Any]:
             next_run_time = job.next_run_time
 
     scanner = get_shared_scanner()
+    active_symbols = [
+        s for s in settings.SUPPORTED_SYMBOLS 
+        if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+    ] or ["XAU/USD"]
     return {
         "is_enabled": settings.SCANNER_ENABLED,
         "is_running": running,
         "schedule": "15-minute candle-close (:00:10, :15:10, :30:10, :45:10 UTC)",
-        "scanned_symbols": settings.SUPPORTED_SYMBOLS,
+        "scanned_symbols": active_symbols,
         "scanned_timeframes": settings.SCANNER_TIMEFRAMES,
         "auto_paper_trade": settings.SCANNER_AUTO_TRADE_PAPER,
         "last_scan_at": scanner._last_scan_at,
@@ -125,7 +129,10 @@ def start_scanner_scheduler(
         try:
             await target_scanner.run_scan_cycle(
                 db=db,
-                symbols=settings.SUPPORTED_SYMBOLS,
+                symbols=[
+                    s for s in settings.SUPPORTED_SYMBOLS 
+                    if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+                ] or ["XAU/USD"],
                 timeframes=settings.SCANNER_TIMEFRAMES,
                 broadcast_to_telegram=True,
                 auto_paper_trade=settings.SCANNER_AUTO_TRADE_PAPER,

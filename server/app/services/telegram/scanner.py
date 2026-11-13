@@ -283,7 +283,11 @@ class AutomatedMarketScanner:
         async with self._lock:
             start_time = time.time()
             now = datetime.now(timezone.utc)
-            target_symbols = symbols or settings.SUPPORTED_SYMBOLS
+            raw_symbols = symbols or settings.SUPPORTED_SYMBOLS
+            target_symbols = [
+                s for s in raw_symbols 
+                if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+            ] or ["XAU/USD"]
 
             # Resolve target timeframes
             if timeframes:
@@ -527,7 +531,10 @@ class AutomatedMarketScanner:
         return ScannerStatusResponse(
             is_enabled=settings.SCANNER_ENABLED,
             interval_minutes=settings.SCANNER_INTERVAL_MINUTES,
-            scanned_symbols=settings.SUPPORTED_SYMBOLS,
+            scanned_symbols=[
+                s for s in settings.SUPPORTED_SYMBOLS 
+                if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
+            ] or ["XAU/USD"],
             scanned_timeframes=settings.SCANNER_TIMEFRAMES,
             auto_paper_trade=settings.SCANNER_AUTO_TRADE_PAPER,
             is_running=is_running,
