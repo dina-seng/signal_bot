@@ -15,9 +15,10 @@ import {
   Sparkles,
   RefreshCw,
   TrendingUp,
+  Activity,
 } from 'lucide-react';
 import { PairSymbol } from '../types';
-import { generateCandles, CandleData } from '../data/mockData';
+import { CandleData } from '../data/mockData';
 import {
   quantViewApi,
   BackendFairValueGap,
@@ -53,7 +54,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [showEMA, setShowEMA] = useState<boolean>(true);
   const [showFVG, setShowFVG] = useState<boolean>(true);
   const [showSR, setShowSR] = useState<boolean>(true);
-  const [candles, setCandles] = useState<CandleData[]>(() => generateCandles(selectedSymbol));
+  const [candles, setCandles] = useState<CandleData[]>([]);
   const [isRealData, setIsRealData] = useState<boolean>(false);
 
   // Backend live indicator states
@@ -65,10 +66,16 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const priceDecimals = 2;
 
   // Fetch real candles, indicators, SMC liquidity zones, and structure from backend
+  // Polling interval: 60s, paused when document is hidden, protected with in-flight guard
   useEffect(() => {
     let isCancelled = false;
+    let isFetching = false;
 
     async function loadChartData() {
+      if (isFetching) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      isFetching = true;
+
       try {
         const [candlesRes, indRes, liqRes, structRes] = await Promise.allSettled([
           quantViewApi.getCandles(selectedSymbol, selectedTimeframe, 35),
@@ -99,7 +106,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               high: c.high,
               low: c.low,
               close: c.close,
-              volume: c.volume || Math.floor(Math.random() * 6000 + 1500),
+              volume: c.volume || 0,
               ema20: ema20Series[i] || c.close,
               ema50: ema50Series[i] || c.close,
               ema200: ema200Series[i] || c.close,
@@ -110,7 +117,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           setCandles(mapped);
           setIsRealData(true);
         } else {
-          setCandles(generateCandles(selectedSymbol));
+          setCandles([]);
           setIsRealData(false);
         }
 
@@ -130,26 +137,32 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         }
       } catch {
         if (!isCancelled) {
-          setCandles(generateCandles(selectedSymbol));
+          setCandles([]);
           setIsRealData(false);
         }
+      } finally {
+        isFetching = false;
       }
     }
 
     loadChartData();
+    const interval = setInterval(loadChartData, 60000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadChartData();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       isCancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [selectedSymbol, selectedTimeframe, priceDecimals]);
 
-  const lastCandle = candles[candles.length - 1] || {
-    open: 0,
-    high: 0,
-    low: 0,
-    close: 0,
-    volume: 0,
-    isGreen: true,
-  };
+  const lastCandle = candles.length > 0 ? candles[candles.length - 1] : null;
 
   return (
     <div className="relative min-w-0 w-full overflow-hidden rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-4 sm:p-5 space-y-3 font-mono shadow-2xl">
@@ -197,10 +210,10 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
               isRealData
                 ? 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30'
-                : 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
+                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
             }`}
           >
-            {isRealData ? 'LIVE DB CANDLES' : 'SYNTHETIC OHLC'}
+            {isRealData ? 'LIVE DB CANDLES' : 'AWAITING DATA'}
           </span>
 
           <button
@@ -330,22 +343,22 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       <div className="flex items-center justify-between gap-3 text-[11px] px-2.5 py-1.5 rounded bg-[#0a0b10] border border-[#1d2230] overflow-x-auto">
         <div className="flex items-center gap-3.5 text-slate-400">
           <span>
-            O: <strong className="text-slate-200">{formatPrice(selectedSymbol, lastCandle.open)}</strong>
+            O: <strong className="text-slate-200">{lastCandle ? formatPrice(selectedSymbol, lastCandle.open) : '--'}</strong>
           </span>
           <span>
-            H: <strong className="text-[#00e676]">{formatPrice(selectedSymbol, lastCandle.high)}</strong>
+            H: <strong className="text-[#00e676]">{lastCandle ? formatPrice(selectedSymbol, lastCandle.high) : '--'}</strong>
           </span>
           <span>
-            L: <strong className="text-[#ff3366]">{formatPrice(selectedSymbol, lastCandle.low)}</strong>
+            L: <strong className="text-[#ff3366]">{lastCandle ? formatPrice(selectedSymbol, lastCandle.low) : '--'}</strong>
           </span>
           <span>
             C:{' '}
-            <strong className={lastCandle.isGreen ? 'text-[#00e676]' : 'text-[#ff3366]'}>
-              {formatPrice(selectedSymbol, lastCandle.close)}
+            <strong className={lastCandle ? (lastCandle.isGreen ? 'text-[#00e676]' : 'text-[#ff3366]') : 'text-slate-200'}>
+              {lastCandle ? formatPrice(selectedSymbol, lastCandle.close) : '--'}
             </strong>
           </span>
           <span>
-            Vol: <strong className="text-slate-200">{lastCandle.volume.toLocaleString()}</strong>
+            Vol: <strong className="text-slate-200">{lastCandle ? lastCandle.volume.toLocaleString() : '--'}</strong>
           </span>
         </div>
 
@@ -357,126 +370,132 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
       {/* SVG Candlestick Canvas & Custom High-Resolution Visualizer */}
       <div className="relative w-full min-w-0 h-80 bg-zinc-950/80 rounded-xl border border-white/10 overflow-hidden p-2">
-        <ResponsiveContainer width="100%" height="80%">
-          <ComposedChart data={candles} margin={{ top: 12, right: 15, left: 5, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="2 2" stroke="#151824" vertical={false} />
-            <XAxis
-              dataKey="time"
-              stroke="#475569"
-              fontSize={10}
-              tickLine={false}
-              fontFamily="JetBrains Mono"
-            />
-            <YAxis
-              domain={['auto', 'auto']}
-              stroke="#475569"
-              fontSize={10}
-              tickLine={false}
-              axisLine={false}
-              orientation="right"
-              fontFamily="JetBrains Mono"
-              tickFormatter={(v) => formatPrice(selectedSymbol, v)}
-            />
+        {candles.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-zinc-500 font-mono text-xs">
+            <Activity className="w-5 h-5 animate-pulse text-cyan-400 mb-2" />
+            <span>Awaiting Candle Data...</span>
+          </div>
+        ) : (
+          <>
+            <ResponsiveContainer width="100%" height="80%">
+              <ComposedChart data={candles} margin={{ top: 12, right: 15, left: 5, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="2 2" stroke="#151824" vertical={false} />
+                <XAxis
+                  dataKey="time"
+                  stroke="#475569"
+                  fontSize={10}
+                  tickLine={false}
+                  fontFamily="JetBrains Mono"
+                />
+                <YAxis
+                  domain={['auto', 'auto']}
+                  stroke="#475569"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                  orientation="right"
+                  fontFamily="JetBrains Mono"
+                  tickFormatter={(v) => formatPrice(selectedSymbol, v)}
+                />
 
-            <Tooltip
-              content={({ active, payload }) => {
-                if (active && payload && payload.length) {
-                  const data = payload[0].payload as CandleData;
-                  return (
-                    <div className="p-2.5 bg-[#111319]/95 border border-[#1d2230] rounded shadow-terminal font-mono text-xs space-y-1 backdrop-blur-md">
-                      <p className="text-slate-400 font-bold border-b border-[#1d2230] pb-1">
-                        {data.time} ({selectedTimeframe})
-                      </p>
-                      <div className="grid grid-cols-2 gap-x-3 text-[11px]">
-                        <span className="text-slate-400">Open:</span>
-                        <span className="text-slate-200">{formatPrice(selectedSymbol, data.open)}</span>
-                        <span className="text-slate-400">High:</span>
-                        <span className="text-[#00e676]">{formatPrice(selectedSymbol, data.high)}</span>
-                        <span className="text-slate-400">Low:</span>
-                        <span className="text-[#ff3366]">{formatPrice(selectedSymbol, data.low)}</span>
-                        <span className="text-slate-400">Close:</span>
-                        <span className={data.isGreen ? 'text-[#00e676]' : 'text-[#ff3366]'}>
-                          {formatPrice(selectedSymbol, data.close)}
-                        </span>
-                      </div>
-                      {showEMA && (
-                        <div className="border-t border-[#1e1e2d] pt-1 text-[10px] space-y-0.5 text-purple-300">
-                          <div>EMA 20: {formatPrice(selectedSymbol, data.ema20)}</div>
-                          <div>EMA 50: {formatPrice(selectedSymbol, data.ema50)}</div>
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload as CandleData;
+                      return (
+                        <div className="p-2.5 bg-[#111319]/95 border border-[#1d2230] rounded shadow-terminal font-mono text-xs space-y-1 backdrop-blur-md">
+                          <p className="text-slate-400 font-bold border-b border-[#1d2230] pb-1">
+                            {data.time} ({selectedTimeframe})
+                          </p>
+                          <div className="grid grid-cols-2 gap-x-3 text-[11px]">
+                            <span className="text-slate-400">Open:</span>
+                            <span className="text-slate-200">{formatPrice(selectedSymbol, data.open)}</span>
+                            <span className="text-slate-400">High:</span>
+                            <span className="text-[#00e676]">{formatPrice(selectedSymbol, data.high)}</span>
+                            <span className="text-slate-400">Low:</span>
+                            <span className="text-[#ff3366]">{formatPrice(selectedSymbol, data.low)}</span>
+                            <span className="text-slate-400">Close:</span>
+                            <span className={data.isGreen ? 'text-[#00e676]' : 'text-[#ff3366]'}>
+                              {formatPrice(selectedSymbol, data.close)}
+                            </span>
+                          </div>
+                          {showEMA && (
+                            <div className="border-t border-[#1e1e2d] pt-1 text-[10px] space-y-0.5 text-purple-300">
+                              <div>EMA 20: {formatPrice(selectedSymbol, data.ema20)}</div>
+                              <div>EMA 50: {formatPrice(selectedSymbol, data.ema50)}</div>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  );
-                }
-                return null;
-              }}
-            />
+                      );
+                    }
+                    return null;
+                  }}
+                />
 
-            {/* Candlestick bodies via Custom Bar */}
-            <Bar
-              dataKey="close"
-              fill="#00e676"
-              shape={(props: any) => {
-                const { x, y, width, height, payload } = props;
-                const candle = payload as CandleData;
-                const isGreen = candle.isGreen;
-                const fillColor = isGreen ? '#00e676' : '#ff3366';
-                const strokeColor = isGreen ? '#00e676' : '#ff3366';
+                {/* Candlestick bodies via Custom Bar */}
+                <Bar
+                  dataKey="close"
+                  fill="#00e676"
+                  shape={(props: any) => {
+                    const { x, y, width, height, payload } = props;
+                    const candle = payload as CandleData;
+                    const isGreen = candle.isGreen;
+                    const fillColor = isGreen ? '#00e676' : '#ff3366';
+                    const strokeColor = isGreen ? '#00e676' : '#ff3366';
 
-                const bodyY = isGreen ? y : y;
-                const bodyH = Math.max(Math.abs(height * 0.15), 4);
+                    const bodyY = isGreen ? y : y;
+                    const bodyH = Math.max(Math.abs(height * 0.15), 4);
 
-                return (
-                  <g>
-                    {/* Wick */}
-                    <line
-                      x1={x + width / 2}
-                      y1={Math.max(bodyY - 12, 5)}
-                      x2={x + width / 2}
-                      y2={bodyY + bodyH + 12}
-                      stroke={strokeColor}
+                    return (
+                      <g>
+                        {/* Wick */}
+                        <line
+                          x1={x + width / 2}
+                          y1={Math.max(bodyY - 12, 5)}
+                          x2={x + width / 2}
+                          y2={bodyY + bodyH + 12}
+                          stroke={strokeColor}
+                          strokeWidth={1.5}
+                        />
+                        {/* Body */}
+                        <rect
+                          x={x + 2}
+                          y={bodyY}
+                          width={Math.max(width - 4, 3)}
+                          height={bodyH}
+                          fill={fillColor}
+                          stroke={strokeColor}
+                          rx={1}
+                        />
+                      </g>
+                    );
+                  }}
+                />
+
+                {/* EMA Lines Overlay */}
+                {showEMA && (
+                  <>
+                    <Line
+                      type="monotone"
+                      dataKey="ema20"
+                      stroke="#a855f7"
                       strokeWidth={1.5}
+                      dot={false}
+                      isAnimationActive={false}
                     />
-                    {/* Body */}
-                    <rect
-                      x={x + 2}
-                      y={bodyY}
-                      width={Math.max(width - 4, 3)}
-                      height={bodyH}
-                      fill={fillColor}
-                      stroke={strokeColor}
-                      rx={1}
+                    <Line
+                      type="monotone"
+                      dataKey="ema50"
+                      stroke="#38bdf8"
+                      strokeWidth={1.5}
+                      dot={false}
+                      isAnimationActive={false}
                     />
-                  </g>
-                );
-              }}
-            />
+                  </>
+                )}
 
-            {/* EMA Lines Overlay */}
-            {showEMA && (
-              <>
-                <Line
-                  type="monotone"
-                  dataKey="ema20"
-                  stroke="#a855f7"
-                  strokeWidth={1.5}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="ema50"
-                  stroke="#38bdf8"
-                  strokeWidth={1.5}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </>
-            )}
-
-            {/* Real Fair Value Gap (FVG) Reference Areas from Backend */}
-            {showFVG && indicatorData?.active_fvgs && indicatorData.active_fvgs.length > 0
-              ? indicatorData.active_fvgs.slice(0, 4).map((fvg, idx) => {
+                {/* Real Fair Value Gap (FVG) Reference Areas from Backend */}
+                {showFVG && indicatorData?.active_fvgs && indicatorData.active_fvgs.slice(0, 4).map((fvg, idx) => {
                   const isBullish = fvg.fvg_type === 'BULLISH_FVG';
                   return (
                     <ReferenceArea
@@ -489,53 +508,45 @@ export const TradingChart: React.FC<TradingChartProps> = ({
                       strokeDasharray="3 3"
                     />
                   );
-                })
-              : showFVG && (
-                  <ReferenceArea
-                    y1={lastCandle.open * 0.9997}
-                    y2={lastCandle.open * 1.0003}
-                    fill="#ffb800"
-                    fillOpacity={0.12}
-                    stroke="#ffb800"
-                    strokeDasharray="3 3"
+                })}
+
+                {/* Dynamic S/R Zones from SMC Backend */}
+                {showSR && liquidityZones?.sr_zones && liquidityZones.sr_zones.slice(0, 3).map((zone, idx) => {
+                  const isSupport = zone.zone_type === 'SUPPORT';
+                  return (
+                    <ReferenceArea
+                      key={`sr-${idx}`}
+                      y1={zone.price_low}
+                      y2={zone.price_high}
+                      fill={isSupport ? '#00d2ff' : '#a855f7'}
+                      fillOpacity={0.08}
+                      stroke={isSupport ? '#00d2ff' : '#a855f7'}
+                      strokeDasharray="2 2"
+                    />
+                  );
+                })}
+              </ComposedChart>
+            </ResponsiveContainer>
+
+            {/* Volume Sub-chart */}
+            <div className="h-[20%] w-full border-t border-[#151824] pt-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={candles} margin={{ top: 0, right: 15, left: 5, bottom: 0 }}>
+                  <Bar
+                    dataKey="volume"
+                    fill="#334155"
+                    shape={(props: any) => {
+                      const { x, y, width, height, payload } = props;
+                      const candle = payload as CandleData;
+                      const color = candle.isGreen ? 'rgba(0, 230, 118, 0.35)' : 'rgba(255, 51, 102, 0.35)';
+                      return <rect x={x + 2} y={y} width={Math.max(width - 4, 2)} height={height} fill={color} rx={1} />;
+                    }}
                   />
-                )}
-
-            {/* Dynamic S/R Zones from SMC Backend */}
-            {showSR && liquidityZones?.sr_zones && liquidityZones.sr_zones.slice(0, 3).map((zone, idx) => {
-              const isSupport = zone.zone_type === 'SUPPORT';
-              return (
-                <ReferenceArea
-                  key={`sr-${idx}`}
-                  y1={zone.price_low}
-                  y2={zone.price_high}
-                  fill={isSupport ? '#00d2ff' : '#a855f7'}
-                  fillOpacity={0.08}
-                  stroke={isSupport ? '#00d2ff' : '#a855f7'}
-                  strokeDasharray="2 2"
-                />
-              );
-            })}
-          </ComposedChart>
-        </ResponsiveContainer>
-
-        {/* Volume Sub-chart */}
-        <div className="h-[20%] w-full border-t border-[#151824] pt-1">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={candles} margin={{ top: 0, right: 15, left: 5, bottom: 0 }}>
-              <Bar
-                dataKey="volume"
-                fill="#334155"
-                shape={(props: any) => {
-                  const { x, y, width, height, payload } = props;
-                  const candle = payload as CandleData;
-                  const color = candle.isGreen ? 'rgba(0, 230, 118, 0.35)' : 'rgba(255, 51, 102, 0.35)';
-                  return <rect x={x + 2} y={y} width={Math.max(width - 4, 2)} height={height} fill={color} rx={1} />;
-                }}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Chart Footer Indicator Legend */}

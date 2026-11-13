@@ -70,7 +70,12 @@ export const App: React.FC = () => {
   const [apiResponseTimeMs, setApiResponseTimeMs] = useState<number>(24);
   const [lastUpdatedSecondsAgo, setLastUpdatedSecondsAgo] = useState<number>(0);
   const [apiErrorMessage, setApiErrorMessage] = useState<string | null>(null);
-  const [pollCountdown, setPollCountdown] = useState<number>(3);
+  const [pollCountdown, setPollCountdown] = useState<number>(30);
+
+  // In-flight request guards to avoid stacking overlapping requests
+  const isFetchingAccountRef = useRef<boolean>(false);
+  const isFetchingSignalsRef = useRef<boolean>(false);
+  const isFetchingNewsRef = useRef<boolean>(false);
 
   // UI interaction states
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
@@ -85,7 +90,7 @@ export const App: React.FC = () => {
 
   // Helper to trigger floating toasts
   const addToast = useCallback((type: 'success' | 'warning' | 'info', title: string, message: string) => {
-    const id = `${Date.now()}-${Math.random()}`;
+    const id = `${Date.now()}-${Date.now().toString(36)}`;
     setToasts((prev) => [...prev, { id, type, title, message }]);
   }, []);
 
@@ -93,8 +98,10 @@ export const App: React.FC = () => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // 1. Fetch Account & Positions (Every 3 seconds)
+  // 1. Fetch Account & Positions (Every 30 seconds)
   const fetchAccountAndPositions = useCallback(async () => {
+    if (isFetchingAccountRef.current) return;
+    isFetchingAccountRef.current = true;
     try {
       // Fetch Account
       const accRes = await quantViewApi.getAccount();
@@ -210,15 +217,19 @@ export const App: React.FC = () => {
       console.warn('[QuantView API] Account/Positions fetch failed:', err.message);
       setIsApiConnected(false);
       setApiErrorMessage(err.message || 'FastAPI backend connection refused');
+    } finally {
+      isFetchingAccountRef.current = false;
     }
   }, []);
 
-  // 2. Fetch Signals & Latest Prices (Every 10 seconds)
+  // 2. Fetch Signals & Latest Prices (Every 60 seconds)
   const fetchSignalsAndPrices = useCallback(async () => {
+    if (isFetchingSignalsRef.current) return;
+    isFetchingSignalsRef.current = true;
     try {
       // 1. Fetch live prices from candles for all pairs
       const prices = await quantViewApi.getLatestPrices();
-      if (Object.keys(prices).length > 0) {
+      if (prices && Object.keys(prices).length > 0) {
         setLivePrices(prices);
       }
 
@@ -228,7 +239,7 @@ export const App: React.FC = () => {
       console.log('[QuantView API] Signals response:', bSignals);
 
       if (Array.isArray(bSignals)) {
-        // Build 4 cards matching SUPPORTED_PAIRS
+        // Build cards matching SUPPORTED_PAIRS
         const matrixSignals: TradeSignal[] = SUPPORTED_PAIRS.map((sym) => {
           // Find matching unified signal for this symbol
           const matching = bSignals.find((s) => s.symbol === sym);
@@ -237,22 +248,26 @@ export const App: React.FC = () => {
           if (hasActiveActionable && matching) {
             const isBuy = matching.direction === 'BUY';
             const entry = matching.entry_price || prices[sym] || 0;
-            const sl = matching.stop_loss || entry * (isBuy ? 0.995 : 1.005);
-            const pipsAtRisk = Math.abs(Math.round(isBuy ? (entry - sl) * 10000 : (sl - entry) * 10000)) / 10;
-            const rr = matching.risk_reward || matching.risk_reward_ratio || 2.0;
+            const sl = matching.stop_loss || 0;
+            const pipsAtRisk = (entry > 0 && sl > 0)
+              ? Math.abs(Math.round(isBuy ? (entry - sl) * 10000 : (sl - entry) * 10000)) / 10
+              : undefined;
+            const rr = matching.risk_reward || matching.risk_reward_ratio;
+            const rawScore = matching.setup_score ?? matching.confluence_score;
+            const score = typeof rawScore === 'number' ? Math.round(rawScore) : 0;
 
             return {
               id: `SIG-${matching.id || sym}`,
               symbol: sym,
               direction: matching.direction,
-              confluenceScore: Math.round(matching.setup_score || matching.confluence_score || 80),
+              confluenceScore: score,
               timeframe: matching.timeframe || '15m',
               entryPrice: entry,
               stopLoss: sl,
-              takeProfit1: matching.take_profit_1 || (isBuy ? entry * 1.01 : entry * 0.99),
-              takeProfit2: matching.take_profit_2 || matching.take_profit_1 * 1.005 || (isBuy ? entry * 1.015 : entry * 0.985),
-              riskRewardRatio: `1:${rr.toFixed(1)}`,
-              pipsAtRisk: pipsAtRisk > 0 ? pipsAtRisk : 25,
+              takeProfit1: matching.take_profit_1 || 0,
+              takeProfit2: matching.take_profit_2 || 0,
+              riskRewardRatio: rr ? `1:${rr.toFixed(1)}` : '--',
+              pipsAtRisk,
               timestamp: matching.timestamp
                 ? new Date(matching.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' UTC'
                 : 'Active',
@@ -268,13 +283,14 @@ export const App: React.FC = () => {
           }
 
           // No active actionable setup currently for this pair:
-          // Display Unified Scanning card with real 1H context & score
-          const currentMarketPrice = prices[sym] || (sym === 'XAU/USD' ? 4411.60 : undefined);
-          const waitTf = matching?.timeframe || '1H';
-          const waitScore = matching ? Math.round(matching.setup_score || matching.confluence_score || 0) : 45;
+          // Display Unified Scanning card with real 15m context & score
+          const currentMarketPrice = prices[sym] || undefined;
+          const waitTf = matching?.timeframe || '15m';
+          const rawScore = matching ? (matching.setup_score ?? matching.confluence_score ?? 0) : 0;
+          const waitScore = Math.round(rawScore);
           const waitReason = (matching?.reasons && matching.reasons.length > 0)
             ? matching.reasons[0]
-            : (matching?.htf_trend ? `1H Trend: ${matching.htf_trend} • Awaiting high-confluence setup` : 'Scanning order flow for Breaker Blocks, Fair Value Gaps, and fractal swings.');
+            : (matching?.htf_trend ? `1H Trend: ${matching.htf_trend} • Awaiting high-confluence setup` : 'Awaiting Data: Scanning order flow for Breaker Blocks and Fair Value Gaps.');
 
           return {
             id: `SCAN-${sym}`,
@@ -296,11 +312,15 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       console.warn('[QuantView API] Signals fetch failed:', err.message);
+    } finally {
+      isFetchingSignalsRef.current = false;
     }
   }, []);
 
   // 3. Fetch News & Blackout Window (Every 60 seconds)
   const fetchNewsAndRisk = useCallback(async () => {
+    if (isFetchingNewsRef.current) return;
+    isFetchingNewsRef.current = true;
     try {
       // 1. Fetch economic calendar
       const newsRes = await quantViewApi.getNewsCalendar(30);
@@ -373,6 +393,8 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       console.warn('[QuantView API] News fetch failed:', err.message);
+    } finally {
+      isFetchingNewsRef.current = false;
     }
   }, []);
 
@@ -388,7 +410,7 @@ export const App: React.FC = () => {
       addToast('success', 'Terminal Synchronized', 'Fetched latest data from FastAPI backend.');
     } finally {
       setIsRefreshing(false);
-      setPollCountdown(3);
+      setPollCountdown(30);
     }
   };
 
@@ -407,6 +429,7 @@ export const App: React.FC = () => {
       } finally {
         if (isMounted) {
           setIsInitialLoading(false);
+          setPollCountdown(30);
         }
       }
     }
@@ -418,36 +441,56 @@ export const App: React.FC = () => {
     };
   }, [fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
 
-  // Polling Interval: 3s for Account/Positions, 10s for Signals, 60s for News
+  // Polling Interval: 30s for Paper Trading, 60s for Signals & News, paused when page is hidden
   useEffect(() => {
     let secondsCounter = 0;
 
     const timer = setInterval(() => {
+      // Guard: Pause polling completely when browser tab is hidden to save Neon DB compute
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+
       secondsCounter++;
 
       // Update age of last fetch
       setLastUpdatedSecondsAgo(Math.floor((Date.now() - lastFetchTimestampRef.current) / 1000));
 
-      // 3-Second Poll: Account & Positions
-      if (secondsCounter % 3 === 0) {
+      // 30-Second Poll: Paper Trading Endpoints (Account, Positions, Trades, Performance)
+      if (secondsCounter % 30 === 0) {
         fetchAccountAndPositions();
-        setPollCountdown(3);
+        setPollCountdown(30);
       } else {
-        setPollCountdown((prev) => (prev > 1 ? prev - 1 : 3));
+        setPollCountdown((prev) => (prev > 1 ? prev - 1 : 30));
       }
 
-      // 10-Second Poll: Signals & Prices
-      if (secondsCounter % 10 === 0) {
-        fetchSignalsAndPrices();
-      }
-
-      // 60-Second Poll: News Calendar
+      // 60-Second Poll: Signals, Market Prices & News Calendar
       if (secondsCounter % 60 === 0) {
+        fetchSignalsAndPrices();
         fetchNewsAndRisk();
       }
     }, 1000);
 
-    return () => clearInterval(timer);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const elapsedSec = Math.floor((Date.now() - lastFetchTimestampRef.current) / 1000);
+        if (elapsedSec >= 30) {
+          fetchAccountAndPositions();
+          setPollCountdown(30);
+        }
+        if (elapsedSec >= 60) {
+          fetchSignalsAndPrices();
+          fetchNewsAndRisk();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
 
   // Per-pair notification toggle

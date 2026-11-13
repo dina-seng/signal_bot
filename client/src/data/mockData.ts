@@ -11,30 +11,30 @@ import {
 } from '../types';
 
 export const initialAccountSummary: AccountSummary = {
-  balance: 100,
-  equity: 100,
-  unrealizedPnl: 23.52,
-  unrealizedPnlPercent: 0.29,
-  marginUsed: 155.39,
-  marginAvailable: 7916.13,
-  marginLevelPercent: 5194.36,
-  activePositionsCount: 2,
-  todayPnl: 23.52,
-  brokerStatus: 'CONNECTED',
-  latencyMs: 14,
+  balance: 0,
+  equity: 0,
+  unrealizedPnl: 0,
+  unrealizedPnlPercent: 0,
+  marginUsed: 0,
+  marginAvailable: 0,
+  marginLevelPercent: 0,
+  activePositionsCount: 0,
+  todayPnl: 0,
+  brokerStatus: 'RECONNECTING',
+  latencyMs: 0,
 };
 
 export const initialPerformanceStats: PerformanceStats = {
-  winRate: 68.4,
-  winRateDelta: 1.8,
-  profitFactor: 2.15,
-  profitFactorDelta: 0.12,
-  totalTrades: 4,
-  totalTradesDelta: 2,
-  maxDrawdown: 3.4,
-  maxDrawdownDelta: -0.2,
-  sharpeRatio: 1.94,
-  expectancyPips: 16.5,
+  winRate: 0,
+  winRateDelta: 0,
+  profitFactor: 0,
+  profitFactorDelta: 0,
+  totalTrades: 0,
+  totalTradesDelta: 0,
+  maxDrawdown: 0,
+  maxDrawdownDelta: 0,
+  sharpeRatio: 0,
+  expectancyPips: 0,
 };
 
 export const equityHistoryData: Record<'1W' | '1M' | '3M' | 'ALL', EquityDataPoint[]> = {
@@ -72,83 +72,20 @@ export const equityHistoryData: Record<'1W' | '1M' | '3M' | 'ALL', EquityDataPoi
 
 export const initialSignals: TradeSignal[] = [
   {
-    id: 'SIG-XAUUSD-03',
+    id: 'SIG-XAUUSD-INIT',
     symbol: 'XAU/USD',
-    direction: 'BUY',
-    confluenceScore: 92,
-    timeframe: '15m / 1h',
-    entryPrice: 4411.60,
-    stopLoss: 4398.00,
-    takeProfit1: 4438.80,
-    takeProfit2: 4465.00,
-    riskRewardRatio: '1:2.0',
-    pipsAtRisk: 136.0,
-    timestamp: '8m ago',
-    setupReason: 'Gold Trend Continuation + 15m Fair Value Gap Mitigation + DXY Weakness',
-    notifyEnabled: true,
-    status: 'ACTIVE',
-    hasActiveSignal: true,
-    aiConfidence: 94,
-    aiReasoning: 'Order-flow imbalance detected on XAU/USD. Clean liquidity sweep beneath local support followed by institutional displacement into Bullish FVG with heavy spot bid volume.',
-  },
-  // Quarantined: US100 suspended due to API paywall
-  /*
-  {
-    id: 'SIG-US100-01',
-    symbol: 'US100',
-    direction: 'SELL',
-    confluenceScore: 84,
+    direction: 'SCANNING',
+    confluenceScore: 0,
     timeframe: '15m',
-    entryPrice: 20450.50,
-    stopLoss: 20520.00,
-    takeProfit1: 20310.00,
-    takeProfit2: 20180.00,
-    riskRewardRatio: '1:2.0',
-    pipsAtRisk: 69.5,
-    timestamp: 'Just now',
-    setupReason: 'Confirmed Bearish BOS + Buy-Side Liquidity Sweep into 15m Premium FVG',
-    notifyEnabled: true,
-    status: 'ACTIVE',
-    hasActiveSignal: true,
-    aiConfidence: 89,
-    aiReasoning: 'Institutional supply zone test on US100 following aggressive opening drive. Sweep of Asian session highs followed by strong displacement down. Bearish fair value gap mitigated with delta divergence.',
+    currentPrice: undefined,
+    notifyEnabled: false,
+    status: 'SCANNING',
+    hasActiveSignal: false,
+    setupReason: 'Awaiting Data: Connecting to market feed...',
   },
-  */
 ];
 
-export const initialPositions: Position[] = [
-  {
-    id: '4',
-    symbol: 'XAU/USD',
-    side: 'BUY',
-    size: 0.1,
-    entryPrice: 4410.50,
-    currentPrice: 4412.80,
-    stopLoss: 4398.00,
-    takeProfit: 4438.00,
-    pnl: 23.00,
-    pnlPercent: 0.28,
-    pips: 23.0,
-    openTime: '14:28 UTC',
-  },
-  // Quarantined: US100 suspended due to API paywall
-  /*
-  {
-    id: '3',
-    symbol: 'US100',
-    side: 'SELL',
-    size: 1.0,
-    entryPrice: 20455.00,
-    currentPrice: 20412.50,
-    stopLoss: 20520.00,
-    takeProfit: 20310.00,
-    pnl: 42.50,
-    pnlPercent: 0.21,
-    pips: 42.5,
-    openTime: '13:50 UTC',
-  },
-  */
-];
+export const initialPositions: Position[] = [];
 
 export const initialAlertConfig: AlertConfiguration = {
   newSignalAlerts: true,
@@ -237,67 +174,4 @@ export interface CandleData {
   isGreen: boolean;
 }
 
-export const generateCandles = (symbol: PairSymbol): CandleData[] => {
-  let basePrice = 4410.00;
-  let volatility = 8.5;
-  let precision = 2;
-
-  if (symbol === 'US100') {
-    basePrice = 20450.00;
-    volatility = 35.0;
-    precision = 2;
-  } else if (symbol === 'XAU/USD') {
-    basePrice = 4410.00;
-    volatility = 8.5;
-    precision = 2;
-  }
-
-  const candles: CandleData[] = [];
-  let currentClose = basePrice;
-  const now = new Date();
-
-  for (let i = 24; i >= 0; i--) {
-    const timeStr = new Date(now.getTime() - i * 15 * 60 * 1000).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
-
-    const change = (Math.random() - 0.47) * volatility;
-    const open = Number(currentClose.toFixed(precision));
-    const close = Number((open + change).toFixed(precision));
-    const high = Number((Math.max(open, close) + Math.random() * (volatility * 0.4)).toFixed(precision));
-    const low = Number((Math.min(open, close) - Math.random() * (volatility * 0.4)).toFixed(precision));
-    const volume = Math.floor(Math.random() * 8000 + 2000);
-
-    const isGreen = close >= open;
-
-    const ema20 = Number((close * 0.9994).toFixed(precision));
-    const ema50 = Number((close * 0.9988).toFixed(precision));
-    const ema200 = Number((close * 0.9972).toFixed(precision));
-
-    const fvgZone = i === 6 ? {
-      top: Number((high * 1.0004).toFixed(precision)),
-      bottom: Number((low * 0.9996).toFixed(precision)),
-      type: isGreen ? 'bullish' as const : 'bearish' as const
-    } : undefined;
-
-    candles.push({
-      time: timeStr,
-      open,
-      high,
-      low,
-      close,
-      volume,
-      ema20,
-      ema50,
-      ema200,
-      fvgZone,
-      isGreen,
-    });
-
-    currentClose = close;
-  }
-
-  return candles;
-};
+export const generateCandles = (_symbol: PairSymbol): CandleData[] => [];

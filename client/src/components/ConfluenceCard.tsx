@@ -48,7 +48,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   const displayPrice = livePrice || signal.currentPrice || signal.entryPrice;
 
   // AI confidence fallback (e.g., 88-94% for high setups, 45-65% for scanning)
-  const aiConfidence = signal.aiConfidence ?? (hasSetup ? Math.min(96, Math.max(78, signal.confluenceScore + 2)) : 52);
+  const aiConfidence = signal.aiConfidence ?? (hasSetup && signal.confluenceScore > 0 ? Math.min(96, Math.max(78, signal.confluenceScore + 2)) : (signal.confluenceScore > 0 ? signal.confluenceScore : null));
 
   // Default institutional AI reasoning if not provided
   const aiReasoningText =
@@ -179,7 +179,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                           : 'text-white'
                       }`}
                     >
-                      {displayPrice ? formatPrice(signal.symbol, displayPrice) : '--'}
+                      {displayPrice && displayPrice > 0 ? formatPrice(signal.symbol, displayPrice) : '--'}
                     </span>
                     {tickDirection === 'up' && <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />}
                     {tickDirection === 'down' && <TrendingDown className="h-3.5 w-3.5 text-rose-500" />}
@@ -197,7 +197,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                   <span>AI Neural Confidence</span>
                 </span>
                 <span className="font-mono font-semibold text-indigo-200">
-                  {aiConfidence}%
+                  {aiConfidence !== null ? `${aiConfidence}%` : '--%'}
                 </span>
               </div>
 
@@ -205,7 +205,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-950/80 p-0.5 border border-indigo-500/30">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-indigo-400 to-violet-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all duration-500"
-                  style={{ width: `${Math.max(10, aiConfidence)}%` }}
+                  style={{ width: `${aiConfidence !== null ? Math.max(10, aiConfidence) : 0}%` }}
                 />
               </div>
 
@@ -251,7 +251,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                       : 'text-zinc-400'
                   }`}
                 >
-                  {signal.confluenceScore} / 100
+                  {signal.confluenceScore > 0 ? `${signal.confluenceScore} / 100` : '-- / 100'}
                 </span>
               </div>
 
@@ -264,7 +264,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                         : 'bg-rose-500'
                       : 'bg-zinc-500'
                   }`}
-                  style={{ width: `${Math.max(8, signal.confluenceScore)}%` }}
+                  style={{ width: `${signal.confluenceScore > 0 ? Math.max(8, signal.confluenceScore) : 0}%` }}
                 />
               </div>
 
@@ -288,7 +288,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                 <div className="rounded-xl border border-white/[0.08] bg-zinc-950/60 p-2.5 min-w-0 flex flex-col justify-between">
                   <span className="block text-[10px] uppercase font-medium tracking-wider text-zinc-400">Entry</span>
                   <span className="font-semibold text-white tracking-tight truncate block mt-0.5 text-xs sm:text-sm">
-                    {formatPrice(signal.symbol, signal.entryPrice)}
+                    {signal.entryPrice && signal.entryPrice > 0 ? formatPrice(signal.symbol, signal.entryPrice) : '--'}
                   </span>
                 </div>
 
@@ -296,14 +296,14 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                 <div className="rounded-xl border border-rose-500/20 bg-rose-500/[0.06] p-2.5 min-w-0 flex flex-col justify-between">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-[10px] uppercase font-medium tracking-wider text-rose-400">Stop Loss</span>
-                    {signal.pipsAtRisk && (
+                    {signal.pipsAtRisk ? (
                       <span className="text-[9px] px-1 rounded bg-rose-500/20 text-rose-300 font-medium">
                         {signal.pipsAtRisk}p
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <span className="font-semibold text-rose-400 tracking-tight truncate block mt-0.5 text-xs sm:text-sm">
-                    {formatPrice(signal.symbol, signal.stopLoss)}
+                    {signal.stopLoss && signal.stopLoss > 0 ? formatPrice(signal.symbol, signal.stopLoss) : '--'}
                   </span>
                 </div>
 
@@ -314,7 +314,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                     <span className="text-[9px] text-emerald-300/80">50% Scale</span>
                   </div>
                   <span className="font-semibold text-emerald-400 tracking-tight truncate block mt-0.5 text-xs sm:text-sm">
-                    {formatPrice(signal.symbol, signal.takeProfit1)}
+                    {signal.takeProfit1 && signal.takeProfit1 > 0 ? formatPrice(signal.symbol, signal.takeProfit1) : '--'}
                   </span>
                 </div>
 
@@ -325,16 +325,16 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                     <span className="text-[9px] text-indigo-300/80">Runner</span>
                   </div>
                   <span className="font-semibold text-indigo-300 tracking-tight truncate block mt-0.5 text-xs sm:text-sm">
-                    {formatPrice(signal.symbol, signal.takeProfit2)}
+                    {signal.takeProfit2 && signal.takeProfit2 > 0 ? formatPrice(signal.symbol, signal.takeProfit2) : '--'}
                   </span>
                 </div>
               </div>
             ) : (
               <div className="rounded-xl border border-white/[0.06] bg-zinc-950/40 p-3 text-center font-mono text-xs text-zinc-400">
                 <span>R:R Target: </span>
-                <strong className="text-white">1:2.0</strong>
+                <strong className="text-white">{signal.riskRewardRatio && signal.riskRewardRatio !== '--' ? signal.riskRewardRatio : '1:2.0'}</strong>
                 <span className="block text-[10px] text-zinc-500 mt-1">
-                  Awaiting institutional confirmation threshold (&ge; 75 pts)
+                  {signal.setupReason || 'Awaiting institutional confirmation threshold (&ge; 75 pts)'}
                 </span>
               </div>
             )}
