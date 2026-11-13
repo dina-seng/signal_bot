@@ -8,6 +8,7 @@ import httpx
 from app.core.logging import logger
 from app.schemas.candle import CandleCreate
 from app.services.market_data.base import BaseMarketDataProvider
+from app.services.market_data.freshness import get_timeframe_delta
 from app.services.market_data.yfinance_provider import YahooFinanceProvider
 
 
@@ -151,17 +152,8 @@ class TwelveDataProvider(BaseMarketDataProvider):
                 logger.warning(f"Twelve Data returned 0 raw values for {symbol} [{timeframe}].")
                 return await self._fallback_fetch(symbol, timeframe, start_time, end_time, limit, drop_unclosed)
 
-            # Twelve Data returns newest first. 
-            # If drop_unclosed is True, drop the active in-progress candle at index 0.
-            if drop_unclosed and len(raw_values) > 1:
-                raw_values = raw_values[1:]
-
-            # Reverse so earliest is first (chronological order)
-            raw_values.reverse()
-
-            # Slice to requested limit
-            if len(raw_values) > limit:
-                raw_values = raw_values[-limit:]
+            now_utc = datetime.now(timezone.utc)
+            tf_delta = get_timeframe_delta(timeframe)
 
             candles: List[CandleCreate] = []
             for v in raw_values:
@@ -171,6 +163,10 @@ class TwelveDataProvider(BaseMarketDataProvider):
                         ts = datetime.strptime(ts_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                     else:
                         ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+                    # Keep a bar if and only if candle_open_ts + timeframe_delta <= current_utc_time (matching yahoo_finance.py)
+                    if drop_unclosed and (ts + tf_delta > now_utc):
+                        continue
 
                     candles.append(
                         CandleCreate(
@@ -186,6 +182,13 @@ class TwelveDataProvider(BaseMarketDataProvider):
                     )
                 except Exception as parse_err:
                     logger.warning(f"Failed to parse candle for {symbol}: {parse_err}")
+
+            # Sort ascending chronologically
+            candles.sort(key=lambda c: c.timestamp)
+
+            # Slice to requested limit
+            if limit and len(candles) > limit:
+                candles = candles[-limit:]
 
             if candles:
                 logger.info(f"Successfully fetched {len(candles)} closed candles for {symbol} [{timeframe}] via Twelve Data.")

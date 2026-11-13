@@ -145,7 +145,7 @@ async def test_prevent_duplicate_scheduler_instances():
 @pytest.mark.asyncio
 async def test_scanner_dependency_wiring(test_db_session):
     """Verify scanner coordinates market data ingestion, news check, signals, telegram, and paper trading."""
-    mock_market = MockMarketDataProvider()
+    mock_market = MockMarketDataProvider(base_price=1.1200)
     mock_news = MockNewsProvider()
     mock_tg = MockTelegramClient()
     paper_svc = PaperTradingService()
@@ -457,7 +457,7 @@ async def test_paper_trading_when_enabled(test_db_session):
     settings.PAPER_TRADING = True
     settings.SCANNER_AUTO_TRADE_PAPER = True
 
-    mock_market = MockMarketDataProvider()
+    mock_market = MockMarketDataProvider(base_price=1.1200)
     mock_news = MockNewsProvider()
     mock_tg = MockTelegramClient()
     scanner = AutomatedMarketScanner(
@@ -529,7 +529,7 @@ async def test_paper_trading_when_enabled(test_db_session):
 async def test_active_position_suppresses_signal_alert_and_paper_trade(test_db_session):
     """Verify that an active OPEN paper trade on a symbol suppresses Telegram alert and new trade."""
     mock_tg = MockTelegramClient()
-    mock_market = MockMarketDataProvider()
+    mock_market = MockMarketDataProvider(base_price=1.1200)
     mock_news = MockNewsProvider()
     paper_svc = PaperTradingService()
     scanner = AutomatedMarketScanner(
@@ -617,7 +617,7 @@ async def test_active_position_suppresses_signal_alert_and_paper_trade(test_db_s
 async def test_signal_cooldown_suppresses_duplicate_alert(test_db_session):
     """Verify that a signal generated within SIGNAL_COOLDOWN_HOURS is suppressed."""
     mock_tg = MockTelegramClient()
-    mock_market = MockMarketDataProvider()
+    mock_market = MockMarketDataProvider(base_price=1.1200)
     mock_news = MockNewsProvider()
     scanner = AutomatedMarketScanner(
         telegram_client=mock_tg,
@@ -704,7 +704,7 @@ async def test_signal_cooldown_suppresses_duplicate_alert(test_db_session):
 async def test_signal_cooldown_expired_allows_broadcast(test_db_session):
     """Verify that a signal generated after cooldown window (e.g. 3 hours > 2h) is allowed."""
     mock_tg = MockTelegramClient()
-    mock_market = MockMarketDataProvider()
+    mock_market = MockMarketDataProvider(base_price=1.1200)
     mock_news = MockNewsProvider()
     scanner = AutomatedMarketScanner(
         telegram_client=mock_tg,
@@ -791,7 +791,7 @@ async def test_signal_cooldown_expired_allows_broadcast(test_db_session):
 async def test_opposing_structural_break_resets_cooldown(test_db_session):
     """Verify that an opposing structural break (BEARISH_CHOCH) resets the BUY signal cooldown."""
     mock_tg = MockTelegramClient()
-    mock_market = MockMarketDataProvider()
+    mock_market = MockMarketDataProvider(base_price=1.1200)
     mock_news = MockNewsProvider()
     scanner = AutomatedMarketScanner(
         telegram_client=mock_tg,

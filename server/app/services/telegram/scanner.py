@@ -7,7 +7,8 @@ from typing import Dict, List, Optional, Set, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
-from app.core.config import settings
+from app.core.config import ACTIVE_SYMBOLS, settings
+from app.core.database import SessionLocal
 from app.core.logging import logger
 from app.models.candle import Candle
 from app.models.paper import PaperTrade
@@ -20,6 +21,10 @@ from app.services.market_data import (
     BaseMarketDataProvider,
     IngestionService,
     get_market_data_provider,
+)
+from app.services.market_data.freshness import (
+    ensure_utc_datetime,
+    get_timeframe_delta,
 )
 from app.services.news import (
     BaseNewsProvider,
@@ -283,11 +288,7 @@ class AutomatedMarketScanner:
         async with self._lock:
             start_time = time.time()
             now = datetime.now(timezone.utc)
-            raw_symbols = symbols or settings.SUPPORTED_SYMBOLS
-            target_symbols = [
-                s for s in raw_symbols 
-                if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-            ] or ["XAU/USD"]
+            target_symbols = list(symbols) if symbols is not None else list(ACTIVE_SYMBOLS)
 
             # Resolve target timeframes
             if timeframes:
@@ -321,8 +322,9 @@ class AutomatedMarketScanner:
             async def _sync_symbol_tf(sym: str, tf: str) -> None:
                 """Each coroutine owns its own isolated DB session to prevent cross-coroutine rollbacks."""
                 async with api_semaphore:
-                    task_db = SessionLocal()
+                    task_db = None
                     try:
+                        task_db = SessionLocal()
                         ingest = self.market_ingestion or IngestionService(
                             provider=self.market_provider, db=task_db
                         )
@@ -331,16 +333,21 @@ class AutomatedMarketScanner:
                         task_db.commit()
                     except Exception as e:
                         logger.error(f"Market data ingestion failed for {sym} [{tf}]: {e}")
-                        task_db.rollback()
+                        if task_db:
+                            task_db.rollback()
                     finally:
-                        task_db.close()
+                        if task_db:
+                            task_db.close()
 
             ingestion_tasks = [
                 _sync_symbol_tf(sym, tf)
                 for sym in target_symbols
                 for tf in sync_timeframes
             ]
-            await asyncio.gather(*ingestion_tasks, return_exceptions=True)
+            results = await asyncio.gather(*ingestion_tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error("Ingestion task failed", exc_info=r)
 
             logger.info("Market data ingestion completed")
 
@@ -531,10 +538,7 @@ class AutomatedMarketScanner:
         return ScannerStatusResponse(
             is_enabled=settings.SCANNER_ENABLED,
             interval_minutes=settings.SCANNER_INTERVAL_MINUTES,
-            scanned_symbols=[
-                s for s in settings.SUPPORTED_SYMBOLS 
-                if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-            ] or ["XAU/USD"],
+            scanned_symbols=list(ACTIVE_SYMBOLS),
             scanned_timeframes=settings.SCANNER_TIMEFRAMES,
             auto_paper_trade=settings.SCANNER_AUTO_TRADE_PAPER,
             is_running=is_running,
@@ -543,3 +547,29 @@ class AutomatedMarketScanner:
             last_scan_signals_count=self._last_signals_count,
             total_scans_completed=self._total_scans_completed,
         )
+
+    @staticmethod
+    def calculate_expected_last_closed_open(timeframe: str = "15m", now_utc: Optional[datetime] = None) -> datetime:
+        """Calculate the expected last closed bar open timestamp:
+        expected_open = floor(now_utc / tf_delta) * tf_delta - tf_delta.
+        """
+        now = ensure_utc_datetime(now_utc) or datetime.now(timezone.utc)
+        tf_delta = get_timeframe_delta(timeframe)
+        delta_seconds = int(tf_delta.total_seconds())
+        now_ts = int(now.timestamp())
+        expected_open_ts = (now_ts // delta_seconds) * delta_seconds - delta_seconds
+        return datetime.fromtimestamp(expected_open_ts, tz=timezone.utc)
+
+    @classmethod
+    def is_candle_stale(
+        cls,
+        latest_candle: Optional[Candle],
+        timeframe: str = "15m",
+        now_utc: Optional[datetime] = None,
+    ) -> bool:
+        """Only mark data as stale if latest_candle is None or latest_candle.timestamp < expected_open."""
+        if not latest_candle or not latest_candle.timestamp:
+            return True
+        expected_open = cls.calculate_expected_last_closed_open(timeframe=timeframe, now_utc=now_utc)
+        candle_ts = ensure_utc_datetime(latest_candle.timestamp)
+        return candle_ts < expected_open

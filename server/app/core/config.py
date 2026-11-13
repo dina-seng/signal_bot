@@ -5,6 +5,9 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
 
+# Centralized single source of truth for active traded instruments
+ACTIVE_SYMBOLS: List[str] = ["XAU/USD"]
+
 
 class Settings(BaseSettings):
     """Central configuration for the Forex Market Analysis & Signal Bot."""
@@ -17,8 +20,8 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./trade.db"
 
-    # Market Instruments and Timeframes (Strict Single-Asset: US100 quarantined due to API paywall)
-    SUPPORTED_SYMBOLS: List[str] = ["XAU/USD"]
+    # Market Instruments and Timeframes (Strict Single-Asset: ACTIVE_SYMBOLS)
+    SUPPORTED_SYMBOLS: List[str] = list(ACTIVE_SYMBOLS)
     SUPPORTED_TIMEFRAMES: List[str] = ["15m", "1h", "4h"]
 
     # Market Structure & Analysis Strategy Config (Milestones 2-6)
@@ -95,12 +98,9 @@ class Settings(BaseSettings):
     @field_validator("SUPPORTED_SYMBOLS", mode="after")
     @classmethod
     def quarantine_unsupported_symbols(cls, value: List[str]) -> List[str]:
-        # Strict single-asset gold enforcement: completely quarantine US100 / index CFDs
-        filtered = [
-            s for s in value 
-            if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-        ]
-        return filtered if filtered else ["XAU/USD"]
+        # Strict single-asset gold enforcement: strictly allow active symbols
+        filtered = [s for s in value if s in ACTIVE_SYMBOLS]
+        return filtered if filtered else list(ACTIVE_SYMBOLS)
 
 
 settings = Settings()

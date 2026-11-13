@@ -80,14 +80,15 @@ def test_telegram_webhook_non_blocking_instant_ack():
         },
     }
 
-    with patch("app.services.telegram.client.TelegramClient.send_message", new_callable=AsyncMock) as mock_send:
+    with patch("app.services.telegram.client.TelegramClient.send_message", new_callable=AsyncMock) as mock_live, \
+         patch("app.services.telegram.client.MockTelegramClient.send_message", new_callable=AsyncMock) as mock_mock:
         resp = client.post("/api/v1/telegram/webhook", json=scan_payload)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
         assert data["command"] == "/scan"
         assert "⚡ Scanning XAU/USD..." in data["reply"]
-        mock_send.assert_called()
+        assert mock_live.called or mock_mock.called
 
 
 def test_telegram_webhook_sync_ack():
@@ -104,11 +105,12 @@ def test_telegram_webhook_sync_ack():
         },
     }
 
-    with patch("app.services.telegram.client.TelegramClient.send_message", new_callable=AsyncMock) as mock_send:
+    with patch("app.services.telegram.client.TelegramClient.send_message", new_callable=AsyncMock) as mock_live, \
+         patch("app.services.telegram.client.MockTelegramClient.send_message", new_callable=AsyncMock) as mock_mock:
         resp = client.post("/api/v1/telegram/webhook", json=sync_payload)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
         assert data["command"] == "/sync"
         assert "🔄 Syncing fresh market data" in data["reply"]
-        mock_send.assert_called()
+        assert mock_live.called or mock_mock.called

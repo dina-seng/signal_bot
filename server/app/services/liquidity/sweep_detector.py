@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Sequence, Union
+from app.core.config import ACTIVE_SYMBOLS
 from app.schemas.candle import CandleBase
 from app.schemas.liquidity import LiquidityEventType, LiquiditySweep
 from app.schemas.structure import SwingPoint, SwingType
@@ -44,10 +45,8 @@ class LiquiditySweepDetector:
     def _get_pip_size(symbol: str) -> float:
         """Determine pip unit multiplier based on currency pair conventions."""
         s = symbol.upper()
-        if "JPY" in s or "XAU" in s or "GOLD" in s:
+        if "JPY" in s or "XAU" in s or "GOLD" in s or s in ACTIVE_SYMBOLS:
             return 0.01
-        if "US100" in s or "NAS" in s or "NDX" in s:
-            return 1.0  # Index CFD: 1 full index point
         return 0.0001
 
     def detect_sweeps(

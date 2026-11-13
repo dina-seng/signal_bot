@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
-from app.core.config import settings
+from app.core.config import ACTIVE_SYMBOLS, settings
 from app.core.logging import logger
 from app.models.candle import Candle
 from app.models.signal import Signal
@@ -209,11 +209,7 @@ class SignalGenerator:
         persist_qualified: bool = True,
     ) -> MarketScanResponse:
         """Scan multiple currency pairs, evaluate setups, check news blackouts, and generate signals."""
-        raw_symbols = symbols or settings.SUPPORTED_SYMBOLS
-        target_symbols = [
-            s for s in raw_symbols 
-            if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-        ] or ["XAU/USD"]
+        target_symbols = list(symbols) if symbols is not None else list(ACTIVE_SYMBOLS)
         results: List[MarketScanSymbolResult] = []
         actionable_count = 0
         now_utc = datetime.now(timezone.utc)
@@ -607,11 +603,7 @@ class SignalGenerator:
         persist_qualified: bool = True,
     ) -> MarketScanResponse:
         """Execute unified multi-timeframe scan across all target symbols."""
-        raw_symbols = symbols or settings.SUPPORTED_SYMBOLS
-        target_symbols = [
-            s for s in raw_symbols 
-            if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-        ] or ["XAU/USD"]
+        target_symbols = list(symbols) if symbols is not None else list(ACTIVE_SYMBOLS)
         results: List[MarketScanSymbolResult] = []
         actionable_count = 0
         now_utc = datetime.now(timezone.utc)

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 from app.core.database import get_db
-from app.core.config import settings
+from app.core.config import ACTIVE_SYMBOLS, settings
 from app.api.deps import get_ingestion_service
 from app.models.candle import Candle
 from app.schemas.candle import CandleResponse, IngestionReport
@@ -38,10 +38,7 @@ SYMBOL_METADATA = {
 @router.get("/symbols", response_model=List[MarketSymbolInfo])
 def get_supported_symbols():
     """Retrieve list of supported Forex & Commodity symbols."""
-    active_symbols = [
-        s for s in settings.SUPPORTED_SYMBOLS 
-        if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-    ] or ["XAU/USD"]
+    active_symbols = list(ACTIVE_SYMBOLS)
     return [
         SYMBOL_METADATA.get(
             sym,

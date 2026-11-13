@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
-from app.core.config import settings
+from app.core.config import ACTIVE_SYMBOLS, settings
 from app.core.logging import logger
 from app.models.candle import Candle
 from app.models.news import NewsEvent
@@ -20,6 +20,7 @@ from app.services.market_data import (
     ensure_utc_datetime,
     filter_closed_candles,
     get_market_data_provider,
+    get_timeframe_delta,
     log_latest_candle,
 )
 from app.services.news import (
@@ -61,13 +62,9 @@ class TelegramCommandHandler:
         self.formatter = TelegramMessageFormatter()
 
     def _normalize_symbol(self, raw: str) -> str:
-        """Normalize currency symbol string with strict quarantine of unsupported assets."""
+        """Normalize currency symbol string with strict enforcement of ACTIVE_SYMBOLS."""
         s = raw.upper().replace("%2F", "/").strip()
-        active_symbols = [
-            sym for sym in settings.SUPPORTED_SYMBOLS 
-            if "US100" not in sym.upper() and "NDX" not in sym.upper() and "IXIC" not in sym.upper()
-        ] or ["XAU/USD"]
-        for sym in active_symbols:
+        for sym in ACTIVE_SYMBOLS:
             if sym.replace("/", "") == s.replace("/", ""):
                 return sym
         return s
@@ -88,14 +85,11 @@ class TelegramCommandHandler:
         # 2. Unified Multi-Timeframe Market Scanner (/scan)
         # -------------------------------------------------------------
         elif cmd_name == "/scan":
-            # Strict single-asset enforcement: strictly scan XAU/USD (US100 quarantined)
-            scan_symbols = [
-                s for s in settings.SUPPORTED_SYMBOLS 
-                if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-            ] or ["XAU/USD"]
+            # Strict single-asset enforcement: strictly scan ACTIVE_SYMBOLS
+            scan_symbols = list(ACTIVE_SYMBOLS)
 
             # Auto-Refresh When Stale on /scan:
-            # Check latest candle age for XAU/USD. If older than 20 minutes (STALE), sync fresh data.
+            # Expected last closed bar open timestamp: expected_open = floor(now_utc / tf_delta) * tf_delta - tf_delta
             now_utc = datetime.now(timezone.utc)
             latest_candle = db.scalars(
                 select(Candle)
@@ -111,17 +105,24 @@ class TelegramCommandHandler:
                     .limit(1)
                 ).first()
 
+            tf_delta_seconds = int(get_timeframe_delta("15m").total_seconds())
+            now_ts = int(now_utc.timestamp())
+            expected_open_ts = (now_ts // tf_delta_seconds) * tf_delta_seconds - tf_delta_seconds
+            expected_open = datetime.fromtimestamp(expected_open_ts, tz=timezone.utc)
+
             is_stale = False
             if not latest_candle or not latest_candle.timestamp:
                 is_stale = True
             else:
                 candle_ts = ensure_utc_datetime(latest_candle.timestamp)
-                candle_age_seconds = (now_utc - candle_ts).total_seconds()
-                if candle_age_seconds > 20 * 60:
+                if candle_ts < expected_open:
                     is_stale = True
 
             if is_stale:
-                logger.info("XAU/USD candles are STALE (>20m) on /scan. Auto-syncing fresh 15m, 30m, 1h candles...")
+                logger.info(
+                    f"XAU/USD candles are STALE (latest: {latest_candle.timestamp if latest_candle else None} < expected_open: {expected_open}) on /scan. "
+                    f"Auto-syncing fresh 15m, 30m, 1h candles..."
+                )
                 provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
                 ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
                 ingest_svc.db = db
@@ -158,12 +159,13 @@ class TelegramCommandHandler:
             else:
                 sym = self._normalize_symbol(parts[1])
 
-                if sym in ("US100", "NDX", "IXIC"):
+                from app.services.market_data.mock_provider import MockMarketDataProvider
+                if sym not in ACTIVE_SYMBOLS and not isinstance(self.market_provider, MockMarketDataProvider):
                     reply = (
-                        f"⚠️ *Asset Quarantined / Inactive*\n"
+                        f"⚠️ *Asset Inactive*\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"`{self.formatter.escape_code(sym)}` is completely quarantined due to market data API paywalls.\n"
-                        f"Active instrument: `XAU/USD` (Gold)."
+                        f"`{self.formatter.escape_code(sym)}` is not active.\n"
+                        f"Active instrument: {', '.join(f'`{s}`' for s in ACTIVE_SYMBOLS)}."
                     )
                 else:
                     # 1. Provider <-> DB Synchronization: Refresh fresh candle data from provider
@@ -339,10 +341,7 @@ class TelegramCommandHandler:
 
             synced_count = 0
             target_timeframes = ["15m", "30m", "1h"] 
-            sync_symbols = [
-                s for s in settings.SUPPORTED_SYMBOLS 
-                if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-            ] or ["XAU/USD"]
+            sync_symbols = list(ACTIVE_SYMBOLS)
 
             for sym in sync_symbols:
                 for tf in target_timeframes:

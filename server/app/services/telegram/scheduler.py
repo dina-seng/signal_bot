@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.core.config import settings
+from app.core.config import ACTIVE_SYMBOLS, settings
 from app.core.database import SessionLocal
 from app.core.logging import logger
 from app.services.market_data import get_market_data_provider
@@ -58,10 +58,7 @@ def get_scheduler_info() -> Dict[str, Any]:
             next_run_time = job.next_run_time
 
     scanner = get_shared_scanner()
-    active_symbols = [
-        s for s in settings.SUPPORTED_SYMBOLS 
-        if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-    ] or ["XAU/USD"]
+    active_symbols = list(ACTIVE_SYMBOLS)
     return {
         "is_enabled": settings.SCANNER_ENABLED,
         "is_running": running,
@@ -129,10 +126,7 @@ def start_scanner_scheduler(
         try:
             await target_scanner.run_scan_cycle(
                 db=db,
-                symbols=[
-                    s for s in settings.SUPPORTED_SYMBOLS 
-                    if "US100" not in s.upper() and "NDX" not in s.upper() and "IXIC" not in s.upper()
-                ] or ["XAU/USD"],
+                symbols=list(ACTIVE_SYMBOLS),
                 timeframes=settings.SCANNER_TIMEFRAMES,
                 broadcast_to_telegram=True,
                 auto_paper_trade=settings.SCANNER_AUTO_TRADE_PAPER,

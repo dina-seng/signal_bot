@@ -1,21 +1,53 @@
 """Pytest configuration and shared test fixtures."""
 
+import os
+
+# HERMETIC TEST DATABASE ISOLATION:
+# Force tests to NEVER connect to Neon production DATABASE_URL.
+# Set DATABASE_URL to in-memory SQLite before application modules are loaded.
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
+settings.DATABASE_URL = "sqlite:///:memory:"
+
+import app.core.database as db_core
 from app.models.base import Base
 from app.core.database import get_db
+
+# Wire app.core.database engine and SessionLocal to isolated in-memory SQLite StaticPool
+test_shared_engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+db_core.engine = test_shared_engine
+db_core.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_shared_engine)
+Base.metadata.create_all(bind=test_shared_engine)
+
 from app.services.market_data.mock_provider import MockMarketDataProvider
 from app.services.market_data.ingestion import IngestionService
 from app.services.news.mock_provider import MockNewsProvider
 from app.services.telegram.client import MockTelegramClient
-from app.core.config import settings
 from app.api.deps import get_provider, get_news_provider, get_telegram_client_dep
 from app.services.telegram.scheduler import stop_scanner_scheduler
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def verify_test_database_isolation():
+    """Safety check verifying tests NEVER connect to production Neon database."""
+    assert "neon.tech" not in str(db_core.engine.url), (
+        "CRITICAL ERROR: Tests attempted to connect to production Neon database!"
+    )
+    assert "sqlite" in str(db_core.engine.url), (
+        "CRITICAL ERROR: Tests must run on isolated SQLite database!"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -31,11 +63,7 @@ def disable_background_scanner():
 
 @pytest.fixture(autouse=True)
 def enforce_test_symbols():
-    """Pin SUPPORTED_SYMBOLS to the active single-asset (XAU/USD) for all tests.
-
-    This ensures tests are hermetically isolated from whatever is in the .env
-    file, and that symbol-specific assertions match XAU/USD only while US100 is quarantined.
-    """
+    """Pin SUPPORTED_SYMBOLS to the active single-asset (XAU/USD) for all tests."""
     orig = settings.SUPPORTED_SYMBOLS
     settings.SUPPORTED_SYMBOLS = ["XAU/USD"]
     yield
@@ -44,20 +72,21 @@ def enforce_test_symbols():
 
 @pytest.fixture(scope="function")
 def test_db_session():
-    """Create a fresh in-memory SQLite database session for each test function."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = TestingSessionLocal()
+    """Create a fresh isolated session on the in-memory SQLite test database."""
+    Base.metadata.create_all(bind=test_shared_engine)
+    db = db_core.SessionLocal()
     try:
         yield db
     finally:
         db.close()
-        Base.metadata.drop_all(bind=engine)
+        # Clean tables between test runs for hermetic isolation
+        for table in reversed(Base.metadata.sorted_tables):
+            try:
+                db.execute(table.delete())
+                db.commit()
+            except Exception:
+                db.rollback()
+        db.close()
 
 
 @pytest.fixture(scope="function")

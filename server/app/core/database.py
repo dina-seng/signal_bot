@@ -64,9 +64,9 @@ def init_db():
         if insp.has_table("paper_trades"):
             columns = [c["name"] for c in insp.get_columns("paper_trades")]
             if "account_id" not in columns:
-                logger.info("Migrating paper_trades table schema...")
+                logger.info("Adding missing account_id column to paper_trades table schema...")
                 with engine.connect() as conn:
-                    conn.execute(text("DROP TABLE IF EXISTS paper_trades"))
+                    conn.execute(text("ALTER TABLE paper_trades ADD COLUMN account_id INTEGER REFERENCES virtual_accounts(id)"))
                     conn.commit()
     except Exception as e:
         logger.debug(f"Table inspection note: {e}")
