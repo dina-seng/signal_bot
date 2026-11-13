@@ -76,6 +76,7 @@ export const App: React.FC = () => {
   const isFetchingAccountRef = useRef<boolean>(false);
   const isFetchingSignalsRef = useRef<boolean>(false);
   const isFetchingNewsRef = useRef<boolean>(false);
+  const isFetchingPricesRef = useRef<boolean>(false);
 
   // UI interaction states
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
@@ -219,6 +220,22 @@ export const App: React.FC = () => {
       setApiErrorMessage(err.message || 'FastAPI backend connection refused');
     } finally {
       isFetchingAccountRef.current = false;
+    }
+  }, []);
+
+  // Real-Time Price Quote Poll (Every 10 seconds, zero Neon DB queries)
+  const fetchLiveQuotes = useCallback(async () => {
+    if (isFetchingPricesRef.current) return;
+    isFetchingPricesRef.current = true;
+    try {
+      const prices = await quantViewApi.getLatestPrices();
+      if (prices && Object.keys(prices).length > 0) {
+        setLivePrices(prices);
+      }
+    } catch {
+      // Ignore transient quote error
+    } finally {
+      isFetchingPricesRef.current = false;
     }
   }, []);
 
@@ -403,6 +420,7 @@ export const App: React.FC = () => {
     setIsRefreshing(true);
     try {
       await Promise.allSettled([
+        fetchLiveQuotes(),
         fetchAccountAndPositions(),
         fetchSignalsAndPrices(),
         fetchNewsAndRisk(),
@@ -422,6 +440,7 @@ export const App: React.FC = () => {
       setIsInitialLoading(true);
       try {
         await Promise.allSettled([
+          fetchLiveQuotes(),
           fetchAccountAndPositions(),
           fetchSignalsAndPrices(),
           fetchNewsAndRisk(),
@@ -439,9 +458,9 @@ export const App: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
+  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
 
-  // Polling Interval: 30s for Paper Trading, 60s for Signals & News, paused when page is hidden
+  // Polling Interval: 10s for Quotes (0 DB load), 30s for Paper Trading, 60s for Signals & News, paused when page is hidden
   useEffect(() => {
     let secondsCounter = 0;
 
@@ -456,6 +475,11 @@ export const App: React.FC = () => {
       // Update age of last fetch
       setLastUpdatedSecondsAgo(Math.floor((Date.now() - lastFetchTimestampRef.current) / 1000));
 
+      // 10-Second Poll: Real-Time Price Quote (Direct provider/memory quote, 0 DB queries)
+      if (secondsCounter % 10 === 0) {
+        fetchLiveQuotes();
+      }
+
       // 30-Second Poll: Paper Trading Endpoints (Account, Positions, Trades, Performance)
       if (secondsCounter % 30 === 0) {
         fetchAccountAndPositions();
@@ -464,7 +488,7 @@ export const App: React.FC = () => {
         setPollCountdown((prev) => (prev > 1 ? prev - 1 : 30));
       }
 
-      // 60-Second Poll: Signals, Market Prices & News Calendar
+      // 60-Second Poll: Signals & News Calendar
       if (secondsCounter % 60 === 0) {
         fetchSignalsAndPrices();
         fetchNewsAndRisk();
@@ -473,6 +497,7 @@ export const App: React.FC = () => {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        fetchLiveQuotes();
         const elapsedSec = Math.floor((Date.now() - lastFetchTimestampRef.current) / 1000);
         if (elapsedSec >= 30) {
           fetchAccountAndPositions();
@@ -491,7 +516,7 @@ export const App: React.FC = () => {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
+  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
 
   // Per-pair notification toggle
   const handleToggleNotify = (id: string, symbol: PairSymbol, currentVal: boolean) => {

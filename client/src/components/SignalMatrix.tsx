@@ -109,7 +109,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
           {/* Real-time Ticking Indicator */}
           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)] shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            15M CANDLE FEED
+            REAL-TIME QUOTE &bull; 10s
           </span>
 
           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-white/5 text-zinc-400 border border-white/10 hidden md:flex items-center gap-1.5 shrink-0">

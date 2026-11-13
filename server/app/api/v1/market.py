@@ -1,16 +1,19 @@
 """Market data and OHLCV query endpoints."""
 
 from datetime import datetime
-from typing import List, Optional
+import time
+from typing import List, Optional, Dict, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 from app.core.database import get_db
+from app.core.logging import logger
 from app.core.config import ACTIVE_SYMBOLS, settings
-from app.api.deps import get_ingestion_service
+from app.api.deps import get_ingestion_service, get_provider
 from app.models.candle import Candle
 from app.schemas.candle import CandleResponse, IngestionReport
-from app.schemas.market import MarketSymbolInfo, IngestionRequest
+from app.schemas.market import MarketSymbolInfo, IngestionRequest, QuoteResponse
+from app.services.market_data.base import BaseMarketDataProvider
 from app.services.market_data.ingestion import IngestionService
 
 router = APIRouter(prefix="/market", tags=["Market Data"])
@@ -52,6 +55,58 @@ def get_supported_symbols():
         )
         for sym in active_symbols
     ]
+
+
+_quote_cache: Dict[str, Tuple[float, QuoteResponse]] = {}
+_QUOTE_CACHE_TTL_SECONDS = 3.0
+
+
+async def _resolve_quote(symbol: str, provider: BaseMarketDataProvider) -> QuoteResponse:
+    clean_symbol = symbol.replace("%2F", "/").strip()
+    if clean_symbol not in settings.SUPPORTED_SYMBOLS:
+        for s in settings.SUPPORTED_SYMBOLS:
+            if s.replace("/", "") == clean_symbol.replace("/", ""):
+                clean_symbol = s
+                break
+
+    now = time.time()
+    cached = _quote_cache.get(clean_symbol)
+    if cached and (now - cached[0] < _QUOTE_CACHE_TTL_SECONDS):
+        return cached[1]
+
+    try:
+        quote = await provider.fetch_quote(clean_symbol)
+        if quote:
+            _quote_cache[clean_symbol] = (now, quote)
+            return quote
+    except Exception as e:
+        logger.warning(f"Error fetching quote for {clean_symbol}: {e}")
+
+    if cached:
+        return cached[1]
+
+    raise HTTPException(
+        status_code=503,
+        detail=f"Real-time market quote currently unavailable for {clean_symbol}",
+    )
+
+
+@router.get("/quote", response_model=QuoteResponse)
+async def get_market_quote_query(
+    symbol: str = Query("XAU/USD", description="Symbol e.g. XAU/USD"),
+    provider: BaseMarketDataProvider = Depends(get_provider),
+):
+    """Retrieve real-time price quote for a symbol (query parameter)."""
+    return await _resolve_quote(symbol, provider)
+
+
+@router.get("/{symbol:path}/quote", response_model=QuoteResponse)
+async def get_market_quote_path(
+    symbol: str,
+    provider: BaseMarketDataProvider = Depends(get_provider),
+):
+    """Retrieve real-time price quote for a symbol (path parameter)."""
+    return await _resolve_quote(symbol, provider)
 
 
 from app.services.market_data import filter_closed_candles

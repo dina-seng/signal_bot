@@ -43,3 +43,25 @@ def test_twelve_data_mappings():
     assert provider.INTERVAL_MAP["15m"] == "15min"
     assert provider.INTERVAL_MAP["1h"] == "1h"
     assert provider.INTERVAL_MAP["4h"] == "4h"
+
+
+@pytest.mark.asyncio
+async def test_mock_provider_quote():
+    """Test real-time quote generation from MockMarketDataProvider."""
+    provider = MockMarketDataProvider(base_price=2685.50)
+    quote = await provider.fetch_quote("XAU/USD")
+    assert quote is not None
+    assert quote.symbol == "XAU/USD"
+    assert quote.price == 2500.00
+    assert quote.bid < quote.price
+    assert quote.ask > quote.price
+
+
+def test_market_quote_api_endpoint(client):
+    """Test GET /api/v1/market/quote endpoint."""
+    response = client.get("/api/v1/market/quote?symbol=XAU/USD")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["symbol"] == "XAU/USD"
+    assert data["price"] > 0
+    assert "timestamp" in data

@@ -8,6 +8,7 @@ import yfinance as yf
 
 from app.core.logging import logger
 from app.schemas.candle import CandleCreate
+from app.schemas.market import QuoteResponse
 from app.services.market_data.base import BaseMarketDataProvider
 from app.services.market_data.freshness import (
     ensure_utc_datetime,
@@ -229,3 +230,53 @@ class YahooFinanceProvider(BaseMarketDataProvider):
     ) -> List[CandleCreate]:
         """Fetch the most recent closed candles for a given symbol and timeframe."""
         return await self.fetch_candles(symbol, timeframe, limit=count, drop_unclosed=True)
+
+    async def fetch_quote(self, symbol: str) -> Optional[QuoteResponse]:
+        """Fetch real-time price quote from Yahoo Finance."""
+        if not self.is_symbol_supported(symbol):
+            logger.warning(f"YahooFinanceProvider: Unsupported symbol '{symbol}' for quote.")
+            return None
+
+        candidates = self._get_ticker_candidates(symbol)
+
+        def _fetch_quote_sync() -> Optional[QuoteResponse]:
+            for ticker_str in candidates:
+                try:
+                    ticker = yf.Ticker(ticker_str)
+                    fast_info = getattr(ticker, "fast_info", None)
+                    last_price = None
+                    if fast_info:
+                        last_price = fast_info.get("lastPrice") or fast_info.get("regularMarketPrice")
+
+                    high = fast_info.get("dayHigh") if fast_info else None
+                    low = fast_info.get("dayLow") if fast_info else None
+                    vol = fast_info.get("lastVolume") if fast_info else None
+                    bid = fast_info.get("bid") if fast_info else None
+                    ask = fast_info.get("ask") if fast_info else None
+
+                    if not last_price:
+                        # Fallback to last 1m bar
+                        df = ticker.history(period="1d", interval="1m", auto_adjust=False)
+                        if not df.empty and "Close" in df.columns:
+                            last_price = float(df["Close"].iloc[-1])
+                            high = float(df["High"].max()) if high is None else high
+                            low = float(df["Low"].min()) if low is None else low
+                            vol = float(df["Volume"].sum()) if vol is None else vol
+
+                    if last_price and float(last_price) > 0:
+                        return QuoteResponse(
+                            symbol=symbol,
+                            price=float(last_price),
+                            bid=float(bid) if bid else None,
+                            ask=float(ask) if ask else None,
+                            high=float(high) if high else None,
+                            low=float(low) if low else None,
+                            volume=float(vol) if vol else None,
+                            timestamp=datetime.now(timezone.utc),
+                            source="yfinance",
+                        )
+                except Exception as ex:
+                    logger.debug(f"Yahoo quote error for {ticker_str}: {ex}")
+            return None
+
+        return await asyncio.to_thread(_fetch_quote_sync)

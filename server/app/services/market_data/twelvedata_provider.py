@@ -7,6 +7,7 @@ import httpx
 
 from app.core.logging import logger
 from app.schemas.candle import CandleCreate
+from app.schemas.market import QuoteResponse
 from app.services.market_data.base import BaseMarketDataProvider
 from app.services.market_data.freshness import get_timeframe_delta
 from app.services.market_data.yfinance_provider import YahooFinanceProvider
@@ -205,3 +206,57 @@ class TwelveDataProvider(BaseMarketDataProvider):
     ) -> List[CandleCreate]:
         """Fetch the most recent closed candles for a given symbol and timeframe."""
         return await self.fetch_candles(symbol, timeframe, limit=count, drop_unclosed=True)
+
+    async def fetch_quote(self, symbol: str) -> Optional[QuoteResponse]:
+        """Fetch real-time price quote from Twelve Data, with automatic fallback to Yahoo Finance."""
+        if not self.is_symbol_supported(symbol):
+            logger.warning(f"Twelve Data skipping unsupported symbol for quote: {symbol}")
+            return None
+
+        if not self.api_key:
+            return await self._fallback_provider.fetch_quote(symbol)
+
+        url = f"{self.base_url}/quote"
+        params = {
+            "symbol": symbol,
+            "apikey": self.api_key,
+        }
+
+        try:
+            await self._rate_limit(min_interval=7.5)
+
+            if self._http_client:
+                response = await self._http_client.get(url, params=params)
+                data = response.json()
+            else:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.get(url, params=params)
+                    data = response.json()
+
+            if data.get("status") == "error" or ("code" in data and data["code"] != 200):
+                logger.warning(f"Twelve Data quote error for {symbol}: {data.get('message')}. Falling back...")
+                return await self._fallback_provider.fetch_quote(symbol)
+
+            price_str = data.get("close") or data.get("price")
+            if price_str and float(price_str) > 0:
+                price = float(price_str)
+                high = float(data["high"]) if data.get("high") else None
+                low = float(data["low"]) if data.get("low") else None
+                vol = float(data["volume"]) if data.get("volume") else None
+
+                return QuoteResponse(
+                    symbol=symbol,
+                    price=price,
+                    bid=float(data["bid"]) if data.get("bid") else None,
+                    ask=float(data["ask"]) if data.get("ask") else None,
+                    high=high,
+                    low=low,
+                    volume=vol,
+                    timestamp=datetime.now(timezone.utc),
+                    source="twelvedata",
+                )
+
+            return await self._fallback_provider.fetch_quote(symbol)
+        except Exception as e:
+            logger.warning(f"Twelve Data quote failed for {symbol}: {e}. Falling back...")
+            return await self._fallback_provider.fetch_quote(symbol)

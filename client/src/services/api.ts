@@ -29,6 +29,18 @@ export interface HealthResponse {
   scanner_running: boolean;
 }
 
+export interface BackendQuote {
+  symbol: string;
+  price: number;
+  bid?: number | null;
+  ask?: number | null;
+  high?: number | null;
+  low?: number | null;
+  volume?: number | null;
+  timestamp: string;
+  source: string;
+}
+
 export interface BackendAccount {
   id: number;
   name: string;
@@ -486,8 +498,24 @@ export const quantViewApi = {
     return fetchWithTiming<BackendCandle[]>(`${API_BASE}/market/${encodedSym}/candles?timeframe=${timeframe}&limit=${limit}`);
   },
 
-  // 17. Fetch latest market prices for all pairs
+  // 17. Real-Time Price Quote from Provider
+  async getQuote(symbol = 'XAU/USD'): Promise<{ data: BackendQuote; durationMs: number }> {
+    const encodedSym = encodeURIComponent(symbol);
+    console.log(`[API] GET /api/v1/market/${encodedSym}/quote`);
+    return fetchWithTiming<BackendQuote>(`${API_BASE}/market/${encodedSym}/quote`);
+  },
+
+  // 18. Fetch latest market prices for active pairs (Real-time quote with candle fallback)
   async getLatestPrices(): Promise<Record<string, number>> {
+    try {
+      const quoteRes = await this.getQuote('XAU/USD');
+      if (quoteRes.data && typeof quoteRes.data.price === 'number' && quoteRes.data.price > 0) {
+        return { 'XAU/USD': quoteRes.data.price };
+      }
+    } catch {
+      // Fallback to candle close if quote provider is offline or busy
+    }
+
     const symbols = ['XAU/USD'];
     const prices: Record<string, number> = {};
 
@@ -507,13 +535,13 @@ export const quantViewApi = {
     return prices;
   },
 
-  // 18. Supported Symbols Metadata
+  // 19. Supported Symbols Metadata
   async getSymbols(): Promise<{ data: BackendMarketSymbolInfo[]; durationMs: number }> {
     console.log('[API] GET /api/v1/market/symbols');
     return fetchWithTiming<BackendMarketSymbolInfo[]>(`${API_BASE}/market/symbols`);
   },
 
-  // 19. Sync Market Data from Provider
+  // 20. Sync Market Data from Provider
   async syncMarketData(symbol?: string, timeframe?: string, limit = 100): Promise<{ data: any; durationMs: number }> {
     console.log('[API] POST /api/v1/market/sync');
     return fetchWithTiming<any>(`${API_BASE}/market/sync`, {

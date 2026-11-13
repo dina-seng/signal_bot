@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from app.schemas.candle import CandleCreate
+from app.schemas.market import QuoteResponse
 from app.services.market_data.base import BaseMarketDataProvider
 
 
@@ -92,3 +93,19 @@ class MockMarketDataProvider(BaseMarketDataProvider):
         count: int = 50,
     ) -> List[CandleCreate]:
         return await self.fetch_candles(symbol, timeframe, limit=count)
+
+    async def fetch_quote(self, symbol: str) -> Optional[QuoteResponse]:
+        price = self.base_price
+        if "XAU" in symbol:
+            price = 2500.00
+        return QuoteResponse(
+            symbol=symbol,
+            price=price,
+            bid=round(price - 0.05, 2),
+            ask=round(price + 0.05, 2),
+            high=round(price + 1.50, 2),
+            low=round(price - 1.50, 2),
+            volume=1200.0,
+            timestamp=datetime.now(timezone.utc),
+            source="mock",
+        )

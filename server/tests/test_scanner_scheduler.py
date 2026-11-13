@@ -51,6 +51,9 @@ class FailingMarketDataProvider(BaseMarketDataProvider):
     ) -> List[CandleCreate]:
         raise ConnectionError("Simulated remote provider connection outage!")
 
+    async def fetch_quote(self, symbol: str):
+        raise ConnectionError("Simulated remote provider connection outage!")
+
 
 def _seed_candles(db, symbol="EUR/USD", count=40):
     """Seed test candles."""

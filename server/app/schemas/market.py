@@ -35,3 +35,16 @@ class IngestionRequest(BaseModel):
     symbol: Optional[str] = Field(None, description="Specific symbol or null for all")
     timeframe: Optional[str] = Field(None, description="Specific timeframe or null for all")
     limit: int = Field(default=200, ge=10, le=2000, description="Number of candles to fetch per timeframe")
+
+
+class QuoteResponse(BaseModel):
+    """Real-time market price quote schema."""
+    symbol: str
+    price: float
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    volume: Optional[float] = None
+    timestamp: datetime
+    source: str = "realtime"
