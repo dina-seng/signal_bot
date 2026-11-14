@@ -37,6 +37,8 @@ import {
   BackendPaperTrade,
   BackendTelegramStatus,
   BackendScannerStatus,
+  BackendQuote,
+  AppConfig,
 } from './services/api';
 import { formatPrice, getTimeUntil } from './utils/formatters';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
@@ -55,6 +57,9 @@ export const App: React.FC = () => {
   const [riskStatus, setRiskStatus] = useState<RiskStatus>(initialRiskStatus);
   const [selectedChartSymbol, setSelectedChartSymbol] = useState<PairSymbol>('XAU/USD');
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  const [latestQuote, setLatestQuote] = useState<BackendQuote | null>(null);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  const [showQuoteDebug, setShowQuoteDebug] = useState<boolean>(false);
 
   // Telegram & Scanner live status
   const [telegramStatus, setTelegramStatus] = useState<BackendTelegramStatus | null>(null);
@@ -228,12 +233,23 @@ export const App: React.FC = () => {
     if (isFetchingPricesRef.current) return;
     isFetchingPricesRef.current = true;
     try {
-      const prices = await quantViewApi.getLatestPrices();
-      if (prices && Object.keys(prices).length > 0) {
-        setLivePrices(prices);
+      const quoteRes = await quantViewApi.getQuote('XAU/USD');
+      if (quoteRes.data) {
+        setLatestQuote(quoteRes.data);
+        if (typeof quoteRes.data.price === 'number' && quoteRes.data.price > 0) {
+          setLivePrices((prev) => ({ ...prev, 'XAU/USD': quoteRes.data.price }));
+        }
       }
     } catch {
-      // Ignore transient quote error
+      // Fallback to latest prices if quote provider is offline
+      try {
+        const prices = await quantViewApi.getLatestPrices();
+        if (prices && Object.keys(prices).length > 0) {
+          setLivePrices(prices);
+        }
+      } catch {
+        // Ignore transient error
+      }
     } finally {
       isFetchingPricesRef.current = false;
     }
@@ -439,6 +455,15 @@ export const App: React.FC = () => {
     async function initialBoot() {
       setIsInitialLoading(true);
       try {
+        try {
+          const cfgRes = await quantViewApi.getConfig();
+          if (cfgRes.data) {
+            setAppConfig(cfgRes.data);
+          }
+        } catch (cfgErr) {
+          console.warn('[QuantView API] Failed to fetch app config:', cfgErr);
+        }
+
         await Promise.allSettled([
           fetchLiveQuotes(),
           fetchAccountAndPositions(),
@@ -660,7 +685,7 @@ export const App: React.FC = () => {
     setTestNotificationResult(null);
 
     try {
-      const testPayload = `🔔 *QuantView Alert Engine — Live Test*\n\n• Target: @signalTheBEST_bot\n• System: QuantView Institutional Terminal\n• Event: Alert Configuration Verification\n• Backend: Connected to FastAPI /api/v1/telegram/broadcast\n• Time: ${new Date().toUTCString()}`;
+      const testPayload = `🔔 <b>[TEST PING - NOT A SIGNAL]</b>\n\n<b>QuantView Terminal — Connectivity Verification</b>\n• System: QuantView Institutional Terminal\n• Target: @signalTheBEST_bot\n• Backend: Connected to FastAPI /api/v1/telegram/broadcast\n• Time: ${new Date().toUTCString()}\n\n<i>This is an automated test ping to verify bot connectivity. No action required.</i>`;
       
       const res = await quantViewApi.sendTelegramBroadcast(testPayload);
 
@@ -823,6 +848,17 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3 text-[11px] shrink-0">
+            <button
+              onClick={() => setShowQuoteDebug((prev) => !prev)}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer ${
+                showQuoteDebug
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : 'bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 border-white/10'
+              }`}
+              title="Toggle Dev-only Quote Diagnostics"
+            >
+              Dev: Quote Diagnostics
+            </button>
             <span className="hidden sm:inline text-zinc-400">
               Active Instrument: <strong className="text-zinc-200">XAU/USD (Gold Focus)</strong>
             </span>
@@ -838,6 +874,71 @@ export const App: React.FC = () => {
             </span>
           </div>
         </div>
+
+        {/* Dev-Only Quote Provenance Debug Panel */}
+        {showQuoteDebug && (
+          <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 p-3 rounded-xl bg-zinc-950/80 border border-amber-500/30 font-mono text-xs text-zinc-300 backdrop-blur-md">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span className="font-semibold text-amber-400 tracking-wide uppercase text-[11px]">
+                  Quote Provenance & Symbol Correctness (Dev Diagnostics)
+                </span>
+              </div>
+              <span className="text-[10px] text-zinc-500">GET /api/v1/market/{latestQuote?.symbol || 'XAU/USD'}/quote</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 text-[11px]">
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Canonical Symbol</span>
+                <span className="font-semibold text-zinc-200">{latestQuote?.symbol || 'XAU/USD'}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Provider</span>
+                <span className={`font-semibold ${latestQuote?.provider === 'mock' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {latestQuote?.provider || 'pending'}
+                </span>
+              </div>
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Provider Symbol</span>
+                <span className="font-semibold text-cyan-300">{latestQuote?.provider_symbol || '--'}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Price</span>
+                <span className="font-semibold text-white">{latestQuote?.price ? latestQuote.price.toFixed(2) : '--'}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Timestamp (UTC)</span>
+                <span className="text-zinc-300 truncate block">{latestQuote?.timestamp ? new Date(latestQuote.timestamp).toISOString() : '--'}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Age</span>
+                <span className="text-zinc-300">{latestQuote?.age_seconds != null ? `${latestQuote.age_seconds.toFixed(1)}s` : '--'}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Staleness</span>
+                <span className={`font-semibold ${latestQuote?.is_stale ? 'text-rose-400' : 'text-emerald-400'}`}>
+                  {latestQuote?.is_stale ? 'STALE (>120s)' : 'FRESH'}
+                </span>
+              </div>
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Cache Status</span>
+                <span className="text-zinc-300">
+                  {latestQuote?.cached ? `HIT (${latestQuote.cache_age_ms?.toFixed(0) || 0}ms)` : 'MISS (Fresh Tick)'}
+                </span>
+              </div>
+              <div>
+                <span className="text-zinc-500 block text-[10px] uppercase">Degraded</span>
+                <span className={`font-semibold ${latestQuote?.degraded ? 'text-amber-400' : 'text-zinc-400'}`}>
+                  {latestQuote?.degraded ? 'TRUE' : 'FALSE'}
+                </span>
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <span className="text-zinc-500 block text-[10px] uppercase">Fallback Reason</span>
+                <span className="text-amber-300/80 truncate block">{latestQuote?.fallback_reason || 'None (Primary)'}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Main Content Body - Responsive Padding & Overflow Boundary */}
         <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 space-y-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-hidden">
@@ -857,6 +958,7 @@ export const App: React.FC = () => {
                 livePrices={livePrices}
                 isLoading={isInitialLoading}
                 isScanning={isScanningMarkets}
+                appConfig={appConfig}
                 onToggleNotify={handleToggleNotify}
                 onSelectSignalForChart={handleSelectSignalForChart}
                 onTriggerScan={handleScanMarkets}
@@ -892,6 +994,7 @@ export const App: React.FC = () => {
               {/* Notification & Background Scanner Settings Panel */}
               <NotificationSettings
                 config={alertConfig}
+                appConfig={appConfig}
                 onUpdateConfig={setAlertConfig}
                 onSendTestNotification={handleSendTestNotification}
                 isSendingTest={isSendingTestTelegram}
@@ -912,6 +1015,7 @@ export const App: React.FC = () => {
                 livePrices={livePrices}
                 isLoading={isInitialLoading}
                 isScanning={isScanningMarkets}
+                appConfig={appConfig}
                 onToggleNotify={handleToggleNotify}
                 onSelectSignalForChart={handleSelectSignalForChart}
                 onTriggerScan={handleScanMarkets}
@@ -963,6 +1067,7 @@ export const App: React.FC = () => {
             <div className="space-y-6">
               <NotificationSettings
                 config={alertConfig}
+                appConfig={appConfig}
                 onUpdateConfig={setAlertConfig}
                 onSendTestNotification={handleSendTestNotification}
                 isSendingTest={isSendingTestTelegram}

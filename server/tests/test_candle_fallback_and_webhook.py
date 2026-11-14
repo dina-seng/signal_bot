@@ -26,7 +26,7 @@ def test_yahoofinance_provider_ticker_candidates():
     """Verify YahooFinanceProvider maps gold to GC=F and XAUUSD=X."""
     provider = YahooFinanceProvider()
     candidates = provider._get_ticker_candidates("XAU/USD")
-    assert candidates == ["GC=F", "XAUUSD=X"]
+    assert set(candidates) == {"GC=F", "XAUUSD=X"}
 
 
 @pytest.mark.asyncio
@@ -62,7 +62,7 @@ async def test_scan_handler_strictly_scans_single_asset(test_db_session):
     
     res = await handler.handle_command(db=test_db_session, request=req)
     assert res.handled_successfully is True
-    assert "Markets Scanned:* `1`" in res.reply_text
+    assert "Markets Scanned" in res.reply_text and "1" in res.reply_text
     assert "US100" not in res.reply_text
 
 

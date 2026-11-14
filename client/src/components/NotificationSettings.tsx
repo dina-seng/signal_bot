@@ -14,7 +14,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { AlertConfiguration } from '../types';
-import { BackendTelegramStatus, BackendScannerStatus } from '../services/api';
+import { BackendTelegramStatus, BackendScannerStatus, AppConfig } from '../services/api';
 
 interface NotificationSettingsProps {
   config: AlertConfiguration;
@@ -26,6 +26,7 @@ interface NotificationSettingsProps {
   scannerStatus?: BackendScannerStatus | null;
   onTriggerScanner?: () => Promise<void>;
   isTriggeringScanner?: boolean;
+  appConfig?: AppConfig | null;
 }
 
 export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
@@ -38,6 +39,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
   scannerStatus,
   onTriggerScanner,
   isTriggeringScanner = false,
+  appConfig,
 }) => {
   const [emailInput, setEmailInput] = useState<string>(config.dailySummaryEmail);
   const [emailSaved, setEmailSaved] = useState<boolean>(false);
@@ -115,7 +117,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
                 )}
               </div>
               <p className="text-[10px] text-slate-500 mt-0.5">
-                Target chat ID configured in backend environment with 2-hour duplicate suppression
+                Target chat ID configured in backend environment with {appConfig?.duplicate_cooldown_hours ?? 2}-hour duplicate suppression
               </p>
               {telegramStatus && (
                 <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">
@@ -178,7 +180,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
                 New Signal Alerts
               </span>
               <p className="text-[10px] text-slate-500">
-                Dispatches actionable alerts when confluence engine scores &ge; 75%
+                Dispatches actionable alerts when confluence engine scores &ge; {appConfig?.min_confluence_score ?? 75}%
               </p>
             </div>
             <button

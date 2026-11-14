@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 import yfinance as yf
 
+from app.core.config import settings
 from app.core.logging import logger
 from app.schemas.candle import CandleCreate
 from app.schemas.market import QuoteResponse
@@ -14,6 +15,12 @@ from app.services.market_data.freshness import (
     ensure_utc_datetime,
     get_timeframe_delta,
     is_candle_closed,
+)
+from app.services.market_data.symbols import (
+    INSTRUMENT_SPECS,
+    UnknownSymbolError,
+    get_provider_symbol,
+    normalize_symbol,
 )
 
 
@@ -47,19 +54,32 @@ class YahooFinanceProvider(BaseMarketDataProvider):
         self.timeout = timeout
 
     def is_symbol_supported(self, symbol: str) -> bool:
-        """Check if symbol has a ticker mapping."""
-        clean = (symbol or "").replace(" ", "").upper()
-        return clean in self.TICKER_CANDIDATES
+        """Check if symbol has a valid canonical and Yahoo ticker mapping."""
+        try:
+            canonical = normalize_symbol(symbol)
+            ticker = get_provider_symbol(canonical, "yahoo", yahoo_gold_symbol=getattr(settings, "YAHOO_GOLD_SYMBOL", "XAUUSD=X"))
+            return bool(ticker and "/" not in ticker)
+        except UnknownSymbolError:
+            return False
 
     def _get_ticker_candidates(self, symbol: str) -> List[str]:
-        """Return candidate Yahoo Finance tickers for a symbol."""
-        clean = (symbol or "").replace(" ", "").upper()
-        if clean in self.TICKER_CANDIDATES:
-            return self.TICKER_CANDIDATES[clean]
-        # Generic heuristic: if 6 alpha chars, append =X
-        if len(clean) == 6 and clean.isalpha():
-            return [f"{clean}=X"]
-        return [clean]
+        """Return candidate Yahoo Finance tickers for a symbol.
+        
+        Raises UnknownSymbolError for unmapped symbols.
+        Guarantees NO returned ticker contains '/'.
+        """
+        canonical = normalize_symbol(symbol)
+        primary = get_provider_symbol(
+            canonical, "yahoo", yahoo_gold_symbol=getattr(settings, "YAHOO_GOLD_SYMBOL", "XAUUSD=X")
+        )
+        if "/" in primary:
+            raise UnknownSymbolError(f"Yahoo ticker '{primary}' for canonical symbol '{canonical}' contains invalid '/'")
+        
+        # For gold, support primary configured plus alternate (e.g. spot vs futures)
+        if canonical == "XAU/USD":
+            alt = "GC=F" if primary != "GC=F" else "XAUUSD=X"
+            return [primary, alt]
+        return [primary]
 
     def _normalize_timeframe(self, timeframe: str) -> str:
         tf = timeframe.lower().strip()
@@ -233,26 +253,38 @@ class YahooFinanceProvider(BaseMarketDataProvider):
 
     async def fetch_quote(self, symbol: str) -> Optional[QuoteResponse]:
         """Fetch real-time price quote from Yahoo Finance."""
-        if not self.is_symbol_supported(symbol):
+        try:
+            canonical = normalize_symbol(symbol)
+        except UnknownSymbolError:
             logger.warning(f"YahooFinanceProvider: Unsupported symbol '{symbol}' for quote.")
             return None
 
-        candidates = self._get_ticker_candidates(symbol)
+        candidates = self._get_ticker_candidates(canonical)
+        primary_ticker = candidates[0] if candidates else ""
 
         def _fetch_quote_sync() -> Optional[QuoteResponse]:
-            for ticker_str in candidates:
+            for idx, ticker_str in enumerate(candidates):
                 try:
                     ticker = yf.Ticker(ticker_str)
                     fast_info = getattr(ticker, "fast_info", None)
                     last_price = None
+                    high = None
+                    low = None
+                    vol = None
+                    bid = None
+                    ask = None
+                    quote_time = None
+
                     if fast_info:
                         last_price = fast_info.get("lastPrice") or fast_info.get("regularMarketPrice")
-
-                    high = fast_info.get("dayHigh") if fast_info else None
-                    low = fast_info.get("dayLow") if fast_info else None
-                    vol = fast_info.get("lastVolume") if fast_info else None
-                    bid = fast_info.get("bid") if fast_info else None
-                    ask = fast_info.get("ask") if fast_info else None
+                        high = fast_info.get("dayHigh")
+                        low = fast_info.get("dayLow")
+                        vol = fast_info.get("lastVolume")
+                        bid = fast_info.get("bid")
+                        ask = fast_info.get("ask")
+                        raw_time = fast_info.get("regularMarketTime") or fast_info.get("lastPriceTime")
+                        if raw_time and isinstance(raw_time, (int, float)) and raw_time > 0:
+                            quote_time = datetime.fromtimestamp(raw_time, tz=timezone.utc)
 
                     if not last_price:
                         # Fallback to last 1m bar
@@ -262,21 +294,41 @@ class YahooFinanceProvider(BaseMarketDataProvider):
                             high = float(df["High"].max()) if high is None else high
                             low = float(df["Low"].min()) if low is None else low
                             vol = float(df["Volume"].sum()) if vol is None else vol
+                            if quote_time is None and not df.empty:
+                                last_ts = df.index[-1]
+                                if hasattr(last_ts, "to_pydatetime"):
+                                    quote_time = ensure_utc_datetime(last_ts.to_pydatetime())
 
                     if last_price and float(last_price) > 0:
+                        now_utc = datetime.now(timezone.utc)
+                        quote_ts = quote_time or now_utc
+                        age_sec = max(0.0, (now_utc - quote_ts).total_seconds())
+                        is_stale = age_sec > settings.QUOTE_MAX_AGE_SECONDS
+                        fallback_reason = None
+                        if ticker_str != primary_ticker:
+                            fallback_reason = f"Yahoo primary ticker '{primary_ticker}' unavailable. Used alternate '{ticker_str}'."
+                            logger.warning(f"YahooFinance fallback: {fallback_reason}")
+
                         return QuoteResponse(
-                            symbol=symbol,
+                            symbol=canonical,
                             price=float(last_price),
                             bid=float(bid) if bid else None,
                             ask=float(ask) if ask else None,
                             high=float(high) if high else None,
                             low=float(low) if low else None,
                             volume=float(vol) if vol else None,
-                            timestamp=datetime.now(timezone.utc),
+                            timestamp=quote_ts,
                             source="yfinance",
+                            provider="yahoo",
+                            provider_symbol=ticker_str,
+                            age_seconds=round(age_sec, 2),
+                            is_stale=is_stale,
+                            degraded=False,
+                            fallback_reason=fallback_reason,
+                            cached=False,
                         )
                 except Exception as ex:
-                    logger.debug(f"Yahoo quote error for {ticker_str}: {ex}")
+                    logger.warning(f"Yahoo quote error for {ticker_str} ({symbol}): {ex}")
             return None
 
         return await asyncio.to_thread(_fetch_quote_sync)

@@ -48,3 +48,11 @@ class QuoteResponse(BaseModel):
     volume: Optional[float] = None
     timestamp: datetime
     source: str = "realtime"
+    provider: str = "twelvedata"
+    provider_symbol: str = ""
+    age_seconds: float = 0.0
+    is_stale: bool = False
+    degraded: bool = False
+    fallback_reason: Optional[str] = None
+    cached: bool = False
+    cache_age_ms: Optional[float] = None

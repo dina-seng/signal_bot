@@ -7,6 +7,8 @@ from app.schemas.market import QuoteResponse
 from app.services.market_data.base import BaseMarketDataProvider
 
 
+from app.services.market_data.symbols import normalize_symbol, get_provider_symbol
+
 class MockMarketDataProvider(BaseMarketDataProvider):
     """Generates synthetic, deterministic OHLCV candles for testing pipelines and strategies."""
 
@@ -95,17 +97,27 @@ class MockMarketDataProvider(BaseMarketDataProvider):
         return await self.fetch_candles(symbol, timeframe, limit=count)
 
     async def fetch_quote(self, symbol: str) -> Optional[QuoteResponse]:
+        canonical = normalize_symbol(symbol)
+        prov_sym = get_provider_symbol(canonical, "mock")
         price = self.base_price
-        if "XAU" in symbol:
+        if "XAU" in canonical:
             price = 2500.00
+        now = datetime.now(timezone.utc)
         return QuoteResponse(
-            symbol=symbol,
+            symbol=canonical,
             price=price,
             bid=round(price - 0.05, 2),
             ask=round(price + 0.05, 2),
             high=round(price + 1.50, 2),
             low=round(price - 1.50, 2),
             volume=1200.0,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=now,
             source="mock",
+            provider="mock",
+            provider_symbol=prov_sym,
+            age_seconds=0.0,
+            is_stale=False,
+            degraded=True,
+            fallback_reason="Mock provider active (simulated quote)",
+            cached=False,
         )

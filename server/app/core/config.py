@@ -34,17 +34,51 @@ class Settings(BaseSettings):
     ATR_PERIOD: int = 14
 
     # Scoring & Risk Parameters
-    MIN_SETUP_SCORE: float = Field(default=75.0, ge=0.0, le=100.0)
-    MIN_RR: float = Field(default=2.0, ge=1.0)
-    MAX_RISK_PERCENT: float = Field(default=0.5, ge=0.1, le=5.0)
+    MIN_SETUP_SCORE: float = Field(
+        default=75.0,
+        ge=0.0,
+        le=100.0,
+        validation_alias=AliasChoices("MIN_SETUP_SCORE", "MIN_CONFLUENCE_SCORE"),
+    )
+    MIN_RR: float = Field(
+        default=2.0,
+        ge=1.0,
+        validation_alias=AliasChoices("MIN_RR", "MIN_RR_TP1"),
+    )
+    MIN_RR_TP1: float = Field(
+        default=2.0,
+        ge=1.0,
+        validation_alias=AliasChoices("MIN_RR_TP1", "MIN_RR"),
+    )
+    MIN_RR_TP2: float = Field(default=3.0, ge=1.0)
+    MAX_RISK_PERCENT: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=5.0,
+        validation_alias=AliasChoices("MAX_RISK_PERCENT", "RISK_PER_ORDER_PCT"),
+    )
 
     # Fundamental & News Blackout (Milestone 5)
-    NEWS_BLACKOUT_BEFORE_MINUTES: int = 30
-    NEWS_BLACKOUT_AFTER_MINUTES: int = 15
+    NEWS_BLACKOUT_BEFORE_MINUTES: int = Field(
+        default=30,
+        validation_alias=AliasChoices("NEWS_BLACKOUT_BEFORE_MINUTES", "NEWS_BUFFER_PRE_MIN"),
+    )
+    NEWS_BLACKOUT_AFTER_MINUTES: int = Field(
+        default=15,
+        validation_alias=AliasChoices("NEWS_BLACKOUT_AFTER_MINUTES", "NEWS_BUFFER_POST_MIN"),
+    )
 
     # Providers & External APIs
     MARKET_DATA_PROVIDER: str = "twelvedata"
     NEWS_PROVIDER: str = "forexfactory"
+    MODE: str = Field(
+        default="paper",
+        validation_alias=AliasChoices("MODE", "APP_MODE"),
+    )
+    QUOTE_POLL_SECONDS: int = 10
+    QUOTE_MAX_AGE_SECONDS: int = 120
+    QUOTE_MAX_DEVIATION_PCT: float = 0.05
+    YAHOO_GOLD_SYMBOL: str = "XAUUSD=X"
     TWELVE_DATA_API_KEY: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("TWELVE_DATA_API_KEY", "TWELVEDATA_API_KEY"),
@@ -70,13 +104,18 @@ class Settings(BaseSettings):
     SCANNER_INTERVAL_MINUTES: int = 15
     SCANNER_TIMEFRAMES: List[str] = ["1h", "15m"]
     SCANNER_AUTO_TRADE_PAPER: bool = True
-    SIGNAL_COOLDOWN_HOURS: int = Field(default=2, ge=0, description="Cooldown window in hours to suppress duplicate signals")
+    SIGNAL_COOLDOWN_HOURS: int = Field(
+        default=2,
+        ge=0,
+        description="Cooldown window in hours to suppress duplicate signals",
+        validation_alias=AliasChoices("SIGNAL_COOLDOWN_HOURS", "DUPLICATE_COOLDOWN_HOURS"),
+    )
 
     # Paper Trading mode
     PAPER_TRADING: bool = True
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=[".env", "server/.env"],
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=True,

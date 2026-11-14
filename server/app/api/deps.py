@@ -226,7 +226,7 @@ def get_telegram_bot_service(
 ) -> TelegramBotService:
     """Dependency for TelegramBotService."""
     global _singleton_bot_service
-    if _singleton_bot_service is None:
+    if _singleton_bot_service is None or _singleton_bot_service.client != telegram_client:
         cmd_handler = TelegramCommandHandler(
             signal_generator=signal_generator,
             paper_service=paper_service,

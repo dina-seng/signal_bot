@@ -112,10 +112,11 @@ async def telegram_webhook(
 
         if cmd_root in _HEAVY_COMMANDS:
             # Task 4: Fast instant acknowledgement and non-blocking background dispatch
+            primary_sym = settings.SUPPORTED_SYMBOLS[0] if settings.SUPPORTED_SYMBOLS else "Markets"
             if cmd_root == "/scan":
-                ack_text = "⚡ Scanning XAU/USD... Please wait while fresh market data is analyzed."
+                ack_text = f"⚡ Scanning {primary_sym}... Please wait while fresh market data is analyzed."
             elif cmd_root == "/sync":
-                ack_text = "🔄 Syncing fresh market data for XAU/USD... Please wait."
+                ack_text = f"🔄 Syncing fresh market data for {primary_sym}... Please wait."
             else:
                 ack_text = "🔄 Processing request... analyzing market data. Please wait."
 

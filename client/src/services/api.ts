@@ -29,6 +29,21 @@ export interface HealthResponse {
   scanner_running: boolean;
 }
 
+export interface AppConfig {
+  min_confluence_score: number;
+  duplicate_cooldown_hours: number;
+  risk_per_order_pct: number;
+  news_buffer_pre_min: number;
+  news_buffer_post_min: number;
+  min_rr_tp1: number;
+  min_rr_tp2: number;
+  quote_poll_seconds: number;
+  mode: string;
+  provider_name: string;
+  quote_max_age_seconds: number;
+  active_symbols: string[];
+}
+
 export interface BackendQuote {
   symbol: string;
   price: number;
@@ -39,6 +54,14 @@ export interface BackendQuote {
   volume?: number | null;
   timestamp: string;
   source: string;
+  provider?: string;
+  provider_symbol?: string;
+  age_seconds?: number;
+  is_stale?: boolean;
+  degraded?: boolean;
+  fallback_reason?: string | null;
+  cached?: boolean;
+  cache_age_ms?: number | null;
 }
 
 export interface BackendAccount {
@@ -378,6 +401,12 @@ async function fetchWithTiming<T>(url: string, options: RequestInit = {}, timeou
 }
 
 export const quantViewApi = {
+  // 0. Configuration check (read-only, single source of truth)
+  async getConfig(): Promise<{ data: AppConfig; durationMs: number }> {
+    console.log('[API] GET /api/v1/config');
+    return fetchWithTiming<AppConfig>(`${API_BASE}/config`);
+  },
+
   // 1. Health check
   async getHealth(): Promise<{ data: HealthResponse; durationMs: number }> {
     console.log('[API] GET /api/v1/health');

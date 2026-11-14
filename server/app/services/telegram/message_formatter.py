@@ -1,25 +1,246 @@
-"""Telegram Message Formatting with rich emojis, entity sanitization, and Markdown/HTML styling."""
+"""Telegram Message Formatting with rich emojis, entity sanitization, and pure HTML styling."""
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import html
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
-from app.core.config import ACTIVE_SYMBOLS
-from app.core.time_utils import format_local_time
+from app.services.market_data.symbols import (
+    UnknownSymbolError,
+    calculate_pips,
+    format_price,
+    get_instrument_spec,
+    normalize_symbol,
+)
 from app.schemas.news import NewsEventResponse
 from app.schemas.paper_trading import PaperPortfolioPerformance, VirtualAccountResponse
 from app.schemas.signal import MarketScanResponse, SignalDirection, SignalResponse
 
 
-class TelegramMessageFormatter:
-    """Formats market signals, position alerts, news summaries, and portfolio updates for Telegram.
+@dataclass
+class SignalContext:
+    """External context passed to the pure signal formatter."""
+    account_balance: Optional[float] = None
+    risk_percent: Optional[float] = None
+    risk_amount_usd: Optional[float] = None
+    suggested_lot_size: Optional[float] = None
+    news_blackout_status: Optional[str] = None
+    regime: Optional[str] = None
+    htf_context: Optional[str] = None
+    catalysts: Optional[List[str]] = None
+    warnings: Optional[List[str]] = None
+    created_at: Optional[datetime] = None
+
+
+def escape_html(text: Any) -> str:
+    """Escape dynamic strings for Telegram HTML parse_mode (&, <, >)."""
+    if text is None:
+        return ""
+    return html.escape(str(text), quote=False)
+
+
+def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
+    """Pure, zero-I/O function that formats a trading signal for Telegram (HTML mode).
     
-    Provides sanitization and escaping for dynamic user/market values to prevent Telegram entity parsing errors (400).
+    Zero defaults for trading values, no datetime.now() inside signal timestamp formatting.
+    Every displayed field comes strictly from the signal and ctx objects.
+    Missing fields render as explicit 'N/A'. Never substitutes placeholder numbers.
     """
+    if signal is None:
+        raise ValueError("Cannot format null signal.")
+
+    ctx = ctx or SignalContext()
+
+    # 1. Identity & Instrument
+    raw_sym = getattr(signal, "symbol", None)
+    if not raw_sym:
+        raise ValueError("Signal symbol is required.")
+    try:
+        sym = normalize_symbol(raw_sym)
+    except UnknownSymbolError:
+        sym = raw_sym
+
+    tf = getattr(signal, "timeframe", None) or "N/A"
+    direction_val = getattr(signal, "direction", None)
+    if isinstance(direction_val, SignalDirection):
+        dir_str = direction_val.value
+    elif direction_val is not None:
+        dir_str = str(direction_val).upper()
+    else:
+        dir_str = "N/A"
+
+    if dir_str == "BUY":
+        dir_badge = "🟢 <b>STRONG BUY (LONG)</b>"
+    elif dir_str == "SELL":
+        dir_badge = "🔴 <b>STRONG SELL (SHORT)</b>"
+    else:
+        dir_badge = f"⚪ <b>{escape_html(dir_str)}</b>"
+
+    strategy_label = getattr(signal, "strategy_name", None) or "N/A"
+    score_val = getattr(signal, "setup_score", None)
+    score_str = f"{score_val:.1f} / 100" if score_val is not None else "N/A"
+
+    # 2. Strategy & Header
+    lines = [
+        f"⚡ <b>NEW SIGNAL: {escape_html(strategy_label)}</b> ⚡",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"📊 <b>Instrument:</b> <code>{escape_html(sym)}</code>",
+        f"⏱ <b>Timeframe:</b> <code>{escape_html(tf)}</code>",
+        f"🎯 <b>Direction:</b> {dir_badge}",
+        f"🧠 <b>Strategy:</b> <code>{escape_html(strategy_label)}</code>",
+        f"⭐ <b>Confluence Score:</b> <code>{score_str}</code>",
+    ]
+
+    # 3. Market Regime & HTF Context
+    regime = ctx.regime
+    if not regime:
+        if "Range Sniper" in strategy_label or "RANGING" in str(getattr(signal, "htf_trend", "")):
+            regime = "RANGING / MEAN REVERSION"
+        elif getattr(signal, "trend_alignment", None):
+            regime = str(signal.trend_alignment)
+        else:
+            regime = "TREND FOLLOWING"
+    lines.append(f"🔄 <b>Market Regime:</b> <code>{escape_html(regime)}</code>")
+
+    htf = ctx.htf_context or getattr(signal, "htf_trend", None)
+    if htf:
+        lines.append(f"📈 <b>HTF Context:</b> <code>{escape_html(htf)}</code>")
+    else:
+        lines.append("📈 <b>HTF Context:</b> <code>N/A</code>")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+    # 4. Entry, SL, TP1, TP2 Pricing & Computed Pip Distances
+    entry_price = getattr(signal, "entry_price", None)
+    if entry_price is not None:
+        lines.append(f"📍 <b>Entry Price:</b> <code>{format_price(entry_price, sym)}</code>")
+    else:
+        lines.append("📍 <b>Entry Price:</b> <code>N/A</code>")
+
+    stop_loss = getattr(signal, "stop_loss", None)
+    if stop_loss is not None:
+        sl_formatted = format_price(stop_loss, sym)
+        if entry_price is not None:
+            sl_pips = calculate_pips(entry_price, stop_loss, sym)
+            lines.append(f"🛑 <b>Stop Loss:</b> <code>{sl_formatted}</code> ({sl_pips:.1f} pips)")
+        else:
+            lines.append(f"🛑 <b>Stop Loss:</b> <code>{sl_formatted}</code> (N/A pips)")
+    else:
+        lines.append("🛑 <b>Stop Loss:</b> <code>N/A</code>")
+
+    rp = getattr(signal, "risk_parameters", None)
+
+    tp1 = getattr(signal, "take_profit_1", None)
+    if tp1 is not None:
+        tp1_formatted = format_price(tp1, sym)
+        if entry_price is not None:
+            tp1_pips = calculate_pips(entry_price, tp1, sym)
+            rr_tp1 = getattr(rp, "risk_reward_tp1", None) or getattr(signal, "risk_reward", None)
+            rr_tp1_str = f"{rr_tp1:.1f} R:R" if rr_tp1 is not None else "N/A R:R"
+            lines.append(f"🎯 <b>Take Profit 1 (TP1):</b> <code>{tp1_formatted}</code> ({tp1_pips:.1f} pips | {rr_tp1_str})")
+        else:
+            lines.append(f"🎯 <b>Take Profit 1 (TP1):</b> <code>{tp1_formatted}</code> (N/A)")
+    else:
+        lines.append("🎯 <b>Take Profit 1 (TP1):</b> <code>N/A</code>")
+
+    tp2 = getattr(signal, "take_profit_2", None)
+    if tp2 is not None:
+        tp2_formatted = format_price(tp2, sym)
+        if entry_price is not None:
+            tp2_pips = calculate_pips(entry_price, tp2, sym)
+            rr_tp2 = getattr(rp, "risk_reward_tp2", None)
+            rr_tp2_str = f"{rr_tp2:.1f} R:R" if rr_tp2 is not None else "N/A R:R"
+            lines.append(f"🏆 <b>Take Profit 2 (TP2):</b> <code>{tp2_formatted}</code> ({tp2_pips:.1f} pips | {rr_tp2_str})")
+        else:
+            lines.append(f"🏆 <b>Take Profit 2 (TP2):</b> <code>{tp2_formatted}</code> (N/A)")
+    else:
+        lines.append("🏆 <b>Take Profit 2 (TP2):</b> <code>N/A</code>")
+
+    # 5. Risk Allocation & Sizing
+    risk_pct = getattr(rp, "risk_percent", None) or ctx.risk_percent
+    suggested_lots = getattr(rp, "suggested_lot_size", None) or ctx.suggested_lot_size
+    risk_amount = getattr(rp, "risk_amount_usd", None) or ctx.risk_amount_usd
+    balance = getattr(rp, "account_balance", None) or ctx.account_balance
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    risk_pct_str = f"{risk_pct:.1f}%" if risk_pct is not None else "N/A"
+    lines.append(f"💼 <b>Risk Management ({risk_pct_str} Rule):</b>")
+    lots_str = f"{suggested_lots:.2f} Standard Lots" if suggested_lots is not None else "N/A"
+    lines.append(f"  • <b>Suggested Sizing:</b> <code>{lots_str}</code>")
+
+    if risk_amount is not None and balance is not None:
+        lines.append(f"  • <b>Risk Allocation:</b> <code>${risk_amount:,.2f}</code> on <code>${balance:,.0f}</code> balance")
+    elif risk_amount is not None:
+        lines.append(f"  • <b>Risk Allocation:</b> <code>${risk_amount:,.2f}</code> (Balance: N/A)")
+    else:
+        lines.append("  • <b>Risk Allocation:</b> <code>N/A</code>")
+
+    # 6. Pillar Breakdown
+    bd = getattr(signal, "score_breakdown", None)
+    if bd is not None:
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append("🏛 <b>Pillar Breakdown:</b>")
+        struct = f"{bd.structure_score:.0f}/35" if getattr(bd, "structure_score", None) is not None else "N/A"
+        liq = f"{bd.liquidity_score:.0f}/40" if getattr(bd, "liquidity_score", None) is not None else "N/A"
+        pa = f"{bd.price_action_score:.0f}/25" if getattr(bd, "price_action_score", None) is not None else "N/A"
+        lines.append(f"  • Structure &amp; MTF: <code>{struct}</code>")
+        lines.append(f"  • Liquidity &amp; POIs: <code>{liq}</code>")
+        lines.append(f"  • Price Action: <code>{pa}</code>")
+        if getattr(bd, "indicators_score", 0) > 0:
+            lines.append(f"  • Indicators (Aux): <code>{bd.indicators_score:.0f}/25</code>")
+
+    # 7. Key Confluence Catalysts
+    reasons = getattr(signal, "reasons", None) or ctx.catalysts or []
+    if reasons:
+        lines.append("━━━━━━━━━━━━━━━━━━━━\n💡 <b>Key Confluence Catalysts:</b>")
+        for r in reasons[:4]:
+            lines.append(f"  ✓ {escape_html(r)}")
+
+    # 7b. Warnings / Path Advisory
+    warnings = getattr(signal, "warnings", None) or getattr(ctx, "warnings", None) or []
+    if warnings:
+        lines.append("━━━━━━━━━━━━━━━━━━━━\n⚠️ *Path Advisory:*")
+        for w in warnings:
+            lines.append(f"  • {escape_html(w)}")
+
+    # 8. News Blackout Status
+    blackout_status = ctx.news_blackout_status
+    if not blackout_status:
+        if getattr(signal, "blackout_blocked", False):
+            blackout_status = "⚠️ BLOCKED - High Impact Macro Blackout"
+        else:
+            blackout_status = "✅ CLEAR - No Active Blackout"
+
+    # 9. Signal ID & Timestamps (Strict UTC, zero datetime.now() inside signal formatting)
+    sig_id = getattr(signal, "id", None) or getattr(signal, "fingerprint", None) or "N/A"
+    sig_time = getattr(signal, "created_at", None) or getattr(signal, "timestamp", None) or ctx.created_at
+    if sig_time is not None:
+        if sig_time.tzinfo is None:
+            sig_time = sig_time.replace(tzinfo=timezone.utc)
+        time_str = sig_time.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    else:
+        time_str = "N/A"
+
+    lines.extend([
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🛡 <b>News Blackout Status:</b> <code>{escape_html(blackout_status)}</code>",
+        f"🆔 <b>Signal ID:</b> <code>{escape_html(str(sig_id))}</code>",
+        f"🕒 <b>Timestamp:</b> <code>{time_str}</code>",
+        "⚠️ <i>Rule-based algorithmic analysis only. Manage risk responsibly.</i>",
+    ])
+
+    return "\n".join(lines)
+
+
+class TelegramMessageFormatter:
+    """Telegram Message Formatter facade supporting HTML parse_mode with backward compatibility."""
+
+    @staticmethod
+    def escape_html(text: Any) -> str:
+        return escape_html(text)
 
     @staticmethod
     def escape_markdown(text: Any, version: int = 1) -> str:
-        """Sanitize/escape dynamic strings to prevent Telegram Markdown parsing errors."""
         if text is None:
             return ""
         s = str(text)
@@ -34,379 +255,164 @@ class TelegramMessageFormatter:
 
     @staticmethod
     def escape_markdown_v2(text: Any) -> str:
-        """Convenience method for MarkdownV2 escaping."""
         return TelegramMessageFormatter.escape_markdown(text, version=2)
 
     @staticmethod
     def escape_code(text: Any) -> str:
-        """Sanitize dynamic values placed inside single-backtick inline code spans (`...`)."""
         if text is None:
             return ""
         return str(text).replace("`", "'")
 
     @staticmethod
-    def escape_html(text: Any) -> str:
-        """Escape dynamic strings for Telegram HTML parse_mode (&, <, >)."""
-        if text is None:
-            return ""
-        return html.escape(str(text), quote=False)
-
-    @staticmethod
     def format_price(price: Optional[float], symbol: str) -> str:
-        """Format price string with appropriate decimal precision per instrument."""
-        if price is None:
-            return "N/A"
-        sym = symbol.upper().replace("/", "")
-        if "XAU" in sym or "GOLD" in sym:
-            return f"{price:.2f}"
-        elif "JPY" in sym:
-            return f"{price:.3f}"
-        return f"{price:.5f}"
+        return format_price(price, symbol)
 
     @staticmethod
     def calculate_pips(entry: float, target: float, symbol: str) -> float:
-        """Calculate standard pip distance adjusted for asset class."""
-        diff = abs(entry - target)
-        sym = symbol.upper().replace("/", "")
-        if "XAU" in sym or "GOLD" in sym:
-            # For Gold: 1 pip = $0.10 (10 cents)
-            return round(diff / 0.10, 1)
-        elif "JPY" in sym:
-            # For JPY: 1 pip = 0.01
-            return round(diff / 0.01, 1)
-        else:
-            # Standard Forex: 1 pip = 0.0001
-            return round(diff / 0.0001, 1)
+        return calculate_pips(entry, target, symbol)
 
     @classmethod
     def format_signal_alert(cls, sig: SignalResponse) -> str:
-        """Format an actionable trade setup alert.
-
-        Handles three cases:
-        - PATH BLOCKED rejection: shows a dedicated rejection card
-        - TP Adjusted (trade still valid): shows warning in the alert
-        - Normal trade: standard signal format
-        """
-        # Detect path validation outcomes from reasons and warnings
-        path_blocked_reason = None
-        tp_adjusted_reason = None
-        path_advisory = None
-
-        for w in (getattr(sig, "warnings", []) or []):
-            if "Path Advisory" in w:
-                path_advisory = w
-                break
-
-        for r in (sig.reasons or []):
-            if "PATH BLOCKED" in r:
-                path_blocked_reason = r
-            elif "TP Adjusted" in r:
-                tp_adjusted_reason = r
-            elif "Path Advisory" in r and not path_advisory:
-                path_advisory = r
-
-        # PATH BLOCKED rejection card — trade was killed by obstacle detection (legacy fallback)
-        if sig.direction == SignalDirection.WAIT and path_blocked_reason:
-            sym = cls.escape_code(sig.symbol)
-            tf = cls.escape_code(sig.timeframe)
-            lines = [
-                f"🚧 *TRADE REJECTED — PATH BLOCKED* 🚧",
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"📊 *Instrument:* `{sym}`",
-                f"⏱ *Timeframe:* `{tf}`",
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"🛑 *Rejection Reason:*",
-                f"  {cls.escape_markdown(path_blocked_reason)}",
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"🛡 *Risk Protection:* _Structural obstacle between entry and target "
-                f"reduces R:R below minimum threshold. Trade skipped to protect capital._",
-            ]
-            # Include other context reasons (max 3)
-            other_reasons = [r for r in (sig.reasons or []) if r != path_blocked_reason]
-            if other_reasons:
-                lines.append(f"━━━━━━━━━━━━━━━━━━━━\n💡 *Market Context:*")
-                for r in other_reasons[:3]:
-                    lines.append(f"  • {cls.escape_markdown(r)}")
-
-            lines.extend([
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"🕒 *Timestamp:* `{format_local_time(sig.timestamp)}`",
-                f"⚡ _Institutional obstacle detection is actively protecting your capital._",
-            ])
-            return "\n".join(lines)
-
-        # Normal actionable signal format (with optional Path Advisory / TP Adjusted warning)
-        dir_emoji = "🟢 *STRONG BUY (LONG)*" if sig.direction == SignalDirection.BUY else "🔴 *STRONG SELL (SHORT)*"
-        rp = sig.risk_parameters
-
-        sym_clean = sig.symbol
-        sym = cls.escape_code(sym_clean)
-        tf = cls.escape_code(sig.timeframe)
-        score_str = f"{sig.setup_score:.1f}"
-
-        # Strategy-aware header
-        strategy_label = sig.strategy_name or "Confluence"
-        header = f"⚡ *NEW SIGNAL: {cls.escape_markdown(strategy_label)}* ⚡"
-
-        lines = [
-            header,
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"📊 *Instrument:* `{sym}`",
-            f"⏱ *Timeframe:* `{tf}`",
-            f"🎯 *Direction:* {dir_emoji}",
-            f"🧠 *Strategy:* `{cls.escape_code(strategy_label)}`",
-            f"⭐ *Confluence Score:* `{score_str} / 100`",
-        ]
-
-        strat_name = getattr(sig, "strategy_name", "") or ""
-        if "Range Sniper" in strat_name:
-            lines.append("🧭 *Market Regime:* 🔄 `RANGING / MEAN REVERSION`")
-        else:
-            lines.append("🧭 *Market Regime:* 🎯 `TREND FOLLOWING`")
-
-        if getattr(sig, "htf_trend", None):
-            lines.append(f"📈 *1H Context:* `{cls.escape_code(sig.htf_trend)}`")
-
-        # Path Advisory section — informational obstacle notification
-        if path_advisory:
-            lines.extend([
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"⚠️ *Path Advisory:*",
-            ])
-            for line in path_advisory.strip().split("\n"):
-                clean = line.strip()
-                if clean.startswith("⚠️ Path Advisory"):
-                    continue
-                lines.append(f"  {cls.escape_markdown(clean)}")
-        elif tp_adjusted_reason:
-            lines.extend([
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"⚠️ *Path Warning:*",
-                f"  {cls.escape_markdown(tp_adjusted_reason)}",
-            ])
-
-        lines.append(f"━━━━━━━━━━━━━━━━━━━━")
-
-        if sig.entry_price is not None:
-            formatted_entry = cls.format_price(sig.entry_price, sym_clean)
-            lines.append(f"📍 *Entry Price:* `{formatted_entry}`")
-
-        if sig.stop_loss is not None and sig.entry_price is not None:
-            formatted_sl = cls.format_price(sig.stop_loss, sym_clean)
-            sl_pips = cls.calculate_pips(sig.entry_price, sig.stop_loss, sym_clean)
-            lines.append(f"🛑 *Stop Loss:* `{formatted_sl}` ({sl_pips:.1f} pips)")
-
-        if sig.take_profit_1 is not None and sig.entry_price is not None:
-            formatted_tp1 = cls.format_price(sig.take_profit_1, sym_clean)
-            tp1_pips = cls.calculate_pips(sig.entry_price, sig.take_profit_1, sym_clean)
-            rr_label = f"{sig.risk_reward:.1f}" if sig.risk_reward else "2.0"
-            lines.append(f"🎯 *Take Profit 1 (TP1):* `{formatted_tp1}` ({tp1_pips:.1f} pips | {rr_label} R:R)")
-
-        if sig.take_profit_2 is not None and sig.entry_price is not None:
-            formatted_tp2 = cls.format_price(sig.take_profit_2, sym_clean)
-            tp2_pips = cls.calculate_pips(sig.entry_price, sig.take_profit_2, sym_clean)
-            lines.append(f"🏆 *Take Profit 2 (TP2):* `{formatted_tp2}` ({tp2_pips:.1f} pips | 3.0 R:R)")
-
-        if rp:
-            lines.extend([
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"💼 *Risk Management (0.5% Rule):*",
-                f"  • *Suggested Sizing:* `{rp.suggested_lot_size:.2f} Standard Lots`",
-                f"  • *Risk Allocation:* `${rp.risk_amount_usd:,.2f}` on `${rp.account_balance:,.0f}` balance",
-            ])
-
-        if sig.score_breakdown:
-            bd = sig.score_breakdown
-            breakdown_lines = [
-                f"━━━━━━━━━━━━━━━━━━━━",
-                f"🏛 *Pillar Breakdown:*",
-                f"  • Structure & MTF: `{bd.structure_score:.0f}/35`",
-                f"  • Liquidity & POIs: `{bd.liquidity_score:.0f}/40`",
-                f"  • Price Action: `{bd.price_action_score:.0f}/25`",
-            ]
-            if bd.indicators_score > 0:
-                breakdown_lines.append(f"  • Indicators (Aux): `{bd.indicators_score:.0f}/25`")
-            lines.extend(breakdown_lines)
-
-        if sig.reasons:
-            lines.append(f"━━━━━━━━━━━━━━━━━━━━\n💡 *Key Confluence Catalysts:*")
-            for r in sig.reasons[:4]:
-                # Skip the TP Adjusted and Path Advisory reasons here since they're shown above
-                if (tp_adjusted_reason and r == tp_adjusted_reason) or "Path Advisory" in r:
-                    continue
-                lines.append(f"  ✓ {cls.escape_markdown(r)}")
-
-        lines.extend([
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"🛡 *News Blackout Status:* `✅ CLEAR - Safe to trade`",
-            f"🕒 *Timestamp:* `{format_local_time(sig.timestamp)}`",
-            f"⚠️ *Notice:* _Rule-based analysis only. Always manage your capital responsibly._",
-        ])
-
-        return "\n".join(lines)
+        """Format signal alert via the pure format_signal engine."""
+        return format_signal(sig)
 
     @classmethod
-    def format_multi_strategy_alert(cls, signals: List[SignalResponse]) -> str:
-        """Format an alert when multiple independent strategies produce signals for the same symbol."""
-        if not signals:
-            return ""
-        if len(signals) == 1:
-            return cls.format_signal_alert(signals[0])
-
-        sym_clean = signals[0].symbol
-        sym = cls.escape_code(sym_clean)
-        tf = cls.escape_code(signals[0].timeframe)
-
-        # Check directions
-        directions = {s.direction for s in signals if s.direction in (SignalDirection.BUY, SignalDirection.SELL)}
-        is_conflict = len(directions) > 1
-
-        if is_conflict:
-            header = f"⚠️ *STRATEGY CONFLICT DETECTED: {sym}* ⚠️"
-            state_label = "⚠️ *Market State:* `STRATEGY CONFLICT (Opposing Biases)`"
-        else:
-            dir_val = list(directions)[0] if directions else SignalDirection.WAIT
-            dir_text = "BUY" if dir_val == SignalDirection.BUY else ("SELL" if dir_val == SignalDirection.SELL else "WAIT")
-            header = f"⚡ *STRATEGY CONFLUENCE: {sym} ({dir_text})* ⚡"
-            state_label = "✅ *Market State:* `STRATEGY CONFLUENCE (Aligned Direction)`"
-
-        lines = [
-            header,
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"📊 *Instrument:* `{sym}`",
-            f"⏱ *Timeframe:* `{tf}`",
-            state_label,
-            f"━━━━━━━━━━━━━━━━━━━━",
-        ]
-
-        for s in signals:
-            strat = s.strategy_name or "Independent Strategy"
-            dir_emoji = "🟢 BUY" if s.direction == SignalDirection.BUY else ("🔴 SELL" if s.direction == SignalDirection.SELL else "⚪ WAIT")
-            lines.append(f"🧠 *{cls.escape_markdown(strat)}:* {dir_emoji} (Score: `{s.setup_score:.1f}/100`)")
-            if s.reasons:
-                for r in s.reasons[:3]:
-                    lines.append(f"   • {cls.escape_markdown(r)}")
-            lines.append(f"────────────────────")
-
-        # Summary guidance
-        if is_conflict:
-            lines.extend([
-                f"🛡 *Analysis Note:* _Independent strategies show opposing direction. "
-                f"Exercise elevated caution or wait for structural resolution._",
-            ])
-        else:
-            actionable = [s for s in signals if s.direction in (SignalDirection.BUY, SignalDirection.SELL)]
-            if actionable:
-                primary_sig = max(actionable, key=lambda x: x.setup_score)
-                if primary_sig.entry_price is not None:
-                    lines.append(f"📍 *Confluence Entry:* `{cls.format_price(primary_sig.entry_price, sym_clean)}`")
-                if primary_sig.stop_loss is not None:
-                    lines.append(f"🛑 *Stop Loss:* `{cls.format_price(primary_sig.stop_loss, sym_clean)}`")
-                if primary_sig.take_profit_1 is not None:
-                    lines.append(f"🎯 *Take Profit 1:* `{cls.format_price(primary_sig.take_profit_1, sym_clean)}`")
-
-        lines.extend([
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"🕒 *Timestamp:* `{format_local_time(signals[0].timestamp)}`",
-            f"⚠️ *Notice:* _Rule-based multi-strategy analysis. Manage risk responsibly._",
-        ])
-
-        return "\n".join(lines)
-
-    @classmethod
-    def format_tp1_hit(cls, symbol: str, price: float, realized_pnl: float, new_sl: float) -> str:
-        """Format a Take Profit 1 reached notification."""
-        sym = cls.escape_code(symbol)
-        formatted_price = cls.format_price(price, symbol)
-        formatted_sl = cls.format_price(new_sl, symbol)
+    def format_tp1_hit(
+        cls,
+        symbol: str,
+        price: float,
+        realized_pnl: float,
+        new_sl: float,
+        closed_lots: Optional[float] = None,
+        remaining_lots: Optional[float] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> str:
+        """Format Take Profit 1 reached lifecycle notification."""
+        sym = escape_html(symbol)
+        formatted_price = format_price(price, symbol)
+        formatted_sl = format_price(new_sl, symbol)
+        lots_str = f"Closed {closed_lots:.2f} lots" if closed_lots is not None else "Closed 50% lots"
+        runner_str = f"{remaining_lots:.2f} lots active" if remaining_lots is not None else "Remaining lots active"
+        ts_str = (
+            timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if timestamp
+            else "N/A"
+        )
         return (
-            f"🎯 *TAKE PROFIT 1 REACHED!* 🎯\n"
+            f"🎯 <b>TAKE PROFIT 1 REACHED!</b> 🎯\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 *Pair:* `{sym}`\n"
-            f"💰 *Exit Price:* `{formatted_price}`\n"
-            f"💵 *Locked-in Profit:* `+${realized_pnl:,.2f}`\n"
-            f"🔒 *Action Taken:* `Closed 50% lots. Stop Loss moved to Break-Even ({formatted_sl})`\n"
-            f"🏃 *Runner:* `50% position remaining active for TP2 target.`\n"
-            f"🕒 `{format_local_time(datetime.now(timezone.utc))}`"
+            f"📊 <b>Pair:</b> <code>{sym}</code>\n"
+            f"💰 <b>Exit Price:</b> <code>{formatted_price}</code>\n"
+            f"💵 <b>Locked-in Profit:</b> <code>+${realized_pnl:,.2f}</code>\n"
+            f"🔒 <b>Action Taken:</b> <code>{lots_str}. Stop Loss moved to Break-Even ({formatted_sl})</code>\n"
+            f"🏃 <b>Runner:</b> <code>{runner_str} for TP2 target.</code>\n"
+            f"🕒 <code>{ts_str}</code>"
         )
 
     @classmethod
-    def format_tp2_hit(cls, symbol: str, price: float, total_pnl: float, return_r: float) -> str:
-        """Format a Take Profit 2 final target notification."""
-        sym = cls.escape_code(symbol)
-        formatted_price = cls.format_price(price, symbol)
+    def format_tp2_hit(
+        cls,
+        symbol: str,
+        price: float,
+        total_pnl: float,
+        return_r: float,
+        closed_lots: Optional[float] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> str:
+        """Format Take Profit 2 reached lifecycle notification."""
+        sym = escape_html(symbol)
+        formatted_price = format_price(price, symbol)
+        lots_str = f" ({closed_lots:.2f} lots)" if closed_lots is not None else ""
+        ts_str = (
+            timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if timestamp
+            else "N/A"
+        )
         return (
-            f"🏆 *TAKE PROFIT 2 TARGET HIT!* 🏆\n"
+            f"🏆 <b>TAKE PROFIT 2 TARGET HIT!</b> 🏆\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 *Pair:* `{sym}`\n"
-            f"💰 *Exit Price:* `{formatted_price}`\n"
-            f"💵 *Total Realized PnL:* `+${total_pnl:,.2f}`\n"
-            f"📈 *Payoff Return:* `+{return_r:.2f} R-Multiple`\n"
-            f"🎉 *Status:* `Trade fully completed with maximum target profit!`\n"
-            f"🕒 `{format_local_time(datetime.now(timezone.utc))}`"
+            f"📊 <b>Pair:</b> <code>{sym}</code>\n"
+            f"💰 <b>Exit Price:</b> <code>{formatted_price}</code>\n"
+            f"💵 <b>Total Realized PnL:</b> <code>+${total_pnl:,.2f}</code>\n"
+            f"📈 <b>Payoff Return:</b> <code>+{return_r:.2f} R-Multiple</code>\n"
+            f"🎉 <b>Status:</b> <code>Trade fully completed{lots_str} with maximum target profit!</code>\n"
+            f"🕒 <code>{ts_str}</code>"
         )
 
     @classmethod
-    def format_sl_hit(cls, symbol: str, price: float, loss_pnl: float, is_be: bool) -> str:
-        """Format Stop Loss / Break-Even alert."""
-        tag = "⚡ *BREAK-EVEN STOP TRIGGERED*" if is_be else "🛑 *STOP LOSS HIT*"
+    def format_sl_hit(
+        cls,
+        symbol: str,
+        price: float,
+        loss_pnl: float,
+        is_be: bool,
+        closed_lots: Optional[float] = None,
+        return_r: Optional[float] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> str:
+        """Format Stop Loss / Break-Even lifecycle notification."""
+        tag = "⚡ <b>BREAK-EVEN STOP TRIGGERED</b>" if is_be else "🛑 <b>STOP LOSS HIT</b>"
         pnl_str = f"${loss_pnl:,.2f}" if loss_pnl >= 0 else f"-${abs(loss_pnl):,.2f}"
-        sym = cls.escape_code(symbol)
-        formatted_price = cls.format_price(price, symbol)
+        sym = escape_html(symbol)
+        formatted_price = format_price(price, symbol)
+        lots_str = f" ({closed_lots:.2f} lots)" if closed_lots is not None else ""
+        r_str = f" | R-Multiple: <code>{return_r:+.2f}R</code>" if return_r is not None else ""
+        ts_str = (
+            timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if timestamp
+            else "N/A"
+        )
         return (
             f"{tag}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 *Pair:* `{sym}`\n"
-            f"📍 *Exit Price:* `{formatted_price}`\n"
-            f"💵 *Realized PnL:* `{pnl_str}`\n"
-            f"🛡 *Capital Protected:* `Position closed per strict risk management rules.`\n"
-            f"🕒 `{format_local_time(datetime.now(timezone.utc))}`"
+            f"📊 <b>Pair:</b> <code>{sym}</code>\n"
+            f"📍 <b>Exit Price:</b> <code>{formatted_price}</code>\n"
+            f"💵 <b>Realized PnL:</b> <code>{pnl_str}</code>{r_str}\n"
+            f"🛡 <b>Capital Protected:</b> <code>Position closed{lots_str} per strict risk rules.</code>\n"
+            f"🕒 <code>{ts_str}</code>"
         )
 
     @classmethod
     def format_market_scan_summary(cls, scan_result: MarketScanResponse) -> str:
         """Format full multi-symbol unified market scanner digest."""
+        ts_str = (
+            scan_result.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if scan_result.timestamp
+            else "N/A"
+        )
         lines = [
-            f"📡 *UNIFIED SCANNER DIGEST* 📡",
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"🕒 *Scan Time:* `{format_local_time(scan_result.timestamp)}`",
-            f"🔍 *Markets Scanned:* `{scan_result.scanned_count}` | 🎯 *Actionable:* `{scan_result.actionable_count}`",
-            f"━━━━━━━━━━━━━━━━━━━━",
+            "📡 <b>UNIFIED SCANNER DIGEST</b> 📡",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"🕒 <b>Scan Time:</b> <code>{ts_str}</code>",
+            f"🔍 <b>Markets Scanned:</b> <code>{scan_result.scanned_count}</code> | 🎯 <b>Actionable:</b> <code>{scan_result.actionable_count}</code>",
+            "━━━━━━━━━━━━━━━━━━━━",
         ]
 
         for r in scan_result.results:
             dir_icon = "🟢" if r.direction == SignalDirection.BUY else ("🔴" if r.direction == SignalDirection.SELL else "⚪")
-            status_text = f"*{cls.escape_markdown(r.direction.value)}* (Score: `{r.setup_score:.0f}/100`)"
+            status_text = f"<b>{escape_html(r.direction.value)}</b> (Score: <code>{r.setup_score:.0f}/100</code>)"
 
-            # Trend alignment tag
             if getattr(r, "trend_alignment", None):
-                align = r.trend_alignment
-                if align == "COUNTER-TREND SCALP":
-                    status_text += " `[⚠️ COUNTER-TREND SCALP]`"
-                elif align == "TREND FOLLOWING":
-                    status_text += " `[✅ TREND FOLLOWING]`"
-                else:
-                    status_text += f" `[{cls.escape_markdown(align)}]`"
+                status_text += f" <code>[{escape_html(r.trend_alignment)}]</code>"
             elif r.direction == SignalDirection.WAIT and getattr(r, "htf_trend", None):
-                status_text += f" `[1H {cls.escape_markdown(r.htf_trend)}]`"
+                status_text += f" <code>[1H {escape_html(r.htf_trend)}]</code>"
 
             if r.blackout_blocked:
-                status_text += " `[NEWS BLOCKED]`"
+                status_text += " <code>[NEWS BLOCKED]</code>"
 
-            sym = cls.escape_code(f"{r.symbol:<8}")
+            sym = escape_html(r.symbol)
             tf_display = "1H" if r.timeframe.lower() == "1h" else r.timeframe
-            tf = cls.escape_code(tf_display)
+            tf = escape_html(tf_display)
 
-            # Strategy badge
             strat_badge = ""
             if getattr(r, "signal", None) and getattr(r.signal, "strategy_name", None):
-                strat_badge = f" `[{cls.escape_code(r.signal.strategy_name)}]`"
+                strat_badge = f" <code>[{escape_html(r.signal.strategy_name)}]</code>"
 
-            lines.append(f"{dir_icon} `{sym}` [{tf}] ➔ {status_text}{strat_badge}")
+            lines.append(f"{dir_icon} <code>{sym}</code> [{tf}] ➔ {status_text}{strat_badge}")
 
         lines.extend([
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"💡 _Type /signal <pair> for deep multi-timeframe analysis._",
+            "━━━━━━━━━━━━━━━━━━━━",
+            "💡 <i>Type /signal &lt;pair&gt; for deep multi-timeframe analysis.</i>",
         ])
         return "\n".join(lines)
 
@@ -414,81 +420,107 @@ class TelegramMessageFormatter:
     def format_economic_news_alert(cls, events: List[NewsEventResponse]) -> str:
         """Format scheduled economic news alerts."""
         lines = [
-            f"📰 *ECONOMIC CALENDAR & NEWS MONITOR* 📰",
-            f"━━━━━━━━━━━━━━━━━━━━",
+            "📰 <b>ECONOMIC CALENDAR & NEWS MONITOR</b> 📰",
+            "━━━━━━━━━━━━━━━━━━━━",
         ]
         if not events:
-            lines.append("✅ *No high or medium impact events scheduled today.*")
+            lines.append("✅ <b>No high or medium impact events scheduled today.</b>")
             return "\n".join(lines)
 
         for ev in events[:5]:
             impact_icon = "🔴" if ev.impact.upper() == "HIGH" else "🟡"
-            curr = cls.escape_markdown(ev.currency)
-            ev_name = cls.escape_code(ev.event_name)
-            fc = cls.escape_code(ev.forecast or 'N/A')
-            prev = cls.escape_code(ev.previous or 'N/A')
+            curr = escape_html(ev.currency)
+            ev_name = escape_html(ev.event_name)
+            fc = escape_html(ev.forecast or 'N/A')
+            prev = escape_html(ev.previous or 'N/A')
+            sched_str = ev.scheduled_time.strftime('%H:%M UTC') if ev.scheduled_time else 'N/A'
             lines.append(
-                f"{impact_icon} *({curr})* `{ev_name}`\n"
-                f"   ⏰ `{ev.scheduled_time.strftime('%H:%M UTC')}` | Forecast: `{fc}` | Prior: `{prev}`"
+                f"{impact_icon} <b>({curr})</b> <code>{ev_name}</code>\n"
+                f"   ⏰ <code>{sched_str}</code> | Forecast: <code>{fc}</code> | Prior: <code>{prev}</code>"
             )
 
         lines.extend([
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"🛡 _Trading automatically pauses 30m before high-impact releases._",
+            "━━━━━━━━━━━━━━━━━━━━",
+            "🛡 <i>Trading automatically pauses before high-impact releases.</i>",
         ])
         return "\n".join(lines)
 
     @classmethod
     def format_news_unavailable_alert(cls, reason: Optional[str] = None) -> str:
-        """Format structured alert when live economic news feed is unreachable."""
-        lines = [
-            f"⚠️ *NEWS DATA UNAVAILABLE* ⚠️",
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"❌ *Live economic calendar feed is currently unreachable.*",
-            f"🛡 *FAIL-SAFE ACTIVATED:* New trade generation is safely paused to protect capital until economic news feed is restored.",
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"⚡ _Institutional Capital Protection Rule_",
-        ]
+        """Format alert when economic calendar is unreachable."""
+        return (
+            "⚠️ <b>NEWS DATA UNAVAILABLE</b> ⚠️\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "❌ <b>Live economic calendar feed is currently unreachable.</b>\n"
+            "🛡 <b>FAIL-SAFE ACTIVATED:</b> New trade generation is safely paused to protect capital until economic news feed is restored.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "⚡ <i>Institutional Capital Protection Rule</i>"
+        )
+
+    @classmethod
+    def format_multi_strategy_alert(cls, signals: List[Any]) -> str:
+        """Format multi-strategy confluence or conflict alert."""
+        if not signals:
+            return "No signals provided."
+        directions = {getattr(s, "direction", None) for s in signals}
+        is_conflict = len(directions) > 1
+        title = "⚠️ <b>STRATEGY CONFLICT DETECTED</b>" if is_conflict else "🔥 <b>STRATEGY CONFLUENCE CONFIRMED</b>"
+        lines = [title, "━━━━━━━━━━━━━━━━━━━━"]
+        for s in signals:
+            strat = escape_html(getattr(s, "strategy_name", "Unknown Strategy") or "Unknown Strategy")
+            dir_val = getattr(s, "direction", "N/A")
+            dir_str = dir_val.value if hasattr(dir_val, "value") else str(dir_val)
+            score = getattr(s, "setup_score", 0.0) or getattr(s, "confluence_score", 0.0) or 0.0
+            lines.append(f"• <b>{strat}</b>: <code>{dir_str}</code> (Score: <code>{score:.1f}/100</code>)")
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
         return "\n".join(lines)
 
     @classmethod
-    def format_portfolio_summary(cls, acc: VirtualAccountResponse, perf: PaperPortfolioPerformance) -> str:
+    def format_portfolio_summary(
+        cls, acc: VirtualAccountResponse, perf: PaperPortfolioPerformance, timestamp: Optional[datetime] = None
+    ) -> str:
         """Format virtual account portfolio overview."""
-        acc_name = cls.escape_code(acc.name)
+        acc_name = escape_html(acc.name)
+        ts_str = (
+            timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if timestamp
+            else "N/A"
+        )
         return (
-            f"💼 *VIRTUAL TRADING PORTFOLIO* 💼\n"
+            f"💼 <b>VIRTUAL TRADING PORTFOLIO</b> 💼\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 *Account:* `{acc_name}`\n"
-            f"💵 *Balance:* `${acc.balance:>10,.2f}`\n"
-            f"📈 *Equity:*  `${acc.equity:>10,.2f}`\n"
-            f"📊 *Floating PnL:* `${acc.floating_pnl:>+9,.2f}`\n"
-            f"🔒 *Margin Used:*  `${acc.margin_used:>10,.2f}` (Level: `{acc.margin_level_pct:.1f}%`)\n"
-            f"🆓 *Free Margin:*  `${acc.free_margin:>10,.2f}`\n"
+            f"👤 <b>Account:</b> <code>{acc_name}</code>\n"
+            f"💵 <b>Balance:</b> <code>${acc.balance:>10,.2f}</code>\n"
+            f"📈 <b>Equity:</b>  <code>${acc.equity:>10,.2f}</code>\n"
+            f"📊 <b>Floating PnL:</b> <code>${acc.floating_pnl:>+9,.2f}</code>\n"
+            f"🔒 <b>Margin Used:</b>  <code>${acc.margin_used:>10,.2f}</code> (Level: <code>{acc.margin_level_pct:.1f}%</code>)\n"
+            f"🆓 <b>Free Margin:</b>  <code>${acc.free_margin:>10,.2f}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏆 *Trading Performance:*\n"
-            f"  • *Total Return:* `{perf.total_return_pct:>+6.2f}%`\n"
-            f"  • *Win Rate:* `{perf.win_rate:.1f}%` ({perf.winning_trades}W / {perf.losing_trades}L)\n"
-            f"  • *Profit Factor:* `{perf.profit_factor:.2f}`\n"
-            f"  • *Active Positions:* `{perf.open_trades}`\n"
+            f"🏆 <b>Trading Performance:</b>\n"
+            f"  • <b>Total Return:</b> <code>{perf.total_return_pct:>+6.2f}%</code>\n"
+            f"  • <b>Win Rate:</b> <code>{perf.win_rate:.1f}%</code> ({perf.winning_trades}W / {perf.losing_trades}L)\n"
+            f"  • <b>Profit Factor:</b> <code>{perf.profit_factor:.2f}</code>\n"
+            f"  • <b>Active Positions:</b> <code>{perf.open_trades}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🕒 `{format_local_time(datetime.now(timezone.utc))}`"
+            f"🕒 <code>{ts_str}</code>"
         )
 
     @staticmethod
-    def format_help_menu() -> str:
+    def format_help_menu(active_symbols: Optional[List[str]] = None) -> str:
         """Format bot command help menu."""
+        symbols_str = ", ".join(active_symbols) if active_symbols else "Configured Markets"
         return (
-            f" *FOREX SIGNAL BOT - COMMAND MENU* \n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📡 `/scan` - Scan all markets ({', '.join(ACTIVE_SYMBOLS)})\n"
-            f"🔄 `/sync` - Force fresh data sync for ALL pairs (Fixes Stale Data)\n"
-            f"🎯 `/signal <pair>` - Deep setup score for symbol (e.g. `/signal XAU/USD`)\n"
-            f"📰 `/news` - Today's economic calendar & news blackout check\n"
-            f" `/account` - Virtual paper trading balance, equity & margin\n"
-            f"📊 `/positions` - List all active & pending paper positions\n"
-            f"🏆 `/performance` - Strategy win rate & portfolio statistics\n"
-            f" `/backtest <pair>` - Run historical strategy backtest\n"
-            f"❓ `/help` - Show this command reference\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚡ _Institutional Rule-Based Market Analysis & Risk Management_"
+            "🤖 <b>FOREX SIGNAL BOT - COMMAND MENU</b> 🤖\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📡 <code>/scan</code> - Scan active markets ({escape_html(symbols_str)})\n"
+            "🔄 <code>/sync</code> - Force fresh market data sync\n"
+            "🎯 <code>/signal &lt;pair&gt;</code> - Deep setup analysis (e.g. <code>/signal XAU/USD</code>)\n"
+            "📰 <code>/news</code> - Economic calendar &amp; news blackout check\n"
+            "💼 <code>/account</code> - Virtual trading balance, equity &amp; margin\n"
+            "📊 <code>/positions</code> - List all active paper positions\n"
+            "🏆 <code>/performance</code> - Strategy win rate &amp; statistics\n"
+            "📈 <code>/backtest &lt;pair&gt;</code> - Historical strategy simulation\n"
+            "❓ <code>/help</code> - Show this command reference\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "⚡ <i>Institutional Rule-Based Market Analysis &amp; Risk Management</i>"
         )

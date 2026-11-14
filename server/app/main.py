@@ -19,7 +19,12 @@ from app.services.telegram.scheduler import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
-    logger.info(f"Starting {settings.PROJECT_NAME} in [{settings.APP_ENV}] mode...")
+    logger.info(f"Starting {settings.PROJECT_NAME} in [{settings.APP_ENV}] mode (MODE={settings.MODE})...")
+    
+    # Fail fast if MOCK provider is configured for LIVE mode
+    if settings.MODE.lower() == "live" and settings.MARKET_DATA_PROVIDER.lower() == "mock":
+        raise RuntimeError("FATAL: Cannot run in LIVE mode with MOCK market data provider.")
+        
     init_db()
 
     # Persistent shared HTTP client — eliminates per-request TCP/TLS handshake overhead.

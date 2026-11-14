@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import httpx
 
 from app.core.config import settings
@@ -17,8 +17,9 @@ class BaseTelegramClient:
         self,
         text: str,
         chat_id: Optional[str] = None,
-        parse_mode: str = "Markdown",
+        parse_mode: str = "HTML",
         disable_web_page_preview: bool = True,
+        signal_id: Optional[Union[int, str]] = None,
     ) -> TelegramMessageResponse:
         raise NotImplementedError
 
@@ -37,8 +38,9 @@ class MockTelegramClient(BaseTelegramClient):
         self,
         text: str,
         chat_id: Optional[str] = None,
-        parse_mode: str = "Markdown",
+        parse_mode: str = "HTML",
         disable_web_page_preview: bool = True,
+        signal_id: Optional[Union[int, str]] = None,
     ) -> TelegramMessageResponse:
         now = datetime.now(timezone.utc)
         self._message_counter += 1
@@ -46,6 +48,7 @@ class MockTelegramClient(BaseTelegramClient):
 
         msg_record = {
             "message_id": self._message_counter,
+            "signal_id": signal_id,
             "chat_id": target_chat,
             "text": text,
             "parse_mode": parse_mode,
@@ -54,7 +57,7 @@ class MockTelegramClient(BaseTelegramClient):
         self.sent_messages.append(msg_record)
 
         logger.info(
-            f"[MOCK TELEGRAM] Sent to chat {target_chat} (ID: {self._message_counter}):\n"
+            f"[MOCK TELEGRAM] Sent to chat {target_chat} (ID: {self._message_counter}, signal_id={signal_id}):\n"
             f"{text[:120]}..."
         )
 
@@ -98,8 +101,9 @@ class TelegramClient(BaseTelegramClient):
         self,
         text: str,
         chat_id: Optional[str] = None,
-        parse_mode: str = "Markdown",
+        parse_mode: str = "HTML",
         disable_web_page_preview: bool = True,
+        signal_id: Optional[Union[int, str]] = None,
     ) -> TelegramMessageResponse:
         now = datetime.now(timezone.utc)
         target_chat = chat_id or self.default_chat_id
@@ -123,30 +127,66 @@ class TelegramClient(BaseTelegramClient):
             "disable_web_page_preview": disable_web_page_preview,
         }
 
-        try:
-            if self._http_client:
-                # Use shared persistent client
-                resp = await self._http_client.post(url, json=payload)
-            else:
-                # Fallback: one-shot client
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                msg_id = data.get("result", {}).get("message_id", 0)
-                self.messages_sent_count += 1
-                self.last_sent_at = now
-                logger.info(f"Telegram message #{msg_id} sent successfully to chat {target_chat}.")
-                return TelegramMessageResponse(
-                    success=True,
-                    message_id=msg_id,
-                    chat_id=target_chat,
-                    text_sent=text,
-                    sent_at=now,
+        max_retries = 3
+        backoff = 1.0
+
+        for attempt in range(max_retries):
+            try:
+                if self._http_client:
+                    resp = await self._http_client.post(url, json=payload)
+                else:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        resp = await client.post(url, json=payload)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    msg_id = data.get("result", {}).get("message_id", 0)
+                    self.messages_sent_count += 1
+                    self.last_sent_at = now
+                    logger.info(
+                        f"Telegram message #{msg_id} (signal_id={signal_id}) sent successfully to chat {target_chat}."
+                    )
+                    return TelegramMessageResponse(
+                        success=True,
+                        message_id=msg_id,
+                        chat_id=target_chat,
+                        text_sent=text,
+                        sent_at=now,
+                    )
+                elif resp.status_code == 429:
+                    # Rate limited: read retry_after and backoff
+                    retry_after = 1.0
+                    try:
+                        retry_after = float(resp.json().get("parameters", {}).get("retry_after", 1.0))
+                    except Exception:
+                        pass
+                    retry_wait = min(10.0, max(1.0, retry_after))
+                    logger.warning(
+                        f"Telegram 429 Too Many Requests for chat {target_chat} (signal_id={signal_id}). "
+                        f"Backing off for {retry_wait:.1f}s (attempt {attempt + 1}/{max_retries})..."
+                    )
+                    await asyncio.sleep(retry_wait)
+                    continue
+                else:
+                    err_msg = f"Telegram API error {resp.status_code}: {resp.text}"
+                    logger.error(f"{err_msg} (signal_id={signal_id})")
+                    return TelegramMessageResponse(
+                        success=False,
+                        chat_id=target_chat,
+                        text_sent=text,
+                        sent_at=now,
+                        error=err_msg,
+                    )
+            except (httpx.TimeoutException, httpx.NetworkError) as transient_err:
+                logger.warning(
+                    f"Transient network error sending Telegram message (signal_id={signal_id}): {transient_err}. "
+                    f"Retrying in {backoff}s (attempt {attempt + 1}/{max_retries})..."
                 )
-            else:
-                err_msg = f"Telegram API error {resp.status_code}: {resp.text}"
-                logger.error(err_msg)
+                await asyncio.sleep(backoff)
+                backoff *= 2
+            except Exception as e:
+                err_msg = f"Failed to send Telegram message: {str(e)}"
+                logger.error(f"{err_msg} (signal_id={signal_id})")
                 return TelegramMessageResponse(
                     success=False,
                     chat_id=target_chat,
@@ -154,16 +194,16 @@ class TelegramClient(BaseTelegramClient):
                     sent_at=now,
                     error=err_msg,
                 )
-        except Exception as e:
-            err_msg = f"Failed to send Telegram message: {str(e)}"
-            logger.error(err_msg)
-            return TelegramMessageResponse(
-                success=False,
-                chat_id=target_chat,
-                text_sent=text,
-                sent_at=now,
-                error=err_msg,
-            )
+
+        final_err = f"Failed to deliver Telegram message after {max_retries} retries."
+        logger.error(f"{final_err} (signal_id={signal_id})")
+        return TelegramMessageResponse(
+            success=False,
+            chat_id=target_chat,
+            text_sent=text,
+            sent_at=now,
+            error=final_err,
+        )
 
     def get_status(self) -> TelegramBotStatusResponse:
         is_conf = bool(self.bot_token and self.default_chat_id)

@@ -165,10 +165,10 @@ def test_telegram_message_formatter_escaping():
     )
 
     alert = formatter.format_signal_alert(sig)
-    assert r"BULLISH\_PIN\_BAR" in alert
-    assert r"\[FVG\]" in alert
-    assert r"\*Bullish\*" in alert
-    assert "`USD_JPY`" in alert  # symbol inside code span
+    assert "BULLISH_PIN_BAR" in alert
+    assert "[FVG]" in alert
+    assert "&gt;" in alert
+    assert "<code>USD_JPY</code>" in alert  # symbol inside code tag
 
 
 # -------------------------------------------------------------

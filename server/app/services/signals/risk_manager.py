@@ -1,9 +1,14 @@
 """Risk Management and Position Sizing Calculator."""
 
 from typing import Optional
-from app.core.config import ACTIVE_SYMBOLS, settings
+from app.core.config import settings
 from app.core.logging import logger
 from app.schemas.signal import RiskParameters, SignalDirection
+from app.services.market_data.symbols import (
+    UnknownSymbolError,
+    get_instrument_spec,
+    normalize_symbol,
+)
 
 
 class RiskManager:
@@ -11,36 +16,22 @@ class RiskManager:
 
     @staticmethod
     def get_pip_size(symbol: str) -> float:
-        """Get currency pip multiplier."""
-        s = symbol.upper().replace("%2F", "/").strip()
-        if "XAU" in s or "GOLD" in s or s in ACTIVE_SYMBOLS:
-            return 0.01  # Gold: minimum tick is 0.01 (1 pip = $1 on 100 oz lot)
-        if "JPY" in s:
-            return 0.01
-        return 0.0001
+        """Get currency pip multiplier from centralized instrument specifications."""
+        try:
+            return get_instrument_spec(symbol).pip_size
+        except UnknownSymbolError:
+            s = symbol.upper().replace("%2F", "/").strip()
+            if "JPY" in s:
+                return 0.01
+            return 0.0001
 
     @staticmethod
     def get_pip_value_per_lot(symbol: str, current_price: float = 1.0) -> float:
-        """
-        Returns USD value per pip for 1 standard lot.
-
-        XAU/USD : 100 oz contract, pip=0.01  → $1.00 per pip per lot
-                  (100 oz × $0.01 = $1.00)
-        FX USD-quote: $10.00 per pip per standard lot
-        """
-        s = symbol.upper().replace("%2F", "/").strip()
-        if "XAU" in s or "GOLD" in s or s in ACTIVE_SYMBOLS:
-            return 1.0   # 100 oz × 0.01 pip = $1.00
-        # FX pairs
-        if "/" in s:
-            base, quote = s.split("/", 1)
-        else:
-            base, quote = s[:3], s[3:]
-        if quote == "USD":
+        """Returns USD value per pip for 1 standard lot from centralized specifications."""
+        try:
+            return get_instrument_spec(symbol).point_value_per_lot
+        except UnknownSymbolError:
             return 10.0
-        elif base == "USD":
-            return 10.0 / current_price if current_price > 0 else 10.0
-        return 10.0
 
     def calculate_trade_risk(
         self,
@@ -57,19 +48,23 @@ class RiskManager:
         """Compute Stop Loss, Take Profits (TP1 & TP2), R:R, and suggested lot size."""
         balance = account_balance or 10000.0
         risk_pct = risk_percent or settings.MAX_RISK_PERCENT
-        req_rr = min_rr or settings.MIN_RR
+        req_rr_tp1 = min_rr or settings.MIN_RR_TP1
+        req_rr_tp2 = settings.MIN_RR_TP2
         pip_size = self.get_pip_size(symbol)
 
         # Base ATR buffer fallback if ATR is missing
         default_atr = entry_price * 0.0015
         effective_atr = atr_value if (atr_value is not None and atr_value > 0) else default_atr
         
-        # 🛡️ SANITY CHECK: Cap maximum structural distance to prevent macro-level SLs
-        # XAU/USD: 2500 pips ($25.00), US100: 500 index points ($500), JPY: 120 pips, standard FX: 100 pips
-        s_upper = symbol.upper().replace("%2F", "/").strip()
-        if "XAU" in s_upper or "GOLD" in s_upper or s_upper in ACTIVE_SYMBOLS:
+        # Cap maximum structural distance to prevent macro-level SLs
+        try:
+            canonical = normalize_symbol(symbol)
+        except UnknownSymbolError:
+            canonical = symbol.upper()
+
+        if canonical == "XAU/USD":
             max_sl_pips = 2500.0
-        elif "JPY" in s_upper:
+        elif canonical == "USD/JPY":
             max_sl_pips = 120.0
         else:
             max_sl_pips = 100.0
@@ -78,41 +73,43 @@ class RiskManager:
 
         if direction == SignalDirection.BUY:
             if key_support_low is not None and key_support_low < entry_price:
-                # Check if the structural support is unreasonably far away
                 if (entry_price - key_support_low) > max_structural_distance:
-                    logger.warning(f"Structural support {key_support_low} is too far from entry {entry_price} (>{max_sl_pips:.0f} pips). Falling back to ATR-based SL.")
+                    logger.warning(
+                        f"Structural support {key_support_low} is too far from entry {entry_price} "
+                        f"(>{max_sl_pips:.0f} pips). Falling back to ATR-based SL."
+                    )
                     stop_loss = entry_price - (effective_atr * 1.5)
                 else:
-                    stop_loss = key_support_low - (effective_atr * 0.5) # atr_buffer
+                    stop_loss = key_support_low - (effective_atr * 0.5)
             else:
                 stop_loss = entry_price - (effective_atr * 1.5)
 
-            # Ensure SL is strictly below Entry
             if stop_loss >= entry_price:
                 stop_loss = entry_price - (effective_atr * 1.5)
 
             risk_price = entry_price - stop_loss
-            tp1 = entry_price + (risk_price * req_rr)
-            tp2 = entry_price + (risk_price * (req_rr + 1.0))
+            tp1 = entry_price + (risk_price * req_rr_tp1)
+            tp2 = entry_price + (risk_price * req_rr_tp2)
 
         else:  # SELL
             if key_resistance_high is not None and key_resistance_high > entry_price:
-                # Check if the structural resistance is unreasonably far away
                 if (key_resistance_high - entry_price) > max_structural_distance:
-                    logger.warning(f"Structural resistance {key_resistance_high} is too far from entry {entry_price} (>{max_sl_pips:.0f} pips). Falling back to ATR-based SL.")
+                    logger.warning(
+                        f"Structural resistance {key_resistance_high} is too far from entry {entry_price} "
+                        f"(>{max_sl_pips:.0f} pips). Falling back to ATR-based SL."
+                    )
                     stop_loss = entry_price + (effective_atr * 1.5)
                 else:
-                    stop_loss = key_resistance_high + (effective_atr * 0.5) # atr_buffer
+                    stop_loss = key_resistance_high + (effective_atr * 0.5)
             else:
                 stop_loss = entry_price + (effective_atr * 1.5)
 
-            # Ensure SL is strictly above Entry
             if stop_loss <= entry_price:
                 stop_loss = entry_price + (effective_atr * 1.5)
 
             risk_price = stop_loss - entry_price
-            tp1 = entry_price - (risk_price * req_rr)
-            tp2 = entry_price - (risk_price * (req_rr + 1.0))
+            tp1 = entry_price - (risk_price * req_rr_tp1)
+            tp2 = entry_price - (risk_price * req_rr_tp2)
 
         risk_pips = round(risk_price / pip_size, 1)
         reward_pips_tp1 = round(abs(tp1 - entry_price) / pip_size, 1)

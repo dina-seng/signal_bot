@@ -5,11 +5,17 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 import httpx
 
+from app.core.config import settings
 from app.core.logging import logger
 from app.schemas.candle import CandleCreate
 from app.schemas.market import QuoteResponse
 from app.services.market_data.base import BaseMarketDataProvider
 from app.services.market_data.freshness import get_timeframe_delta
+from app.services.market_data.symbols import (
+    UnknownSymbolError,
+    normalize_symbol,
+    get_provider_symbol,
+)
 from app.services.market_data.yfinance_provider import YahooFinanceProvider
 
 
@@ -51,8 +57,12 @@ class TwelveDataProvider(BaseMarketDataProvider):
 
     def is_symbol_supported(self, symbol: str) -> bool:
         """Check if symbol is supported."""
-        clean = (symbol or "").replace(" ", "").upper()
-        return clean in self.SUPPORTED_SYMBOLS
+        try:
+            canonical = normalize_symbol(symbol)
+            get_provider_symbol(canonical, "twelvedata")
+            return canonical in self.SUPPORTED_SYMBOLS or canonical in settings.SUPPORTED_SYMBOLS
+        except UnknownSymbolError:
+            return False
 
     async def _rate_limit(self, min_interval: float = 7.5) -> None:
         """Enforce spacing only when necessary, preventing redundant blocking sleeps."""
@@ -209,16 +219,31 @@ class TwelveDataProvider(BaseMarketDataProvider):
 
     async def fetch_quote(self, symbol: str) -> Optional[QuoteResponse]:
         """Fetch real-time price quote from Twelve Data, with automatic fallback to Yahoo Finance."""
-        if not self.is_symbol_supported(symbol):
-            logger.warning(f"Twelve Data skipping unsupported symbol for quote: {symbol}")
+        try:
+            canonical = normalize_symbol(symbol)
+            provider_symbol = get_provider_symbol(canonical, "twelvedata")
+        except UnknownSymbolError as err:
+            logger.warning(f"Twelve Data skipping unmapped symbol for quote: {symbol} - {err}")
+            return None
+
+        if not self.is_symbol_supported(canonical):
+            logger.warning(f"Twelve Data skipping unsupported symbol for quote: {canonical}")
             return None
 
         if not self.api_key:
-            return await self._fallback_provider.fetch_quote(symbol)
+            fb_reason = "Twelve Data API key is not configured"
+            logger.warning(
+                f"Twelve Data API key missing for {canonical} ({provider_symbol}). "
+                f"Flipping to YahooFinanceProvider fallback..."
+            )
+            quote = await self._fallback_provider.fetch_quote(canonical)
+            if quote and not quote.fallback_reason:
+                quote.fallback_reason = fb_reason
+            return quote
 
         url = f"{self.base_url}/quote"
         params = {
-            "symbol": symbol,
+            "symbol": provider_symbol,
             "apikey": self.api_key,
         }
 
@@ -227,15 +252,43 @@ class TwelveDataProvider(BaseMarketDataProvider):
 
             if self._http_client:
                 response = await self._http_client.get(url, params=params)
-                data = response.json()
             else:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.get(url, params=params)
-                    data = response.json()
+
+            if response.status_code != 200:
+                fb_reason = f"Twelve Data API returned {response.status_code}: {response.text}"
+                logger.warning(
+                    f"{fb_reason} for {canonical} ({provider_symbol}). "
+                    f"Flipping to YahooFinanceProvider fallback..."
+                )
+                quote = await self._fallback_provider.fetch_quote(canonical)
+                if quote:
+                    quote.fallback_reason = fb_reason
+                return quote
+
+            data = response.json()
 
             if data.get("status") == "error" or ("code" in data and data["code"] != 200):
-                logger.warning(f"Twelve Data quote error for {symbol}: {data.get('message')}. Falling back...")
-                return await self._fallback_provider.fetch_quote(symbol)
+                fb_reason = f"Twelve Data quote error: {data.get('message')}"
+                logger.warning(
+                    f"Twelve Data quote error for {canonical} ({provider_symbol}): {fb_reason}. "
+                    f"Flipping to YahooFinanceProvider fallback..."
+                )
+                quote = await self._fallback_provider.fetch_quote(canonical)
+                if quote:
+                    quote.fallback_reason = fb_reason
+                return quote
+
+            # Echoed symbol validation: reject if returned symbol does not match requested
+            echoed_sym = data.get("symbol")
+            if echoed_sym and echoed_sym.replace("/", "") != provider_symbol.replace("/", ""):
+                fb_reason = f"Twelve Data echoed symbol mismatch: requested '{provider_symbol}', received '{echoed_sym}'"
+                logger.warning(f"{fb_reason}. Rejecting quote and flipping to YahooFinanceProvider fallback...")
+                quote = await self._fallback_provider.fetch_quote(canonical)
+                if quote:
+                    quote.fallback_reason = fb_reason
+                return quote
 
             price_str = data.get("close") or data.get("price")
             if price_str and float(price_str) > 0:
@@ -244,19 +297,48 @@ class TwelveDataProvider(BaseMarketDataProvider):
                 low = float(data["low"]) if data.get("low") else None
                 vol = float(data["volume"]) if data.get("volume") else None
 
+                now_utc = datetime.now(timezone.utc)
+                quote_ts = now_utc
+                raw_ts = data.get("last_quote_at") or data.get("timestamp")
+                if raw_ts and isinstance(raw_ts, (int, float)) and raw_ts > 0:
+                    quote_ts = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
+
+                age_sec = max(0.0, (now_utc - quote_ts).total_seconds())
+                is_stale = age_sec > settings.QUOTE_MAX_AGE_SECONDS
+
                 return QuoteResponse(
-                    symbol=symbol,
+                    symbol=canonical,
                     price=price,
                     bid=float(data["bid"]) if data.get("bid") else None,
                     ask=float(data["ask"]) if data.get("ask") else None,
                     high=high,
                     low=low,
                     volume=vol,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=quote_ts,
                     source="twelvedata",
+                    provider="twelvedata",
+                    provider_symbol=provider_symbol,
+                    age_seconds=round(age_sec, 2),
+                    is_stale=is_stale,
+                    degraded=False,
+                    fallback_reason=None,
+                    cached=False,
                 )
 
-            return await self._fallback_provider.fetch_quote(symbol)
+            fb_reason = f"Twelve Data returned non-positive or empty price for {canonical}"
+            logger.warning(f"{fb_reason}. Flipping to YahooFinanceProvider fallback...")
+            quote = await self._fallback_provider.fetch_quote(canonical)
+            if quote:
+                quote.fallback_reason = fb_reason
+            return quote
+
         except Exception as e:
-            logger.warning(f"Twelve Data quote failed for {symbol}: {e}. Falling back...")
-            return await self._fallback_provider.fetch_quote(symbol)
+            fb_reason = f"Twelve Data quote exception: {e}"
+            logger.warning(
+                f"Twelve Data quote failed for {canonical} ({provider_symbol}): {e}. "
+                f"Flipping to YahooFinanceProvider fallback..."
+            )
+            quote = await self._fallback_provider.fetch_quote(canonical)
+            if quote:
+                quote.fallback_reason = fb_reason
+            return quote

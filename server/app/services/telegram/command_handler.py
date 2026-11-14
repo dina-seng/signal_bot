@@ -79,28 +79,26 @@ class TelegramCommandHandler:
         # 1. Help & Start Menu
         # -------------------------------------------------------------
         if cmd_name in ("/start", "/help"):
-            reply = self.formatter.format_help_menu()
+            reply = self.formatter.format_help_menu(active_symbols=list(ACTIVE_SYMBOLS))
 
         # -------------------------------------------------------------
         # 2. Unified Multi-Timeframe Market Scanner (/scan)
         # -------------------------------------------------------------
         elif cmd_name == "/scan":
-            # Strict single-asset enforcement: strictly scan ACTIVE_SYMBOLS
             scan_symbols = list(ACTIVE_SYMBOLS)
+            primary_symbol = scan_symbols[0] if scan_symbols else "XAU/USD"
 
-            # Auto-Refresh When Stale on /scan:
-            # Expected last closed bar open timestamp: expected_open = floor(now_utc / tf_delta) * tf_delta - tf_delta
             now_utc = datetime.now(timezone.utc)
             latest_candle = db.scalars(
                 select(Candle)
-                .where(Candle.symbol == "XAU/USD", Candle.timeframe == "15m")
+                .where(Candle.symbol == primary_symbol, Candle.timeframe == "15m")
                 .order_by(desc(Candle.timestamp))
                 .limit(1)
             ).first()
             if not latest_candle:
                 latest_candle = db.scalars(
                     select(Candle)
-                    .where(Candle.symbol == "XAU/USD")
+                    .where(Candle.symbol == primary_symbol)
                     .order_by(desc(Candle.timestamp))
                     .limit(1)
                 ).first()
@@ -120,7 +118,7 @@ class TelegramCommandHandler:
 
             if is_stale:
                 logger.info(
-                    f"XAU/USD candles are STALE (latest: {latest_candle.timestamp if latest_candle else None} < expected_open: {expected_open}) on /scan. "
+                    f"{primary_symbol} candles are STALE (latest: {latest_candle.timestamp if latest_candle else None} < expected_open: {expected_open}) on /scan. "
                     f"Auto-syncing fresh 15m, 30m, 1h candles..."
                 )
                 provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
@@ -129,23 +127,31 @@ class TelegramCommandHandler:
                 for tf in ["15m", "30m", "1h", "4h"]:
                     try:
                         await ingest_svc.sync_symbol_timeframe(
-                            symbol="XAU/USD",
+                            symbol=primary_symbol,
                             timeframe=tf,
                             limit=100,
                             force_refresh=True,
                         )
                     except Exception as e:
-                        logger.error(f"Auto-refresh sync failed for XAU/USD [{tf}]: {e}")
+                        logger.error(f"Auto-refresh sync failed for {primary_symbol} [{tf}]: {e}")
                 try:
                     db.commit()
                 except Exception:
                     db.rollback()
 
+            acc_balance = 10000.0
+            try:
+                acc_summary = self.paper_service.get_account_summary(db)
+                if acc_summary and acc_summary.balance > 0:
+                    acc_balance = acc_summary.balance
+            except Exception:
+                pass
+
             scan_res = self.signal_generator.scan_unified_all(
                 db=db,
                 symbols=scan_symbols,
-                account_balance=10000.0,
-                risk_percent=0.5,
+                account_balance=acc_balance,
+                risk_percent=settings.MAX_RISK_PERCENT,
                 persist_qualified=True,
             )
             reply = self.formatter.format_market_scan_summary(scan_res)
@@ -155,17 +161,19 @@ class TelegramCommandHandler:
         # -------------------------------------------------------------
         elif cmd_name == "/signal":
             if len(parts) < 2:
-                reply = "⚠️ *Usage:* `/signal <symbol>`\n_Example:_ `/signal XAU/USD`"
+                reply = "⚠️ <b>Usage:</b> <code>/signal &lt;symbol&gt;</code>\n<i>Example:</i> <code>/signal XAU/USD</code>"
             else:
                 sym = self._normalize_symbol(parts[1])
 
                 from app.services.market_data.mock_provider import MockMarketDataProvider
                 if sym not in ACTIVE_SYMBOLS and not isinstance(self.market_provider, MockMarketDataProvider):
+                    sym_esc = self.formatter.escape_html(sym)
+                    active_esc = ", ".join(f"<code>{s}</code>" for s in ACTIVE_SYMBOLS)
                     reply = (
-                        f"⚠️ *Asset Inactive*\n"
+                        f"⚠️ <b>Asset Inactive</b>\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"`{self.formatter.escape_code(sym)}` is not active.\n"
-                        f"Active instrument: {', '.join(f'`{s}`' for s in ACTIVE_SYMBOLS)}."
+                        f"<code>{sym_esc}</code> is not active.\n"
+                        f"Active instrument: {active_esc}."
                     )
                 else:
                     # 1. Provider <-> DB Synchronization: Refresh fresh candle data from provider
@@ -181,32 +189,40 @@ class TelegramCommandHandler:
                                 logger.warning(f"Failed to refresh market data for {sym} [{tf}] via provider: {e}")
 
                     # 2. Evaluate Unified Multi-Timeframe Signal
+                    acc_balance = 10000.0
+                    try:
+                        acc_summary = self.paper_service.get_account_summary(db)
+                        if acc_summary and acc_summary.balance > 0:
+                            acc_balance = acc_summary.balance
+                    except Exception:
+                        pass
+
                     scan_res = self.signal_generator.scan_unified(
                         db=db,
                         symbol=sym,
-                        account_balance=10000.0,
-                        risk_percent=0.5,
+                        account_balance=acc_balance,
+                        risk_percent=settings.MAX_RISK_PERCENT,
                         persist_qualified=True,
                     )
 
                     if scan_res.is_actionable and scan_res.signal:
                         reply = self.formatter.format_signal_alert(scan_res.signal)
                     else:
-                        sym_code = self.formatter.escape_code(sym)
-                        htf_txt = self.formatter.escape_code(scan_res.htf_trend or "NEUTRAL")
+                        sym_code = self.formatter.escape_html(sym)
+                        htf_txt = self.formatter.escape_html(scan_res.htf_trend or "NEUTRAL")
                         score_txt = f"{scan_res.setup_score:.0f}/100"
-                        align_txt = f" • Alignment: `{scan_res.trend_alignment}`" if scan_res.trend_alignment else ""
-                        reasons_lines = "\n".join([f"  • {self.formatter.escape_markdown(r)}" for r in scan_res.reasons[:4]])
+                        align_txt = f" • Alignment: <code>{self.formatter.escape_html(scan_res.trend_alignment)}</code>" if scan_res.trend_alignment else ""
+                        reasons_lines = "\n".join([f"  • {self.formatter.escape_html(r)}" for r in scan_res.reasons[:4]])
                         reply = (
-                            f"⚪ *UNIFIED SIGNAL STATUS: WAIT*\n"
+                            f"⚪ <b>UNIFIED SIGNAL STATUS: WAIT</b>\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📊 *Pair:* `{sym_code}` [{scan_res.timeframe}]\n"
-                            f"📈 *1H Context:* `{htf_txt}`{align_txt}\n"
-                            f"⭐ *Confluence Score:* `{score_txt}` (Min: `{settings.MIN_SETUP_SCORE:.0f}`)\n"
+                            f"📊 <b>Pair:</b> <code>{sym_code}</code> [{scan_res.timeframe}]\n"
+                            f"📈 <b>HTF Context:</b> <code>{htf_txt}</code>{align_txt}\n"
+                            f"⭐ <b>Confluence Score:</b> <code>{score_txt}</code> (Min: <code>{settings.MIN_SETUP_SCORE:.0f}</code>)\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"💡 *Current Market Analysis:*\n"
+                            f"💡 <b>Current Market Analysis:</b>\n"
                             f"{reasons_lines}\n\n"
-                            f"⚠️ _Awaiting 15m/30m/1H confirmation before generating actionable entry._"
+                            f"⚠️ <i>Awaiting confirmation before generating actionable entry.</i>"
                         )
 
         # -------------------------------------------------------------
@@ -261,19 +277,23 @@ class TelegramCommandHandler:
         elif cmd_name == "/positions":
             positions = self.paper_service.get_positions(db)
             if not positions:
-                reply = "💼 *No open or pending paper trading positions currently.*"
+                reply = "💼 <b>No open or pending paper trading positions currently.</b>"
             else:
                 lines = [
-                    f"📊 *ACTIVE PAPER POSITIONS ({len(positions)})* 📊",
-                    f"━━━━━━━━━━━━━━━━━━━━",
+                    f"📊 <b>ACTIVE PAPER POSITIONS ({len(positions)})</b> 📊",
+                    "━━━━━━━━━━━━━━━━━━━━",
                 ]
                 for p in positions:
-                    dir_icon = "🟢 BUY" if p.direction == SignalDirection.BUY else " SELL"
+                    dir_icon = "🟢 BUY" if p.direction == SignalDirection.BUY else "🔴 SELL"
                     pnl_str = f"+${p.unrealized_pnl:,.2f}" if p.unrealized_pnl >= 0 else f"-${abs(p.unrealized_pnl):,.2f}"
+                    entry_f = format_price(p.entry_price, p.symbol)
+                    curr_f = format_price(p.current_price, p.symbol)
+                    sl_f = format_price(p.stop_loss, p.symbol)
+                    tp1_f = format_price(p.take_profit_1, p.symbol)
                     lines.append(
-                        f"• *{self.formatter.escape_markdown(p.symbol)}* ({dir_icon} `{p.remaining_position_size} Lots`)\n"
-                        f"  Entry: `{p.entry_price:.5f}` | Current: `{p.current_price:.5f}` | PnL: `{pnl_str}`\n"
-                        f"  SL: `{p.stop_loss:.5f}` | TP1: `{p.take_profit_1:.5f}`"
+                        f"• <b>{self.formatter.escape_html(p.symbol)}</b> ({dir_icon} <code>{p.remaining_position_size} Lots</code>)\n"
+                        f"  Entry: <code>{entry_f}</code> | Current: <code>{curr_f}</code> | PnL: <code>{pnl_str}</code>\n"
+                        f"  SL: <code>{sl_f}</code> | TP1: <code>{tp1_f}</code>"
                     )
                 reply = "\n".join(lines)
 
@@ -283,15 +303,15 @@ class TelegramCommandHandler:
         elif cmd_name == "/performance":
             perf = self.paper_service.get_portfolio_performance(db)
             reply = (
-                f"🏆 *VIRTUAL TRADING PERFORMANCE* 🏆\n"
+                f"🏆 <b>VIRTUAL TRADING PERFORMANCE</b> 🏆\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"💵 *Current Balance:* `${perf.current_balance:,.2f}`\n"
-                f"📈 *Total Return:* `{perf.total_return_pct:>+6.2f}%`\n"
-                f" *Total Trades:* `{perf.total_trades}` ({perf.winning_trades}W / {perf.losing_trades}L)\n"
-                f" *Win Rate:* `{perf.win_rate:.1f}%`\n"
-                f"💰 *Profit Factor:* `{perf.profit_factor:.2f}`\n"
-                f"💵 *Average Win:* `${perf.average_win:,.2f}`\n"
-                f"🛑 *Average Loss:* `${perf.average_loss:,.2f}`\n"
+                f"💵 <b>Current Balance:</b> <code>${perf.current_balance:,.2f}</code>\n"
+                f"📈 <b>Total Return:</b> <code>{perf.total_return_pct:>+6.2f}%</code>\n"
+                f"📊 <b>Total Trades:</b> <code>{perf.total_trades}</code> ({perf.winning_trades}W / {perf.losing_trades}L)\n"
+                f"🎯 <b>Win Rate:</b> <code>{perf.win_rate:.1f}%</code>\n"
+                f"💰 <b>Profit Factor:</b> <code>{perf.profit_factor:.2f}</code>\n"
+                f"💵 <b>Average Win:</b> <code>${perf.average_win:,.2f}</code>\n"
+                f"🛑 <b>Average Loss:</b> <code>${perf.average_loss:,.2f}</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━"
             )
 
@@ -299,7 +319,7 @@ class TelegramCommandHandler:
         # 8. Quick Strategy Backtest (/backtest <symbol>)
         # -------------------------------------------------------------
         elif cmd_name == "/backtest":
-            sym = self._normalize_symbol(parts[1]) if len(parts) > 1 else "XAU/USD"
+            sym = self._normalize_symbol(parts[1]) if len(parts) > 1 else (ACTIVE_SYMBOLS[0] if ACTIVE_SYMBOLS else "XAU/USD")
             candles = list(
                 db.scalars(
                     select(Candle)
@@ -308,7 +328,7 @@ class TelegramCommandHandler:
                 ).all()
             )
             if len(candles) < 30:
-                reply = f"❌ Insufficient candle data in database to backtest `{self.formatter.escape_code(sym)}`."
+                reply = f"❌ Insufficient candle data in database to backtest <code>{self.formatter.escape_html(sym)}</code>."
             else:
                 bt_res = self.backtest_service.engine.run_simulation(
                     candles=candles,
@@ -316,16 +336,16 @@ class TelegramCommandHandler:
                     timeframe="1h",
                 )
                 m = bt_res.metrics
-                sym_escaped = self.formatter.escape_markdown(sym)
+                sym_escaped = self.formatter.escape_html(sym)
                 reply = (
-                    f"📈 *HISTORICAL STRATEGY BACKTEST: {sym_escaped} [1h]* 📈\n"
+                    f"📈 <b>HISTORICAL STRATEGY BACKTEST: {sym_escaped} [1h]</b> 📈\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 *Total Trades:* `{m.total_trades}` ({m.winning_trades}W / {m.losing_trades}L)\n"
-                    f"🎯 *Win Rate:* `{m.win_rate:.1f}%`\n"
-                    f"💰 *Profit Factor:* `{m.profit_factor:.2f}`\n"
-                    f" *Net PnL:* `${m.total_pnl:>+,.2f}` (`{m.total_pnl_percent:>+6.2f}%`)\n"
-                    f"📉 *Max Drawdown:* `{m.max_drawdown_pct:.2f}%` (`${m.max_drawdown_usd:,.2f}`)\n"
-                    f"⭐ *Sharpe Ratio:* `{m.sharpe_ratio:.2f}` | *Calmar:* `{m.calmar_ratio:.2f}`\n"
+                    f"📊 <b>Total Trades:</b> <code>{m.total_trades}</code> ({m.winning_trades}W / {m.losing_trades}L)\n"
+                    f"🎯 <b>Win Rate:</b> <code>{m.win_rate:.1f}%</code>\n"
+                    f"💰 <b>Profit Factor:</b> <code>{m.profit_factor:.2f}</code>\n"
+                    f"💵 <b>Net PnL:</b> <code>${m.total_pnl:>+,.2f}</code> (<code>{m.total_pnl_percent:>+6.2f}%</code>)\n"
+                    f"📉 <b>Max Drawdown:</b> <code>{m.max_drawdown_pct:.2f}%</code> (<code>${m.max_drawdown_usd:,.2f}</code>)\n"
+                    f"⭐ <b>Sharpe Ratio:</b> <code>{m.sharpe_ratio:.2f}</code> | <b>Calmar:</b> <code>{m.calmar_ratio:.2f}</code>\n"
                     f"━━━━━━━━━━━━━━━━━━━━"
                 )
 
@@ -333,7 +353,7 @@ class TelegramCommandHandler:
         # 9. Force Fresh Data Sync (/sync)
         # -------------------------------------------------------------
         elif cmd_name == "/sync":
-            reply = "🔄 *FORCING FRESH DATA SYNC...*\n━━━━━━━━━━━━━━━━━━━━\n"
+            reply = "🔄 <b>FORCING FRESH DATA SYNC...</b>\n━━━━━━━━━━━━━━━━━━━━\n"
             
             provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
             ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
@@ -358,23 +378,22 @@ class TelegramCommandHandler:
             except Exception:
                 db.rollback()
 
-            reply += f"✅ *Sync Complete!*\n"
-            reply += f"📊 *Pairs Synced:* {len(sync_symbols)}\n"
-            reply += f"⏱ *Timeframes:* {', '.join(target_timeframes)}\n"
-            reply += f"🔄 *Total API Fetches:* {synced_count}\n"
+            reply += f"✅ <b>Sync Complete!</b>\n"
+            reply += f"📊 <b>Pairs Synced:</b> {len(sync_symbols)}\n"
+            reply += f"⏱ <b>Timeframes:</b> {', '.join(target_timeframes)}\n"
+            reply += f"🔄 <b>Total API Fetches:</b> {synced_count}\n"
             reply += "━━━━━━━━━━━━━━━━━━━━\n"
-            reply += "_Database updated. Staleness blocks cleared. Ready to scan!_"
+            reply += "<i>Database updated. Staleness blocks cleared. Ready to scan!</i>"
 
         # -------------------------------------------------------------
         # 10. Fallback for Unknown Commands (MUST BE LAST)
         # -------------------------------------------------------------
         else:
-            raw_escaped = self.formatter.escape_code(raw_cmd)
-            reply = f"❓ Unknown command `{raw_escaped}`. Type `/help` for available options."
-
+            raw_escaped = self.formatter.escape_html(raw_cmd)
+            reply = f"❓ Unknown command <code>{raw_escaped}</code>. Type <code>/help</code> for available options."
 
         if request.chat_id:
-            await self.telegram_client.send_message(text=reply, chat_id=request.chat_id)
+            await self.telegram_client.send_message(text=reply, chat_id=request.chat_id, parse_mode="HTML")
 
         return TelegramCommandResponse(
             command=raw_cmd,

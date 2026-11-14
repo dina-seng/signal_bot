@@ -43,6 +43,13 @@ class CandleResponse(CandleBase):
     """Schema for returning candle data via API."""
     id: int
     created_at: datetime
+    time: Optional[int] = Field(default=None, description="UNIX timestamp in seconds (UTC) for lightweight-charts")
+
+    @model_validator(mode="after")
+    def populate_unix_time(self) -> "CandleResponse":
+        if self.time is None and self.timestamp is not None:
+            self.time = int(self.timestamp.timestamp())
+        return self
 
     model_config = ConfigDict(from_attributes=True)
 

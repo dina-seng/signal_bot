@@ -428,7 +428,11 @@ class AutomatedMarketScanner:
                     if broadcast_to_telegram:
                         try:
                             msg_text = self.formatter.format_signal_alert(sig)
-                            send_res = await self.telegram_client.send_message(text=msg_text)
+                            send_res = await self.telegram_client.send_message(
+                                text=msg_text,
+                                parse_mode="HTML",
+                                signal_id=sig.id or sig.fingerprint,
+                            )
                             if send_res.success:
                                 signals_broadcast += 1
                                 if sig.id:
@@ -438,7 +442,7 @@ class AutomatedMarketScanner:
                                         db.commit()
                                 logger.info(
                                     f"BROADCASTED NEW SIGNAL: [{sig.direction.value}] {sig.symbol} "
-                                    f"[{tf}] (Score: {sig.setup_score:.1f})"
+                                    f"[{sig.timeframe}] (Score: {sig.setup_score:.1f})"
                                 )
                             else:
                                 logger.error(
@@ -460,7 +464,7 @@ class AutomatedMarketScanner:
                                     signal_id=sig.id,
                                     symbol=sig.symbol,
                                     timeframe=sig.timeframe,
-                                    risk_percent=0.5,
+                                    risk_percent=settings.MAX_RISK_PERCENT,
                                 ),
                             )
                             paper_trades_opened += 1
@@ -482,12 +486,58 @@ class AutomatedMarketScanner:
                 sync_report = self.paper_service.sync_prices(db=db)
                 updated_pos_count = sync_report.updated_positions_count
                 if broadcast_to_telegram and sync_report.events:
+                    import re
                     for ev in sync_report.events:
                         if any(k in ev for k in ("TP1", "TP2", "SL_HIT", "BREAK_EVEN")):
                             try:
-                                await self.telegram_client.send_message(
-                                    text=f"🔔 *POSITION UPDATE:* `{ev}`"
-                                )
+                                msg_sent = False
+                                match = re.search(r"Position #(\d+)", ev)
+                                if match:
+                                    trade_id = int(match.group(1))
+                                    trade = db.get(PaperTrade, trade_id)
+                                    if trade:
+                                        if "reached TP1" in ev:
+                                            closed_l = round(trade.initial_position_size * 0.5, 2)
+                                            msg_text = self.formatter.format_tp1_hit(
+                                                symbol=trade.symbol,
+                                                price=trade.take_profit_1,
+                                                realized_pnl=trade.realized_pnl,
+                                                new_sl=trade.stop_loss,
+                                                closed_lots=closed_l,
+                                                remaining_lots=trade.remaining_position_size,
+                                                timestamp=trade.opened_at,
+                                            )
+                                        elif "hit TP2" in ev:
+                                            msg_text = self.formatter.format_tp2_hit(
+                                                symbol=trade.symbol,
+                                                price=trade.exit_price or trade.take_profit_2,
+                                                total_pnl=trade.realized_pnl,
+                                                return_r=trade.return_r,
+                                                closed_lots=trade.initial_position_size,
+                                                timestamp=trade.closed_at or trade.opened_at,
+                                            )
+                                        else:  # SL_HIT or BREAK_EVEN
+                                            is_be = "BREAK_EVEN" in ev
+                                            msg_text = self.formatter.format_sl_hit(
+                                                symbol=trade.symbol,
+                                                price=trade.exit_price or trade.stop_loss,
+                                                loss_pnl=trade.realized_pnl,
+                                                is_be=is_be,
+                                                closed_lots=trade.initial_position_size,
+                                                return_r=trade.return_r,
+                                                timestamp=trade.closed_at or trade.opened_at,
+                                            )
+                                        await self.telegram_client.send_message(
+                                            text=msg_text,
+                                            parse_mode="HTML",
+                                            signal_id=trade.signal_id,
+                                        )
+                                        msg_sent = True
+                                if not msg_sent:
+                                    await self.telegram_client.send_message(
+                                        text=f"🔔 <b>POSITION UPDATE:</b> <code>{self.formatter.escape_html(ev)}</code>",
+                                        parse_mode="HTML",
+                                    )
                             except Exception as e:
                                 logger.error(f"Telegram delivery failed for position update: {e}")
             except Exception as e:

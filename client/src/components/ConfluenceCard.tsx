@@ -27,6 +27,7 @@ interface ConfluenceCardProps {
   onToggleNotify?: (id: string, symbol: PairSymbol, currentNotify: boolean) => void;
   onSelectSignalForChart?: (symbol: PairSymbol) => void;
   onTradeFromSignal?: (signal: TradeSignal) => void;
+  minScore?: number;
 }
 
 export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
@@ -36,6 +37,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   onToggleNotify,
   onSelectSignalForChart,
   onTradeFromSignal,
+  minScore = 75,
 }) => {
   const [isAiExpanded, setIsAiExpanded] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<'ticker' | 'tradingview'>('ticker');
@@ -246,7 +248,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                   className={`font-semibold ${
                     signal.confluenceScore >= 85
                       ? 'text-emerald-400'
-                      : signal.confluenceScore >= 75
+                      : signal.confluenceScore >= minScore
                       ? 'text-indigo-300'
                       : 'text-zinc-400'
                   }`}
@@ -334,7 +336,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                 <span>R:R Target: </span>
                 <strong className="text-white">{signal.riskRewardRatio && signal.riskRewardRatio !== '--' ? signal.riskRewardRatio : '1:2.0'}</strong>
                 <span className="block text-[10px] text-zinc-500 mt-1">
-                  {signal.setupReason || 'Awaiting institutional confirmation threshold (&ge; 75 pts)'}
+                  {signal.setupReason || `Awaiting institutional confirmation threshold (≥ ${minScore} pts)`}
                 </span>
               </div>
             )}

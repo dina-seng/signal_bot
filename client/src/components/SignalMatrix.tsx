@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { TradeSignal, PairSymbol } from '../types';
 import { ConfluenceCard } from './ConfluenceCard';
+import { AppConfig } from '../services/api';
 
 interface SignalMatrixProps {
   signals: TradeSignal[];
@@ -18,6 +19,7 @@ interface SignalMatrixProps {
   onSelectSignalForChart?: (symbol: PairSymbol) => void;
   onTriggerScan?: () => void;
   onTradeFromSignal?: (signal: TradeSignal) => void;
+  appConfig?: AppConfig | null;
 }
 
 type TickDirection = 'up' | 'down' | null;
@@ -31,6 +33,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
   onSelectSignalForChart,
   onTriggerScan,
   onTradeFromSignal,
+  appConfig,
 }) => {
   // Tick directions for green/red flash effect on real price changes
   const [tickDirections, setTickDirections] = useState<Record<string, TickDirection>>({});
@@ -135,7 +138,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
           <div className="text-xs font-mono text-zinc-400 flex items-center gap-1.5">
             <span className="text-zinc-500">Threshold:</span>
             <span className="font-semibold text-zinc-200 bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/10">
-              &ge; 75 / 100
+              &ge; {appConfig?.min_confluence_score ?? 75} / 100
             </span>
           </div>
         </div>
@@ -160,6 +163,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
               onToggleNotify={onToggleNotify}
               onSelectSignalForChart={onSelectSignalForChart}
               onTradeFromSignal={onTradeFromSignal}
+              minScore={appConfig?.min_confluence_score ?? 75}
             />
           ))}
         </div>
