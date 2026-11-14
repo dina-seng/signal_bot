@@ -6,6 +6,7 @@ from app.models.structure import StructureEvent
 from app.models.liquidity import LiquidityEvent
 from app.models.news import NewsEvent
 from app.models.signal import Signal
+from app.models.signal_candidate import SignalCandidate
 from app.models.backtest import BacktestRun, BacktestTrade
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
 
@@ -18,6 +19,7 @@ __all__ = [
     "LiquidityEvent",
     "NewsEvent",
     "Signal",
+    "SignalCandidate",
     "BacktestRun",
     "BacktestTrade",
     "VirtualAccount",

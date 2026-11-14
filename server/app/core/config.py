@@ -58,6 +58,20 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MAX_RISK_PERCENT", "RISK_PER_ORDER_PCT"),
     )
 
+    # Backtesting & Execution Friction (USD per ounce for XAU/USD)
+    XAUUSD_SPREAD: float = Field(
+        default=0.30,
+        ge=0.0,
+        description="Execution spread in USD for XAU/USD",
+        validation_alias=AliasChoices("XAUUSD_SPREAD", "BACKTEST_SPREAD_USD"),
+    )
+    XAUUSD_SLIPPAGE: float = Field(
+        default=0.10,
+        ge=0.0,
+        description="Execution slippage in USD for XAU/USD",
+        validation_alias=AliasChoices("XAUUSD_SLIPPAGE", "BACKTEST_SLIPPAGE_USD"),
+    )
+
     # Fundamental & News Blackout (Milestone 5)
     NEWS_BLACKOUT_BEFORE_MINUTES: int = Field(
         default=30,

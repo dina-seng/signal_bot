@@ -107,6 +107,41 @@ def test_sell_side_liquidity_sweep():
     assert sweeps[0].pips_swept == 40.0
 
 
+def test_no_lookahead_sweep_before_confirmation_bar():
+    """Verify that a liquidity sweep before right-side confirmation bar (i < k + SWING_LOOKBACK) is NOT registered."""
+    # Swing high at k=2 with SWING_LOOKBACK=2 confirms at bar 4 (2+2=4).
+    # Bar 3 wicks above 1.20 and rejects. Must NOT register sweep (i=3 < 4).
+    # Bar 4 wicks above 1.20 and rejects. MUST register sweep (i=4 >= 4).
+    prices = [
+        (1.00, 1.05, 0.98, 1.02),  # 0
+        (1.02, 1.10, 1.01, 1.05),  # 1
+        (1.05, 1.20, 1.04, 1.15),  # 2: Swing High candidate at 1.20 (k=2)
+        (1.15, 1.25, 1.14, 1.18),  # 3: Wicks to 1.25 (> 1.20), closes 1.18. i=3 < 2+2 -> NO SWEEP
+        (1.18, 1.26, 1.16, 1.19),  # 4: i=4 >= 2+2 -> VALID SWEEP
+    ]
+    candles = generate_candles(prices)
+    detector = LiquiditySweepDetector(min_wick_ratio=0.20)
+
+    sh = SwingPoint(
+        index=2,
+        timestamp=candles[2].timestamp,
+        price=1.20,
+        swing_type=SwingType.SWING_HIGH,
+        structure_label=StructureLabel.HH,
+        confirmed=True,
+        bar_high=1.20,
+        bar_low=1.04,
+    )
+
+    sweeps_early = detector.detect_sweeps(candles[:4], swings=[sh], symbol="EUR/USD", lookback_right=2)
+    assert len(sweeps_early) == 0, "Sweep registered before confirmation bar! Lookahead bias detected."
+
+    sweeps_confirmed = detector.detect_sweeps(candles, swings=[sh], symbol="EUR/USD", lookback_right=2)
+    assert len(sweeps_confirmed) == 1
+    assert sweeps_confirmed[0].index == 4
+    assert sweeps_confirmed[0].swept_level == 1.20
+
+
 def test_sr_zones_and_equal_highs_lows():
     """Test Support & Resistance Zone clustering and Equal Highs / Equal Lows pools."""
     base_time = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)

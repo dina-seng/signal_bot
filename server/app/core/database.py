@@ -54,6 +54,7 @@ def init_db():
     import app.models.paper
     import app.models.news
     import app.models.signal
+    import app.models.signal_candidate
     import app.models.structure
     import app.models.liquidity
     import app.models.backtest
@@ -67,6 +68,14 @@ def init_db():
                 logger.info("Adding missing account_id column to paper_trades table schema...")
                 with engine.connect() as conn:
                     conn.execute(text("ALTER TABLE paper_trades ADD COLUMN account_id INTEGER REFERENCES virtual_accounts(id)"))
+                    conn.commit()
+
+        if insp.has_table("candles"):
+            candle_columns = [c["name"] for c in insp.get_columns("candles")]
+            if "source" not in candle_columns:
+                logger.info("Adding missing source column to candles table schema...")
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE candles ADD COLUMN source VARCHAR(50) DEFAULT 'twelvedata'"))
                     conn.commit()
     except Exception as e:
         logger.debug(f"Table inspection note: {e}")

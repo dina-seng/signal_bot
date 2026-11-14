@@ -98,6 +98,8 @@ class SignalGenerator:
         account_balance: float = 10000.0,
         risk_percent: float = 0.5,
         htf_trend: Optional[str] = None,
+        as_of: Optional[datetime] = None,
+        backtest_mode: bool = False,
     ) -> SignalResponse:
         """Run full evaluation pipeline on candles and generate SignalResponse."""
         return self.confluence_engine.evaluate(
@@ -110,6 +112,8 @@ class SignalGenerator:
             account_balance=account_balance,
             risk_percent=risk_percent,
             htf_trend=htf_trend,
+            as_of=as_of,
+            backtest_mode=backtest_mode,
         )
 
     def evaluate_market_signals_multi(
@@ -123,6 +127,8 @@ class SignalGenerator:
         account_balance: float = 10000.0,
         risk_percent: float = 0.5,
         htf_trend: Optional[str] = None,
+        as_of: Optional[datetime] = None,
+        backtest_mode: bool = False,
     ) -> List[SignalResponse]:
         """Run all strategies and return independent SignalResponse per qualifying strategy."""
         return self.confluence_engine.evaluate_multi(
@@ -135,6 +141,8 @@ class SignalGenerator:
             account_balance=account_balance,
             risk_percent=risk_percent,
             htf_trend=htf_trend,
+            as_of=as_of,
+            backtest_mode=backtest_mode,
         )
 
 

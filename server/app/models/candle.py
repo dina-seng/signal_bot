@@ -30,6 +30,7 @@ class Candle(Base):
     low = Column(Float, nullable=False)
     close = Column(Float, nullable=False)
     volume = Column(Float, nullable=False, default=0.0)
+    source = Column(String(50), nullable=True, default="twelvedata", index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     __table_args__ = (

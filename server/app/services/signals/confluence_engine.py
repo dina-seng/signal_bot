@@ -104,8 +104,10 @@ class ConfluenceEngine:
         timestamp: datetime,
         strategy_name: Optional[str] = None,
     ) -> str:
-        """Generate unique SHA-256 fingerprint for deduplication."""
-        ts_utc = ensure_utc_datetime(timestamp) or datetime.now(timezone.utc)
+        """Generate deterministic SHA-256 fingerprint for deduplication based on closed candle timestamp."""
+        ts_utc = ensure_utc_datetime(timestamp)
+        if ts_utc is None:
+            raise ValueError("Deterministic fingerprint requires a valid closed candle timestamp, never None")
         ts_str = ts_utc.isoformat()
         strat_str = f"_{strategy_name}" if strategy_name else ""
         payload = f"{symbol}_{timeframe}_{direction.value}_{entry_price:.5f}_{stop_loss:.5f}_{ts_str}{strat_str}"
@@ -124,6 +126,8 @@ class ConfluenceEngine:
         candles_4h: Optional[Sequence[Union[CandleBase, Any]]] = None,
         candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
         news_check: Optional[NewsBlackoutCheckResponse] = None,
+        as_of: Optional[datetime] = None,
+        backtest_mode: bool = False,
     ) -> Tuple[
         Optional[SignalResponse],      # early-exit response (None = proceed)
         List[Any], Optional[List[Any]], Optional[List[Any]],  # c_prim, c_4h, c_15m
@@ -143,13 +147,13 @@ class ConfluenceEngine:
             raw_4h = candles_4h
             raw_15m = candles_15m
 
-        # Filter for verified closed candles
-        c_prim = filter_closed_candles(raw_prim, timeframe=timeframe) if raw_prim else []
-        c_4h = filter_closed_candles(raw_4h, timeframe="4h") if raw_4h else None
-        c_15m = filter_closed_candles(raw_15m, timeframe="15m") if raw_15m else None
+        # Filter for verified closed candles (relative to as_of if specified)
+        c_prim = filter_closed_candles(raw_prim, timeframe=timeframe, as_of=as_of) if raw_prim else []
+        c_4h = filter_closed_candles(raw_4h, timeframe="4h", as_of=as_of) if raw_4h else None
+        c_15m = filter_closed_candles(raw_15m, timeframe="15m", as_of=as_of) if raw_15m else None
 
         if not c_prim:
-            now_utc = datetime.now(timezone.utc)
+            ref_ts = ensure_utc_datetime(as_of) or datetime.now(timezone.utc)
             return (
                 SignalResponse(
                     symbol=symbol,
@@ -161,10 +165,10 @@ class ConfluenceEngine:
                     take_profit_1=0.0,
                     take_profit_2=0.0,
                     risk_reward=0.0,
-                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, ref_ts),
                     reasons=["No closed verified candle dataset provided for analysis."],
                     status=SignalStatus.ACTIVE,
-                    timestamp=now_utc,
+                    timestamp=ref_ts,
                     score_breakdown=ScoreBreakdown(
                         structure_score=0.0,
                         liquidity_score=0.0,
@@ -178,8 +182,11 @@ class ConfluenceEngine:
             )
 
         # 2. Check Data Staleness & Explicit Latest Candle Logging
-        staleness = check_data_staleness(c_prim, symbol=symbol, timeframe=timeframe)
+        staleness = check_data_staleness(c_prim, symbol=symbol, timeframe=timeframe, as_of=as_of)
         latest_c = c_prim[-1]
+        latest_c_raw_ts = getattr(latest_c, "timestamp", None) or (latest_c.get("timestamp") if isinstance(latest_c, dict) else None)
+        latest_candle_ts = ensure_utc_datetime(latest_c_raw_ts)
+
         log_latest_candle(
             latest_c,
             symbol=symbol,
@@ -192,7 +199,7 @@ class ConfluenceEngine:
         max_allowed_age = 2.0 if timeframe in ["1h", "4h"] else 1.0
         
         if staleness.is_stale and staleness.age_hours > max_allowed_age:
-            now_utc = datetime.now(timezone.utc)
+            sig_ts = latest_candle_ts or ensure_utc_datetime(as_of) or datetime.now(timezone.utc)
             return (
                 SignalResponse(
                     symbol=symbol,
@@ -204,13 +211,13 @@ class ConfluenceEngine:
                     take_profit_1=0.0,
                     take_profit_2=0.0,
                     risk_reward=0.0,
-                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, sig_ts),
                     reasons=[
                         f"🚫 DATA TOO STALE: Last closed candle is {staleness.age_hours:.1f} hours old.",
                         "Analysis aborted to prevent trading on outdated market conditions. Please sync fresh data."
                     ],
                     status=SignalStatus.ACTIVE,
-                    timestamp=now_utc,
+                    timestamp=sig_ts,
                     score_breakdown=ScoreBreakdown(
                         structure_score=0.0, liquidity_score=0.0, indicators_score=0.0,
                         price_action_score=0.0, total_score=0.0, is_qualified=False,
@@ -222,9 +229,9 @@ class ConfluenceEngine:
         if staleness.is_stale:
             logger.warning(staleness.message)
 
-        # 3. Check News Blackout / News Data Unavailable Fail-Safe
-        if news_check and (news_check.is_blackout or not news_check.trading_allowed or news_check.is_news_unavailable or news_check.is_fail_safe):
-            now_utc = datetime.now(timezone.utc)
+        # 3. Check News Blackout / News Data Unavailable Fail-Safe (bypassed in backtest_mode)
+        if not backtest_mode and news_check and (news_check.is_blackout or not news_check.trading_allowed or news_check.is_news_unavailable or news_check.is_fail_safe):
+            sig_ts = latest_candle_ts or ensure_utc_datetime(as_of) or datetime.now(timezone.utc)
             if news_check.is_blackout:
                 prefix = "NEWS BLACKOUT ACTIVE:"
             elif news_check.is_news_unavailable or news_check.is_fail_safe:
@@ -255,10 +262,10 @@ class ConfluenceEngine:
                     take_profit_1=0.0,
                     take_profit_2=0.0,
                     risk_reward=0.0,
-                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                    fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, sig_ts),
                     reasons=reasons,
                     status=SignalStatus.ACTIVE,
-                    timestamp=now_utc,
+                    timestamp=sig_ts,
                     score_breakdown=breakdown,
                 ),
                 c_prim, c_4h, c_15m,
@@ -524,6 +531,8 @@ class ConfluenceEngine:
         account_balance: float = 10000.0,
         risk_percent: float = 0.5,
         htf_trend: Optional[str] = None,
+        as_of: Optional[datetime] = None,
+        backtest_mode: bool = False,
     ) -> SignalResponse:
         """Run all strategies and return the single best qualifying SignalResponse.
 
@@ -540,6 +549,8 @@ class ConfluenceEngine:
             account_balance=account_balance,
             risk_percent=risk_percent,
             htf_trend=htf_trend,
+            as_of=as_of,
+            backtest_mode=backtest_mode,
         )
 
         # Return the best (highest-scoring actionable) signal, or the first WAIT
@@ -565,6 +576,8 @@ class ConfluenceEngine:
         account_balance: float = 10000.0,
         risk_percent: float = 0.5,
         htf_trend: Optional[str] = None,
+        as_of: Optional[datetime] = None,
+        backtest_mode: bool = False,
     ) -> List[SignalResponse]:
         """Run all strategies and return a SignalResponse per strategy.
 
@@ -580,6 +593,8 @@ class ConfluenceEngine:
             candles_4h=candles_4h,
             candles_15m=candles_15m,
             news_check=news_check,
+            as_of=as_of,
+            backtest_mode=backtest_mode,
         )
         if early_exit is not None:
             return [early_exit]
@@ -640,7 +655,9 @@ class ConfluenceEngine:
 
         # Ensure at least one result
         if not signals:
-            now_utc = datetime.now(timezone.utc)
+            latest_c = c_prim[-1] if c_prim else None
+            latest_c_raw_ts = (getattr(latest_c, "timestamp", None) or (latest_c.get("timestamp") if isinstance(latest_c, dict) else None)) if latest_c else None
+            sig_ts = ensure_utc_datetime(latest_c_raw_ts) or datetime(2026, 1, 1, tzinfo=timezone.utc)
             signals.append(SignalResponse(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -651,10 +668,10 @@ class ConfluenceEngine:
                 take_profit_1=0.0,
                 take_profit_2=0.0,
                 risk_reward=0.0,
-                fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, now_utc),
+                fingerprint=self.generate_fingerprint(symbol, timeframe, SignalDirection.WAIT, 0.0, 0.0, sig_ts),
                 reasons=["No strategy produced a result."],
                 status=SignalStatus.ACTIVE,
-                timestamp=now_utc,
+                timestamp=sig_ts,
                 score_breakdown=ScoreBreakdown(
                     structure_score=0.0, liquidity_score=0.0, indicators_score=0.0,
                     price_action_score=0.0, total_score=0.0, is_qualified=False,

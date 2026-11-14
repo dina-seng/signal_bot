@@ -85,42 +85,32 @@ def test_bullish_bos_continuation():
 def test_bearish_bos_continuation():
     """Test Bearish Break of Structure (BOS) continuation when price breaks below previous Lower Low."""
     # 0: O=1.40, H=1.42, L=1.36, C=1.38
-    # 1: O=1.38, H=1.45, L=1.37, C=1.40  -> SH1 = 1.45
-    # 2: O=1.28, H=1.30, L=1.25, C=1.28  -> SL1 = 1.25
-    # 3: O=1.28, H=1.29, L=1.18, C=1.20  -> Candle closes at 1.20 (< 1.25 SL1) -> BEARISH_BOS!
+    # 1: O=1.38, H=1.40, L=1.25, C=1.28  -> SL1 = 1.25
+    # 2: O=1.28, H=1.35, L=1.27, C=1.32  -> Pullback
+    # 3: O=1.32, H=1.32, L=1.18, C=1.20  -> Candle closes at 1.20 (< 1.25 SL1). Confirmed at i=3 (1+2=3) -> BEARISH_BOS!
     prices = [
         (1.40, 1.42, 1.36, 1.38),  # 0
-        (1.38, 1.45, 1.37, 1.40),  # 1: SH1 = 1.45
-        (1.28, 1.30, 1.25, 1.28),  # 2: SL1 = 1.25
-        (1.28, 1.29, 1.18, 1.20),  # 3: Closes below 1.25 -> Bearish BOS
+        (1.38, 1.40, 1.25, 1.28),  # 1: SL1 = 1.25
+        (1.28, 1.35, 1.27, 1.32),  # 2: Pullback
+        (1.32, 1.32, 1.18, 1.20),  # 3: Closes below 1.25 -> Bearish BOS
     ]
     candles = generate_candles(prices)
     detector = BOSCHOCHDetector()
 
-    sh1 = SwingPoint(
+    sl1 = SwingPoint(
         index=1,
         timestamp=candles[1].timestamp,
-        price=1.45,
-        swing_type=SwingType.SWING_HIGH,
-        structure_label=StructureLabel.LH,
-        confirmed=True,
-        bar_high=1.45,
-        bar_low=1.37,
-    )
-    sl1 = SwingPoint(
-        index=2,
-        timestamp=candles[2].timestamp,
         price=1.25,
         swing_type=SwingType.SWING_LOW,
         structure_label=StructureLabel.LL,
         confirmed=True,
-        bar_high=1.30,
+        bar_high=1.40,
         bar_low=1.25,
     )
 
     bos_events, choch_events = detector.detect_bos_and_choch(
         candles=candles,
-        swings=[sh1, sl1],
+        swings=[sl1],
         current_trend=TrendDirection.BEARISH,
     )
 
@@ -184,37 +174,27 @@ def test_bearish_choch_mss_reversal():
     # Then price reverses downwards and closes below 1.10!
     prices = [
         (1.05, 1.12, 1.04, 1.10),  # 0
-        (1.10, 1.25, 1.08, 1.22),  # 1: HH = 1.25
-        (1.22, 1.23, 1.10, 1.12),  # 2: HL = 1.10
-        (1.12, 1.13, 1.02, 1.05),  # 3: Closes at 1.05 < 1.10 HL -> BEARISH_CHOCH!
+        (1.10, 1.15, 1.10, 1.12),  # 1: HL = 1.10 (k=1)
+        (1.12, 1.25, 1.11, 1.22),  # 2: HH = 1.25
+        (1.22, 1.22, 1.02, 1.05),  # 3: Closes at 1.05 < 1.10 HL. Confirmed at i=3 (1+2=3) -> BEARISH_CHOCH!
     ]
     candles = generate_candles(prices)
     detector = BOSCHOCHDetector()
 
-    sh_hh = SwingPoint(
+    sl_hl = SwingPoint(
         index=1,
         timestamp=candles[1].timestamp,
-        price=1.25,
-        swing_type=SwingType.SWING_HIGH,
-        structure_label=StructureLabel.HH,
-        confirmed=True,
-        bar_high=1.25,
-        bar_low=1.08,
-    )
-    sl_hl = SwingPoint(
-        index=2,
-        timestamp=candles[2].timestamp,
         price=1.10,
         swing_type=SwingType.SWING_LOW,
         structure_label=StructureLabel.HL,
         confirmed=True,
-        bar_high=1.23,
+        bar_high=1.15,
         bar_low=1.10,
     )
 
     bos_events, choch_events = detector.detect_bos_and_choch(
         candles=candles,
-        swings=[sh_hh, sl_hl],
+        swings=[sl_hl],
         current_trend=TrendDirection.BULLISH,
     )
 
@@ -223,3 +203,53 @@ def test_bearish_choch_mss_reversal():
     assert choch_events[0].broken_swing_price == 1.10
     assert choch_events[0].broken_swing_label == StructureLabel.HL
     assert choch_events[0].breakout_price == 1.05
+
+
+def test_no_lookahead_breakout_before_confirmation_bar():
+    """Verify that a breakout of a swing before its confirmation bar (i < k + SWING_LOOKBACK) is NOT registered."""
+    # Swing high at k=2 with SWING_LOOKBACK=2 is confirmed at bar 4 (2+2=4).
+    # At bar 3 (i=3 < 4), price closes above the swing high price.
+    # It must NOT register as a breakout at bar 3.
+    # Then at bar 4 (i=4 >= 4), price closes above the swing high price.
+    # It MUST register as a breakout at bar 4.
+    prices = [
+        (1.00, 1.05, 0.98, 1.02),  # 0
+        (1.02, 1.10, 1.01, 1.05),  # 1
+        (1.05, 1.20, 1.04, 1.15),  # 2: Swing High candidate at 1.20 (k=2)
+        (1.15, 1.25, 1.14, 1.22),  # 3: Closes at 1.22 > 1.20, but i=3 < 2+2 (unconfirmed!). NO BREAKOUT.
+        (1.22, 1.30, 1.21, 1.28),  # 4: i=4 >= 2+2 (confirmed!). Closes at 1.28 > 1.20 -> VALID BREAKOUT!
+    ]
+    candles = generate_candles(prices)
+    detector = BOSCHOCHDetector()
+
+    sh = SwingPoint(
+        index=2,
+        timestamp=candles[2].timestamp,
+        price=1.20,
+        swing_type=SwingType.SWING_HIGH,
+        structure_label=StructureLabel.HH,
+        confirmed=True,
+        bar_high=1.20,
+        bar_low=1.04,
+    )
+
+    # 1. Evaluate only up to candle 3 (before confirmation bar)
+    bos_early, choch_early = detector.detect_bos_and_choch(
+        candles=candles[:4],
+        swings=[sh],
+        current_trend=TrendDirection.BULLISH,
+        lookback_right=2,
+    )
+    assert len(bos_early) == 0, "Breakout registered before confirmation bar! Lookahead bias detected."
+    assert len(choch_early) == 0
+
+    # 2. Evaluate including candle 4 (at confirmation bar)
+    bos_confirmed, choch_confirmed = detector.detect_bos_and_choch(
+        candles=candles,
+        swings=[sh],
+        current_trend=TrendDirection.BULLISH,
+        lookback_right=2,
+    )
+    assert len(bos_confirmed) == 1, "Breakout should be registered on or after confirmation bar."
+    assert bos_confirmed[0].index == 4
+    assert bos_confirmed[0].broken_swing_price == 1.20

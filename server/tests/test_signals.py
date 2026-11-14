@@ -687,3 +687,43 @@ def test_scanner_symbol_direction_cooldown(test_db_session):
         "Expected is_signal_in_cooldown=False: broadcast is 3h old (> 2h window). "
         "Signal should pass through after the cooldown expires."
     )
+
+
+def test_deterministic_fingerprint_uses_closed_candle_timestamp():
+    """Verify fingerprints are purely deterministic based on candle timestamp, never datetime.now()."""
+    from app.services.signals.confluence_engine import ConfluenceEngine
+
+    c_ts = datetime(2026, 8, 20, 14, 0, tzinfo=timezone.utc)
+    fp1 = ConfluenceEngine.generate_fingerprint(
+        symbol="XAU/USD",
+        timeframe="15m",
+        direction=SignalDirection.BUY,
+        entry_price=2500.50,
+        stop_loss=2490.00,
+        timestamp=c_ts,
+        strategy_name="Trend Sniper",
+    )
+    fp2 = ConfluenceEngine.generate_fingerprint(
+        symbol="XAU/USD",
+        timeframe="15m",
+        direction=SignalDirection.BUY,
+        entry_price=2500.50,
+        stop_loss=2490.00,
+        timestamp=c_ts,
+        strategy_name="Trend Sniper",
+    )
+    assert fp1 == fp2
+    assert len(fp1) == 64  # SHA-256 hex digest
+
+    # Different candle timestamp produces different fingerprint
+    c_ts2 = datetime(2026, 8, 20, 14, 15, tzinfo=timezone.utc)
+    fp3 = ConfluenceEngine.generate_fingerprint(
+        symbol="XAU/USD",
+        timeframe="15m",
+        direction=SignalDirection.BUY,
+        entry_price=2500.50,
+        stop_loss=2490.00,
+        timestamp=c_ts2,
+        strategy_name="Trend Sniper",
+    )
+    assert fp1 != fp3

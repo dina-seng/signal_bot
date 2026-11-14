@@ -1,8 +1,9 @@
 """Liquidity Sweep / Stop Hunt (BSL & SSL) Detection Engine."""
 
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Sequence, Union
-from app.core.config import ACTIVE_SYMBOLS
+from app.core.config import ACTIVE_SYMBOLS, settings
 from app.schemas.candle import CandleBase
 from app.schemas.liquidity import LiquidityEventType, LiquiditySweep
 from app.schemas.structure import SwingPoint, SwingType
@@ -55,7 +56,7 @@ class LiquiditySweepDetector:
         swings: List[SwingPoint],
         symbol: str = "XAU/USD",
         min_wick_ratio: Optional[float] = None,
-        lookback_right: int = 1,
+        lookback_right: Optional[int] = None,
     ) -> List[LiquiditySweep]:
         """Identify all Buy-Side Liquidity (BSL) and Sell-Side Liquidity (SSL) sweeps.
 
@@ -64,6 +65,7 @@ class LiquiditySweepDetector:
             swings: Labeled SwingPoints.
             symbol: Instrument symbol for pip scaling.
             min_wick_ratio: Minimum ratio of rejection wick to entire candle range.
+            lookback_right: Right-side lookback confirmation bars. Defaults to settings.SWING_LOOKBACK.
 
         Returns:
             List of LiquiditySweep events sorted chronologically.
@@ -71,6 +73,7 @@ class LiquiditySweepDetector:
         if not candles or not swings:
             return []
 
+        effective_lookback = lookback_right if lookback_right is not None else settings.SWING_LOOKBACK
         wick_threshold = min_wick_ratio if min_wick_ratio is not None else self.min_wick_ratio
         pip_size = self._get_pip_size(symbol)
         parsed_candles = [self._extract_candle_data(c) for c in candles]
@@ -81,7 +84,18 @@ class LiquiditySweepDetector:
         # Keep active unbroken swing levels to check for sweeps
         active_highs: List[SwingPoint] = []
         active_lows: List[SwingPoint] = []
-        swings_by_idx = {s.index: s for s in swings}
+        swings_by_idx = defaultdict(list)
+        for s in swings:
+            swings_by_idx[s.index].append(s)
+
+        # Swings already confirmed before the sequence start
+        for s in swings:
+            if s.index + effective_lookback < 0:
+                if s.swing_type == SwingType.SWING_HIGH:
+                    active_highs.append(s)
+                elif s.swing_type == SwingType.SWING_LOW:
+                    active_lows.append(s)
+
         swept_high_indices = set()
         swept_low_indices = set()
 
@@ -89,15 +103,15 @@ class LiquiditySweepDetector:
             ts, o, h, l, c = parsed_candles[i]
             candle_range = max(1e-6, h - l)
 
-            # A swing confirmed at index k requires lookback_right bars beyond it.
-            # Activating only when i >= k + lookback_right eliminates lookahead bias.
-            confirm_idx = i - lookback_right
-            if confirm_idx >= 0 and confirm_idx in swings_by_idx:
-                sw = swings_by_idx[confirm_idx]
-                if sw.swing_type == SwingType.SWING_HIGH:
-                    active_highs.append(sw)
-                elif sw.swing_type == SwingType.SWING_LOW:
-                    active_lows.append(sw)
+            # A swing at index k must only become active at bar i >= k + SWING_LOOKBACK (right-side confirmation).
+            # This completely eliminates lookahead bias.
+            confirm_idx = i - effective_lookback
+            if confirm_idx in swings_by_idx:
+                for sw in swings_by_idx[confirm_idx]:
+                    if sw.swing_type == SwingType.SWING_HIGH:
+                        active_highs.append(sw)
+                    elif sw.swing_type == SwingType.SWING_LOW:
+                        active_lows.append(sw)
 
                        # 1. Check for Buy-Side Liquidity Sweep (BSL) on active swing highs
             for sh in list(active_highs):

@@ -1,7 +1,9 @@
 """Break of Structure (BOS) and Change of Character (CHOCH/MSS) Detection Engine."""
 
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Sequence, Union
+from app.core.config import settings
 from app.schemas.candle import CandleBase
 from app.schemas.liquidity import BOSCHOCHType, BreakoutEvent
 from app.schemas.structure import StructureLabel, SwingPoint, SwingType, TrendDirection
@@ -46,7 +48,7 @@ class BOSCHOCHDetector:
         swings: List[SwingPoint],
         current_trend: TrendDirection = TrendDirection.RANGING,
         min_displacement_ratio: float = 0.1,
-        lookback_right: int = 1,
+        lookback_right: Optional[int] = None,
     ) -> tuple[List[BreakoutEvent], List[BreakoutEvent]]:
         """Identify all confirmed BOS and CHOCH breakout events across candle history.
 
@@ -55,6 +57,7 @@ class BOSCHOCHDetector:
             swings: Labeled SwingPoints sorted chronologically.
             current_trend: Classified trend context from StructureEngine.
             min_displacement_ratio: Minimum body breakout ratio required for valid displacement.
+            lookback_right: Right-side lookback confirmation bars. Defaults to settings.SWING_LOOKBACK.
 
         Returns:
             Tuple of (bos_events_list, choch_events_list)
@@ -62,6 +65,7 @@ class BOSCHOCHDetector:
         if not candles or not swings:
             return [], []
 
+        effective_lookback = lookback_right if lookback_right is not None else settings.SWING_LOOKBACK
         parsed_candles = [self._extract_candle_data(c) for c in candles]
         total_bars = len(parsed_candles)
 
@@ -72,8 +76,18 @@ class BOSCHOCHDetector:
         active_highs: List[SwingPoint] = []
         active_lows: List[SwingPoint] = []
 
-        # Map swing start indices to swings
-        swings_by_idx = {s.index: s for s in swings}
+        # Map swing start indices to swings (supporting multiple swings per index)
+        swings_by_idx = defaultdict(list)
+        for s in swings:
+            swings_by_idx[s.index].append(s)
+
+        # Swings already confirmed before the sequence start
+        for s in swings:
+            if s.index + effective_lookback < 0:
+                if s.swing_type == SwingType.SWING_HIGH:
+                    active_highs.append(s)
+                elif s.swing_type == SwingType.SWING_LOW:
+                    active_lows.append(s)
 
         # Track broken swing prices to avoid duplicate events on same swing
         broken_high_indices = set()
@@ -83,15 +97,15 @@ class BOSCHOCHDetector:
             ts, o, h, l, c = parsed_candles[i]
             candle_range = max(1e-6, h - l)
 
-            # A swing confirmed at index k requires lookback_right bars to close beyond it.
-            # Activating it only when i >= k + lookback_right eliminates lookahead bias.
-            confirm_idx = i - lookback_right
-            if confirm_idx >= 0 and confirm_idx in swings_by_idx:
-                sw = swings_by_idx[confirm_idx]
-                if sw.swing_type == SwingType.SWING_HIGH:
-                    active_highs.append(sw)
-                elif sw.swing_type == SwingType.SWING_LOW:
-                    active_lows.append(sw)
+            # A swing at index k must only become active at bar i >= k + SWING_LOOKBACK (right-side confirmation).
+            # This completely eliminates lookahead bias.
+            confirm_idx = i - effective_lookback
+            if confirm_idx in swings_by_idx:
+                for sw in swings_by_idx[confirm_idx]:
+                    if sw.swing_type == SwingType.SWING_HIGH:
+                        active_highs.append(sw)
+                    elif sw.swing_type == SwingType.SWING_LOW:
+                        active_lows.append(sw)
 
             # ✅ FIX: Only check against the MOST RECENT active swing high to prevent flooding
             if active_highs:
