@@ -154,25 +154,25 @@ def identify_liquidity_pools(
     # 4. Session Highs / Lows & Previous-Day High / Low (DST-aware America/New_York)
     # Group candles by session
     # A session becomes known immediately after the last bar of that session closes!
-    session_asia_bars: Dict[str, List[CandleCreate]] = {}
-    session_london_bars: Dict[str, List[CandleCreate]] = {}
-    daily_bars: Dict[str, List[CandleCreate]] = {}
+    session_asia_bars: Dict[Any, List[CandleCreate]] = {}
+    session_london_bars: Dict[Any, List[CandleCreate]] = {}
+    daily_bars: Dict[Any, List[CandleCreate]] = {}
 
     for c in candles_15m:
         ts = c.timestamp if c.timestamp.tzinfo else c.timestamp.replace(tzinfo=UTC_TZ)
         ny_dt = ts.astimezone(NY_TZ)
-        date_str = ny_dt.strftime("%Y-%m-%d")
+        d_val = (ny_dt.year, ny_dt.month, ny_dt.day)
 
         # Asia session: 18:00 - 00:00 NY
         if ny_dt.hour >= 18:
-            session_asia_bars.setdefault(date_str, []).append(c)
+            session_asia_bars.setdefault(d_val, []).append(c)
 
         # London session: 03:00 - 07:00 NY
         if 3 <= ny_dt.hour < 7:
-            session_london_bars.setdefault(date_str, []).append(c)
+            session_london_bars.setdefault(d_val, []).append(c)
 
         # Daily 17:00 NY session key
-        day_key = date_str if ny_dt.hour < 17 else (ny_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        day_key = d_val if ny_dt.hour < 17 else ((ny_dt + timedelta(days=1)).year, (ny_dt + timedelta(days=1)).month, (ny_dt + timedelta(days=1)).day)
         daily_bars.setdefault(day_key, []).append(c)
 
     # Convert Asia sessions to pools once closed (closes at 00:00 NY = next day 00:00 NY)

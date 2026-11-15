@@ -98,11 +98,7 @@ def find_valid_sweep(
     curr_c = candles_15m[candle_idx]
     pen_req = config.min_sweep_penetration_atr * atr
 
-    # Prioritize major pool types (equal levels, session pools, PDH/PDL) over individual minor swing pivots
-    major_types = {"EQUAL_HIGHS", "EQUAL_LOWS", "PDH", "PDL", "ASIA_HIGH", "ASIA_LOW", "LONDON_HIGH", "LONDON_LOW"}
-    sorted_pools = sorted(pools, key=lambda p: 0 if p.pool_type in major_types else 1)
-
-    for pool in sorted_pools:
+    for pool in pools:
         # A pool is only eligible if it was confirmed strictly before the sweep bar
         if pool.confirm_time >= curr_c.timestamp:
             continue

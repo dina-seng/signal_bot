@@ -200,5 +200,61 @@
 - **`ml4t-triple-barrier`**: **APPLIED**. Explicit upper barrier (TP1/TP2 from opposing pools), lower barrier (SL beyond sweep extreme + buffer + spread), and horizontal time barrier (zone expiration after 16 bars).
 - **`ml4t-backtest-overfitting`**, **`ml4t-walk-forward-cv`**, **`ml4t-purging-embargo`**: **DEFERRED TO PHASE 3**. These skills apply specifically to the backtest harness, cross-validation splits, and parameter tuning grids implemented in Phase 3.
 
+---
+
+## Phase 3: Backtest Harness (`server/app/services/sweep/backtest/`)
+
+### Architecture & Components Built
+1. **Typed Data Models (`models.py`)**:
+   - `TradePosition`: Tracks entry/exit timestamps, prices, exit reason (`TP1`, `SL`, `TIMEOUT`), $R$-multiple, P&L in USD, friction in USD and $R$, MFE in $R$, MAE in $R$, bars held, setup Grade, pool type, trading session, and HTF alignment.
+   - `CandidateSetupRecord`: Logs every single candidate setup (all states, including `NO_SETUP` reasons and `INVALIDATED`), with forward outcome metrics (`reached_1r`, `reached_2r`, `hit_sl`, `mfe`, `mae`, `bars_to_resolution`, `r_multiple`).
+   - `SliceMetrics`: Computes $n$ signals, $n$ executed trades, $n$ cluster-deduped, win rate, expectancy in $R$, 1,000-resample bootstrap 95% CI, profit factor, max drawdown in $R$, average friction in $R$, and statistical verdict.
+   - `BacktestReport`: Container for overall metrics, slices, monthly equity, and random baseline.
+2. **Pure Walk-Forward Simulation Engine (`engine.py`)**:
+   - Reuses production `evaluate_sweep_market` with strict `as_of` prefix filtering.
+   - **Fill Model**: Limit orders fill strictly when price trades *through* the zone price (Short: bar high > limit; Long: bar low < limit).
+   - **Conservative Exit Rule**: When both SL and TP are touched in the same bar, the simulator assumes SL is hit first.
+   - **Friction Accounting**: Deducts configured spread ($0.30 USD) and slippage ($0.10 USD) for a roundtrip cost of $0.40 USD.
+   - **Single Position & Cooldown**: Only one open position at a time; exit cooldown (`cooldown_bars = 8`) suppresses immediate re-entries.
+   - **Candidate Forward Tracking**: Every setup candidate is logged with forward 100-bar path metrics (MFE, MAE, 1R/2R hits, resolution time).
+   - **News Filter**: Labeled `OFF` for historical simulation.
+3. **Statistical Metrics & Guardrails (`metrics.py`)**:
+   - Implements 1,000-resample bootstrap 95% Confidence Interval for expectancy in $R$.
+   - **Sample Size Guardrail**: Slices with $n < 30$ are explicitly labeled `"n/a (n<30)"`.
+   - **Edge Verdict**: Any edge verdict is strictly withheld unless $n \ge 100$ and the 95% bootstrap CI strictly excludes zero ($CI_{\text{lower}} > 0$).
+   - Slices: by Grade (A, B, C), Session (Asia, London, NY, Other), HTF Alignment, Pool Type, Day of Week, and Monthly Equity Curve.
+4. **Random-Entry Baseline (`baseline.py`)**:
+   - Compares strategy outcomes against random coin-flip entries evaluated on identical execution timestamps, using identical SL/TP distance geometry and identical friction ($0.40 USD).
+5. **Time Splits & Pre-Registered Tuning Grid (`tuning.py`)**:
+   - **Purged & Embargoed Splits**: 60% Train / 20% Validation / 20% Test splits with 16-bar purge buffer and 8-bar embargo buffer (`ml4t-purging-embargo`).
+   - **Pre-Registered Grid (18 Combinations $\le 24$)**:
+     - `pivot_n_15m` $\in \{2, 3, 4\}$
+     - `max_rejection_bars` $\in \{1, 2, 3\}$
+     - `min_rr_tp1` $\in \{1.5, 2.0\}$
+     - Evaluated on Train; confirmed on Validation; Test evaluated strictly once at the end.
+6. **Report Formatter (`formatter.py`) & Runner Script (`run_sweep_backtest.py`)**:
+   - CLI script `python -m app.scripts.run_sweep_backtest` loads 15m data, runs the pipeline, prints full markdown reports, and saves artifacts to `reports/`.
+
+### Committed Test Results (`server/tests/test_sweep_backtest.py`)
+All 7 tests passed hermetically:
+- `test_random_walk_control_minus_friction`: **PASSED**. Ran across independent random walk paths with volatility calibrated to XAU/USD 15m ATR (~2.5 USD). Mean expectancy was negative ($\le 0.0$), confirming absence of lookahead or future data leaks.
+- `test_harness_prefix_invariance`: **PASSED**. Verified that trade decisions and candidate logs up to bar $t$ are bit-identical when future bars are truncated vs replaced with random walk noise.
+- `test_fill_model_requires_trading_through`: **PASSED**. Limit order does not fill when price touches; fills only when price trades strictly through the zone price.
+- `test_same_bar_sl_and_tp_assumes_sl_first`: **PASSED**. Same-bar SL and TP touches exit at SL with negative $R$.
+- `test_friction_and_cooldown`: **PASSED**. Spread and slippage correctly deducted; setups during cooldown are suppressed.
+- `test_purged_time_splits_and_tuning_grid`: **PASSED**. Verified chronological split boundaries with purge/embargo buffers, and verified grid size is exactly 18 ($\le 24$).
+- `test_bootstrap_ci_guardrail_under_30_trades`: **PASSED**. Verified that sample size $< 30$ produces explicit `"n/a (n<30)"` and withholds edge verdict.
+
+### ML4T Skills Checklist Application
+- **`ml4t-lookahead-bias`**: **APPLIED**. Production engine reused with strict `as_of`. Derived HTF bars (1h/4h) filtered so close time $\le \text{as_of}$. Harness prefix invariance verified.
+- **`ml4t-data-leakage`**: **APPLIED**. Chronological 60/20/20 train/validation/test split. No test information visible during model/grid tuning.
+- **`ml4t-transaction-costs`**: **APPLIED**. Real-world friction modeled: $0.30 spread + $0.10 slippage = $0.40 USD roundtrip deducted from all trades.
+- **`ml4t-backtest-overfitting`**: **APPLIED**. Pre-registered parameter grid bounded to 18 combinations ($\le 24$). Parameter selection on Train, confirmation on Validation, single evaluation on Test.
+- **`ml4t-walk-forward-cv`**: **APPLIED**. Strict bar-by-bar walk-forward simulation preserving temporal order.
+- **`ml4t-purging-embargo`**: **APPLIED**. 16-bar purge window before boundaries; 8-bar embargo buffer after boundaries.
+- **`ml4t-validate-data`**: **APPLIED**. Cleaned, source-tagged 15m candles from Twelve Data.
+- **`ml4t-triple-barrier`**: **APPLIED**. Upper barrier (TP1/TP2), lower barrier (SL), time barrier (100-bar max holding timeout / 16-bar zone expiry).
+
+
 
 ---

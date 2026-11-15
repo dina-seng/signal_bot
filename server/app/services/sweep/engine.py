@@ -56,14 +56,23 @@ def evaluate_sweep_market(
     # 1. Enforce strict as_of prefix filtering
     if as_of is not None:
         as_of_utc = as_of if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc)
-        eval_15m = [
-            c for c in candles_15m
-            if (c.timestamp if c.timestamp.tzinfo else c.timestamp.replace(tzinfo=timezone.utc)) + timedelta(minutes=15) <= as_of_utc
-        ]
-        eval_1h = [
-            c for c in candles_1h
-            if (c.timestamp if c.timestamp.tzinfo else c.timestamp.replace(tzinfo=timezone.utc)) + timedelta(hours=1) <= as_of_utc
-        ]
+        last_c = candles_15m[-1]
+        last_c_close = (last_c.timestamp if last_c.timestamp.tzinfo else last_c.timestamp.replace(tzinfo=timezone.utc)) + timedelta(minutes=15)
+        if last_c_close <= as_of_utc:
+            eval_15m = list(candles_15m)
+        else:
+            eval_15m = [
+                c for c in candles_15m
+                if (c.timestamp if c.timestamp.tzinfo else c.timestamp.replace(tzinfo=timezone.utc)) + timedelta(minutes=15) <= as_of_utc
+            ]
+
+        if candles_1h:
+            eval_1h = [
+                c for c in candles_1h
+                if (c.timestamp if c.timestamp.tzinfo else c.timestamp.replace(tzinfo=timezone.utc)) + timedelta(hours=1) <= as_of_utc
+            ]
+        else:
+            eval_1h = []
     else:
         eval_15m = list(candles_15m)
         eval_1h = list(candles_1h)
@@ -79,6 +88,7 @@ def evaluate_sweep_market(
     # 3. Detect 15m Pivots and resting Liquidity Pools
     pivots_15m = detect_pivots(eval_15m, n=config.pivot_n_15m)
     pools = identify_liquidity_pools(eval_15m, eval_1h, atr_values, config)
+    pools = sorted(pools, key=lambda p: 0 if p.pool_type in MAJOR_POOL_TYPES else 1)
 
     # 4. Determine HTF Trend Bias from 1h structure
     htf_bias = detect_htf_bias(eval_1h, n=config.pivot_n_htf)
