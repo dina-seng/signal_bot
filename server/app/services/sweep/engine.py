@@ -79,6 +79,13 @@ def evaluate_sweep_market(
         last_c = eval_15m[-1]
         as_of_utc = (last_c.timestamp if last_c.timestamp.tzinfo else last_c.timestamp.replace(tzinfo=timezone.utc)) + timedelta(minutes=15)
 
+    # Apply explicit algorithm lookback window
+    if config.lookback_bars_15m and len(eval_15m) > config.lookback_bars_15m:
+        eval_15m = eval_15m[-config.lookback_bars_15m:]
+        earliest_ts = eval_15m[0].timestamp
+        if eval_1h:
+            eval_1h = [c for c in eval_1h if c.timestamp >= earliest_ts]
+
     if len(eval_15m) < 20:
         return []
 
@@ -286,8 +293,9 @@ def evaluate_sweep_market(
             )
             continue
 
-        # Check Zone Expiry
-        if current_bar_idx > zone.expiry_bar_index:
+        # Check Zone Expiry (index-free: count bars elapsed since zone creation)
+        bars_since_zone = sum(1 for c in eval_15m if c.timestamp > zone.created_time)
+        if bars_since_zone > config.zone_expiry_bars:
             setups.append(
                 SweepSetup(
                     setup_id=setup_id,

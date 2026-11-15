@@ -94,10 +94,16 @@
   - Probed Twelve Data API using backward paging (`outputsize=5000` with `end_date`):
     - Earliest reachable 15m timestamp: **2023-03-10 18:45:00 UTC**
     - Continuous reachable history depth: **> 100,000 bars (over 3.5 years of 15m data)** on the free tier.
-- **Empirical Market Calendar (Phase 1.7)**:
-  - Analysis across 10,000 continuous 15m bars from Twelve Data shows that Twelve Data's XAU/USD feed provides unbroken 24/7 quotes with **0 gaps** across calendar weeks.
-  - Freshness logic unifies:
-    - During weekend / daily breaks, data is marked `MARKET_CLOSED` and is **not STALE** if the break-start closing bar exists.
+- **Empirical Market Calendar & Closed-Market Filtering (Phase 1.7 / Phase 3b)**:
+  - **Correction of 24/7 Feed Misconception**: Analysis across 100,408 continuous 15m bars (2023-03 to 2026-11) revealed that Twelve Data fills market closures with synthetic placeholder bars. Median 15m bar range during active hours is ~$3.50–$5.00 USD, but collapses to ~$0.25–$0.28 USD on weekends and daily maintenance breaks.
+  - **Spot-Gold Trading Hours**: Anchored in `America/New_York` (DST-aware via `zoneinfo.ZoneInfo("America/New_York")`):
+    - Closes Friday at 17:00 NY (21:00 UTC EDT / 22:00 UTC EST).
+    - Opens Sunday at 18:00 NY (22:00 UTC EDT / 23:00 UTC EST).
+    - Daily maintenance break Mon–Thu 17:00–18:00 NY (21:00–22:00 UTC EDT / 22:00–23:00 UTC EST).
+  - **Load-Time Filtration**: Pure, tested function `is_market_open(ts)` and `filter_open_market_candles()` drop closed-market bars at load time from all analysis inputs (ATR, pivots, pools, sessions, resampling) without mutating database records (12,898 placeholder bars dropped, retaining 87,510 open-market bars).
+  - **Weekday 1h Resampling Sanity**: Re-running native 1h comparison exclusively on weekday open bars yields 145/145 exact matches (**100.00% match** within $0.05 tolerance).
+  - **Freshness Logic**:
+    - During weekend / daily breaks, data is marked `is_market_open=False` and is strictly **not STALE** (`is_stale=False`) if the break-start closing bar exists.
     - During active trading hours, data is **FRESH** if the latest expected closed 15m bar (`floor_15m(now_utc - 15m)`) exists in the database.
 - **Data Cleanup & Re-Backfill (Phase 1.8)**:
   - Exported pre-purge CSV backup: `data/backups/candles_backup_20261115_151525.csv` (44,332 total rows).

@@ -11,6 +11,11 @@ from app.services.market_data.mock_provider import MockMarketDataProvider
 from app.services.market_data.ingestion import IngestionService
 from app.services.market_data.resample import resample_ohlc
 
+from app.services.market_data.calendar import (
+    is_market_open,
+    filter_open_market_candles,
+    is_forex_weekend,
+)
 from app.services.market_data.freshness import (
     DEFAULT_STALENESS_THRESHOLDS,
     TIMEFRAME_DELTAS,
@@ -22,7 +27,6 @@ from app.services.market_data.freshness import (
     get_latest_closed_candle,
     get_timeframe_delta,
     is_candle_closed,
-    is_forex_weekend,
     log_latest_candle,
 )
 
@@ -76,5 +80,7 @@ __all__ = [
     "get_timeframe_delta",
     "is_candle_closed",
     "is_forex_weekend",
+    "is_market_open",
+    "filter_open_market_candles",
     "log_latest_candle",
 ]

@@ -1,7 +1,7 @@
 """Pure detection functions for liquidity sweeps, MSS/CHoCH, FVG/OB zones, and trade geometry."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Sequence, Tuple
 
 from app.schemas.candle import CandleCreate
@@ -30,9 +30,11 @@ class EntryZone:
     entry_price: float        # Limit entry price (FVG midpoint or OB open)
     zone_high: float
     zone_low: float
-    created_bar_index: int
-    expiry_bar_index: int
+    created_time: datetime
     is_fvg: bool
+    expiry_time: Optional[datetime] = None
+    created_bar_index: Optional[int] = None
+    expiry_bar_index: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -98,7 +100,11 @@ def find_valid_sweep(
     curr_c = candles_15m[candle_idx]
     pen_req = config.min_sweep_penetration_atr * atr
 
-    for pool in pools:
+    # Prioritize major pool types (equal levels, session pools, PDH/PDL) over individual minor swing pivots
+    major_types = {"EQUAL_HIGHS", "EQUAL_LOWS", "PDH", "PDL", "ASIA_HIGH", "ASIA_LOW", "LONDON_HIGH", "LONDON_LOW"}
+    sorted_pools = sorted(pools, key=lambda p: 0 if p.pool_type in major_types else 1)
+
+    for pool in sorted_pools:
         # A pool is only eligible if it was confirmed strictly before the sweep bar
         if pool.confirm_time >= curr_c.timestamp:
             continue
@@ -283,11 +289,14 @@ def construct_entry_zone(
                     midpoint = (z_high + z_low) / 2.0
                     # Premium gate: midpoint must be >= mid_range
                     if midpoint >= mid_range:
+                        c_ts = candles_15m[k].timestamp
                         found_fvg = EntryZone(
                             zone_type="FVG",
                             entry_price=midpoint,
                             zone_high=z_high,
                             zone_low=z_low,
+                            created_time=c_ts,
+                            expiry_time=c_ts + timedelta(minutes=15 * config.zone_expiry_bars),
                             created_bar_index=k,
                             expiry_bar_index=k + config.zone_expiry_bars,
                             is_fvg=True,
@@ -302,11 +311,14 @@ def construct_entry_zone(
                     midpoint = (z_high + z_low) / 2.0
                     # Discount gate: midpoint must be <= mid_range
                     if midpoint <= mid_range:
+                        c_ts = candles_15m[k].timestamp
                         found_fvg = EntryZone(
                             zone_type="FVG",
                             entry_price=midpoint,
                             zone_high=z_high,
                             zone_low=z_low,
+                            created_time=c_ts,
+                            expiry_time=c_ts + timedelta(minutes=15 * config.zone_expiry_bars),
                             created_bar_index=k,
                             expiry_bar_index=k + config.zone_expiry_bars,
                             is_fvg=True,
@@ -324,11 +336,14 @@ def construct_entry_zone(
             if c.close >= c.open:
                 entry = c.open
                 if entry >= mid_range:
+                    c_ts = c.timestamp
                     return EntryZone(
                         zone_type="ORDER_BLOCK",
                         entry_price=entry,
                         zone_high=c.high,
                         zone_low=c.low,
+                        created_time=c_ts,
+                        expiry_time=c_ts + timedelta(minutes=15 * config.zone_expiry_bars),
                         created_bar_index=k,
                         expiry_bar_index=k + config.zone_expiry_bars,
                         is_fvg=False,
@@ -338,11 +353,14 @@ def construct_entry_zone(
             if c.close <= c.open:
                 entry = c.open
                 if entry <= mid_range:
+                    c_ts = c.timestamp
                     return EntryZone(
                         zone_type="ORDER_BLOCK",
                         entry_price=entry,
                         zone_high=c.high,
                         zone_low=c.low,
+                        created_time=c_ts,
+                        expiry_time=c_ts + timedelta(minutes=15 * config.zone_expiry_bars),
                         created_bar_index=k,
                         expiry_bar_index=k + config.zone_expiry_bars,
                         is_fvg=False,

@@ -9,6 +9,7 @@ class SweepConfig:
     """All configuration parameters for liquidity sweep detection, confirmation, and trade generation."""
 
     symbol: str = "XAU/USD"
+    lookback_bars_15m: int = 1000            # Explicit algorithm lookback window (open-market bars)
     atr_period: int = 14
     pivot_n_15m: int = 3
     pivot_n_htf: int = 2

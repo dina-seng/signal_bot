@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import zoneinfo
 
 from app.schemas.candle import CandleCreate
+from app.services.market_data.calendar import is_market_open
 
 NY_TZ = zoneinfo.ZoneInfo("America/New_York")
 UTC_TZ = timezone.utc
@@ -67,6 +68,7 @@ def resample_ohlc(
     tf: str,
     strict_completeness: bool = True,
     expected_daily_bars: int = 92,
+    calendar_aware: bool = False,
 ) -> List[CandleCreate]:
     """Pure function to resample sorted 15m candles into higher timeframe candles.
 
@@ -75,6 +77,7 @@ def resample_ohlc(
         tf: Target timeframe ("30m", "1h", "4h", "1d" or "1D").
         strict_completeness: If True, only emit buckets where all expected 15m bars exist.
         expected_daily_bars: Expected 15m bars in a 17:00 NY daily session (default 92 for 23h trading).
+        calendar_aware: If True, computes expected bars in edge buckets based on open market schedule.
 
     Returns:
         List of resampled CandleCreate objects.
@@ -105,13 +108,27 @@ def resample_ohlc(
             bars.sort(key=lambda b: _ensure_utc(b.timestamp))
 
             if strict_completeness:
-                if len(bars) != expected_count:
-                    continue
-                # Verify exact 15m spacing inside bucket
-                timestamps = [_ensure_utc(b.timestamp) for b in bars]
-                expected_timestamps = [bucket_ts + i * step_delta for i in range(expected_count)]
-                if timestamps != expected_timestamps:
-                    continue
+                if calendar_aware:
+                    expected_open_timestamps = [
+                        bucket_ts + i * step_delta
+                        for i in range(expected_count)
+                        if is_market_open(bucket_ts + i * step_delta)
+                    ]
+                    if not expected_open_timestamps:
+                        continue
+                    if len(bars) != len(expected_open_timestamps):
+                        continue
+                    timestamps = [_ensure_utc(b.timestamp) for b in bars]
+                    if timestamps != expected_open_timestamps:
+                        continue
+                else:
+                    if len(bars) != expected_count:
+                        continue
+                    # Verify exact 15m spacing inside bucket
+                    timestamps = [_ensure_utc(b.timestamp) for b in bars]
+                    expected_timestamps = [bucket_ts + i * step_delta for i in range(expected_count)]
+                    if timestamps != expected_timestamps:
+                        continue
 
             open_val = bars[0].open
             high_val = max(b.high for b in bars)

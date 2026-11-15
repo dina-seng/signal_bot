@@ -50,13 +50,13 @@ jobs:
 
       - name: Run Pytest
         env:
-          # Provide safe dummy environment variables for the CI environment
-          # so the app can import without crashing on missing secrets
+          # Safe dummy/secret environment variables for CI
           APP_ENV: testing
           DATABASE_URL: sqlite:///./test_ci.db
-          TELEGRAM_BOT_TOKEN: dummy_token_for_ci
-          TELEGRAM_CHAT_ID: 123456789
-          NEWS_API_KEY: dummy_news_key
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || 'dummy_token_for_ci' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '123456789' }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY || 'dummy_news_key' }}
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY || '' }}
           MIN_SETUP_SCORE: 75.0
           MAX_RISK_PERCENT: 0.5
           SUPPORTED_SYMBOLS: '["XAU/USD", "USD/JPY"]'
@@ -69,8 +69,8 @@ jobs:
         env:
           APP_ENV: testing
           DATABASE_URL: sqlite:///./test_ci.db
-          TELEGRAM_BOT_TOKEN: dummy_token_for_ci
-          TELEGRAM_CHAT_ID: 123456789
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || 'dummy_token_for_ci' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '123456789' }}
         run: |
           # Quick check to ensure the FastAPI app can initialize without import errors
           python -c "from app.main import app; print('✅ App imports successfully')"

@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
 from app.schemas.candle import CandleCreate
+from app.services.market_data.calendar import filter_open_market_candles
 from app.services.market_data.resample import resample_ohlc
 from app.services.sweep.config import SweepConfig
 from app.services.sweep.engine import evaluate_sweep_market
@@ -38,14 +39,14 @@ def get_session_name(dt_utc: datetime) -> str:
 @dataclass
 class PendingOrder:
     setup: SweepSetup
-    placed_bar_idx: int
+    placed_time: datetime
     entry_price: float
     stop_loss: float
     take_profit_1: float
     take_profit_2: Optional[float]
-    expiry_bar_idx: int
     initial_risk_usd: float
     direction: str
+    bars_pending: int = 0
 
 
 def run_walk_forward_backtest(
@@ -89,11 +90,12 @@ def run_walk_forward_backtest(
     open_position: Optional[TradePosition] = None
     open_position_fill_idx: Optional[int] = None
     pending_orders: List[PendingOrder] = []
-    last_exit_bar_idx = -999
+    bars_since_last_exit = 9999
 
     n_bars = len(candles_15m)
 
     for t in range(warmup_bars, n_bars):
+        bars_since_last_exit += 1
         curr_bar = candles_15m[t]
         bar_ts = curr_bar.timestamp if curr_bar.timestamp.tzinfo else curr_bar.timestamp.replace(tzinfo=timezone.utc)
         as_of = bar_ts + timedelta(minutes=15)
@@ -178,7 +180,7 @@ def run_walk_forward_backtest(
                 open_position.pnl_usd = round(net_r * risk, 2)
 
                 executed_trades.append(open_position)
-                last_exit_bar_idx = t
+                bars_since_last_exit = 0
                 open_position = None
                 open_position_fill_idx = None
 
@@ -188,8 +190,9 @@ def run_walk_forward_backtest(
         if open_position is None and pending_orders:
             remaining_orders: List[PendingOrder] = []
             for order in pending_orders:
-                # Check expiration
-                if t > order.expiry_bar_idx:
+                order.bars_pending += 1
+                # Check expiration (index-free: bars active > zone_expiry_bars)
+                if order.bars_pending > config.zone_expiry_bars:
                     # Expired without fill
                     if order.setup.setup_id in candidates_dict:
                         candidates_dict[order.setup.setup_id].skip_reason = "ZONE_EXPIRED"
@@ -242,13 +245,16 @@ def run_walk_forward_backtest(
                 pending_orders = remaining_orders
 
         # ----------------------------------------------------------------------
-        # 3. Evaluate Market at as_of
+        # 3. Evaluate Market at as_of (Windowed lookback O(window))
         # ----------------------------------------------------------------------
-        # Pass candles strictly up to bar t
+        w_start = max(0, t + 1 - config.lookback_bars_15m)
+        w_candles_15m = candles_15m[w_start : t + 1]
+        earliest_w_ts = w_candles_15m[0].timestamp
+        w_candles_1h = [c for c in candles_1h if earliest_w_ts <= c.timestamp <= bar_ts]
+
         setups = evaluate_sweep_market(
-            candles_15m[: t + 1],
-            candles_1h=candles_1h,
-            candles_4h=candles_4h,
+            w_candles_15m,
+            candles_1h=w_candles_1h,
             as_of=as_of,
             config=config,
         )
@@ -287,7 +293,7 @@ def run_walk_forward_backtest(
                     continue
 
                 # Check if cooldown is active
-                if t < last_exit_bar_idx + cooldown_bars:
+                if bars_since_last_exit <= cooldown_bars:
                     candidates_dict[s.setup_id].skip_reason = "COOLDOWN_ACTIVE"
                     continue
 
@@ -297,14 +303,14 @@ def run_walk_forward_backtest(
                     pending_orders.append(
                         PendingOrder(
                             setup=s,
-                            placed_bar_idx=t,
+                            placed_time=bar_ts,
                             entry_price=s.plan.entry_price,
                             stop_loss=s.plan.stop_loss,
                             take_profit_1=s.plan.take_profit_1,
                             take_profit_2=s.plan.take_profit_2,
-                            expiry_bar_idx=s.zone.expiry_bar_index,
                             initial_risk_usd=s.plan.risk_usd,
                             direction=s.direction,
+                            bars_pending=0,
                         )
                     )
 

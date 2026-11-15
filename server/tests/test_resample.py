@@ -115,3 +115,50 @@ def test_ny_session_daily_anchor_dst():
     dt_winter = datetime(2026, 1, 15, 22, 30, tzinfo=timezone.utc)
     session_start_winter = get_ny_session_start(dt_winter)
     assert session_start_winter == datetime(2026, 1, 15, 22, 0, tzinfo=timezone.utc)
+
+
+def test_open_close_edge_1h_buckets():
+    """Verify 1h buckets align cleanly with spot gold open/close hours (17:00 NY close, 18:00 NY open).
+    
+    Because market opens and closes on the hour (17:00 NY and 18:00 NY), all open 1h buckets
+    contain exactly 4 bars (:00, :15, :30, :45). Zero bars occur during the closed break.
+    """
+    # Friday close in Summer (20:00-21:00 UTC): 4 open bars
+    fri_close_start = datetime(2026, 7, 10, 20, 0, tzinfo=timezone.utc)
+    bars_fri = [
+        _make_15m_bar(fri_close_start + timedelta(minutes=15 * i))
+        for i in range(4)
+    ]
+    res_fri = resample_ohlc(bars_fri, "1h", strict_completeness=True)
+    assert len(res_fri) == 1
+    assert res_fri[0].timestamp == fri_close_start
+
+    # Sunday open in Summer (22:00-23:00 UTC): 4 open bars
+    sun_open_start = datetime(2026, 7, 12, 22, 0, tzinfo=timezone.utc)
+    bars_sun = [
+        _make_15m_bar(sun_open_start + timedelta(minutes=15 * i))
+        for i in range(4)
+    ]
+    res_sun = resample_ohlc(bars_sun, "1h", strict_completeness=True)
+    assert len(res_sun) == 1
+    assert res_sun[0].timestamp == sun_open_start
+
+
+def test_open_close_edge_4h_calendar_aware():
+    """Verify 4h bucket spanning Friday close with calendar_aware=True expects only open bars (4 bars)."""
+    # 2026-07-10 is a Friday. Market closes at 21:00 UTC (17:00 EDT).
+    # The 20:00 UTC 4h bucket only has open market from 20:00 to 21:00 (4 bars).
+    fri_bucket_start = datetime(2026, 7, 10, 20, 0, tzinfo=timezone.utc)
+    bars_4h_edge = [
+        _make_15m_bar(fri_bucket_start + timedelta(minutes=15 * i))
+        for i in range(4)
+    ]
+    # Without calendar awareness, strict 4h requires 16 bars and is omitted
+    res_strict = resample_ohlc(bars_4h_edge, "4h", strict_completeness=True, calendar_aware=False)
+    assert len(res_strict) == 0
+
+    # With calendar awareness, 4 open bars match the expected open schedule for that bucket
+    res_calendar = resample_ohlc(bars_4h_edge, "4h", strict_completeness=True, calendar_aware=True)
+    assert len(res_calendar) == 1
+    assert res_calendar[0].timestamp == fri_bucket_start
+
