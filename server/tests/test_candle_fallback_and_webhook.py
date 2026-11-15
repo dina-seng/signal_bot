@@ -24,9 +24,10 @@ def test_us100_quarantine_config():
 @pytest.mark.asyncio
 async def test_twelvedata_fails_loudly_no_fallback():
     """Verify TwelveDataProvider raises error without fallback when API key is missing."""
-    provider = TwelveDataProvider(api_key=None)
-    with pytest.raises(TwelveDataError, match="TWELVE_DATA_API_KEY is not configured"):
-        await provider.fetch_candles("XAU/USD", "15m", limit=10)
+    with patch.object(settings, "TWELVE_DATA_API_KEY", ""):
+        provider = TwelveDataProvider(api_key="")
+        with pytest.raises(TwelveDataError, match="TWELVE_DATA_API_KEY is not configured"):
+            await provider.fetch_candles("XAU/USD", "15m", limit=10)
 
 
 @pytest.mark.asyncio
