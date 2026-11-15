@@ -29,7 +29,7 @@ from app.core.config import settings
 from app.models.candle import Candle
 from app.models.signal import Signal
 from app.schemas.signal import SignalDirection
-from app.services.market_data import YahooFinanceProvider, IngestionService
+from app.services.market_data import TwelveDataProvider, IngestionService
 from app.services.news import ForexFactoryProvider, NewsIngestionService
 from app.services.signals import SignalGenerator
 
@@ -48,7 +48,7 @@ async def run_signals_verification():
     print("\n[1/5] Initializing Database & Synchronizing Live Market/News Data...")
     init_db()
     db = SessionLocal()
-    market_ingestion = IngestionService(provider=YahooFinanceProvider(), db=db)
+    market_ingestion = IngestionService(provider=TwelveDataProvider(api_key=settings.TWELVE_DATA_API_KEY), db=db)
     news_ingestion = NewsIngestionService(provider=ForexFactoryProvider(), db=db)
 
     symbols = ["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]

@@ -129,3 +129,40 @@ def test_end_to_end_import_dukascopy(tmp_path):
     assert audit_15m["total_bars"] == 2
     assert audit_15m["misaligned"] == 0
     assert audit_15m["overlaps"] == 0
+
+
+def test_import_directory_without_csv_files_raises(tmp_path):
+    """Verify specifying a directory with no CSV files raises actionable ValueError."""
+    empty_dir = tmp_path / "empty_dir"
+    empty_dir.mkdir()
+
+    with pytest.raises(ValueError, match="is a directory containing no .csv files"):
+        parse_and_validate_csv(str(empty_dir))
+
+
+def test_import_directory_with_multiple_csv_files(tmp_path):
+    """Verify specifying a directory with multiple CSV files parses and combines all bars."""
+    csv_dir = tmp_path / "csv_chunks"
+    csv_dir.mkdir()
+
+    csv1 = csv_dir / "part1.csv"
+    csv1.write_text(
+        "Gmt time,Open,High,Low,Close,Volume\n"
+        "01.08.2026 10:00:00.000,2500.0,2505.0,2495.0,2502.0,10.0\n"
+        "01.08.2026 10:01:00.000,2502.0,2506.0,2501.0,2504.0,10.0\n",
+        encoding="utf-8",
+    )
+
+    csv2 = csv_dir / "part2.csv"
+    csv2.write_text(
+        "Gmt time,Open,High,Low,Close,Volume\n"
+        "01.08.2026 10:02:00.000,2504.0,2507.0,2502.0,2505.0,10.0\n",
+        encoding="utf-8",
+    )
+
+    clean_bars, rejected = parse_and_validate_csv(str(csv_dir))
+    assert len(clean_bars) == 3
+    assert rejected == 0
+    assert clean_bars[0]["timestamp"].minute == 0
+    assert clean_bars[1]["timestamp"].minute == 1
+    assert clean_bars[2]["timestamp"].minute == 2

@@ -310,44 +310,36 @@ class AutomatedMarketScanner:
                 f"on timeframes: {target_timeframes}"
             )
 
-            # 1. Ingest / Sync Market Data
-            logger.info("Market data ingestion started")
-            sync_timeframes = set(target_timeframes)
-            if "1h" in target_timeframes or "15m" in target_timeframes:
-                sync_timeframes.update(["15m", "1h", "4h"])
+            # 1. Ingest / Sync Market Data: 15m ONLY (~10 latest bars) from Twelve Data
+            logger.info("Market data ingestion started: fetching latest ~10 bars of 15m only from Twelve Data")
+            
+            async def _sync_symbol_15m(sym: str) -> None:
+                """Fetch latest ~10 bars of 15m only, with per-task DB session and local HTF resampling."""
+                task_db = None
+                try:
+                    task_db = SessionLocal()
+                    ingest = self.market_ingestion or IngestionService(
+                        provider=self.market_provider, db=task_db
+                    )
+                    ingest.db = task_db
+                    await ingest.sync_symbol_timeframe(symbol=sym, timeframe="15m", limit=10)
+                    task_db.commit()
+                except Exception as e:
+                    logger.error(f"Market data ingestion failed for {sym} [15m]: {e}", exc_info=True)
+                    if task_db:
+                        task_db.rollback()
+                    raise
+                finally:
+                    if task_db:
+                        task_db.close()
 
-            # Semaphore(3) caps concurrent API calls to Twelve Data to avoid rate limit breaches
-            api_semaphore = asyncio.Semaphore(3)
-
-            async def _sync_symbol_tf(sym: str, tf: str) -> None:
-                """Each coroutine owns its own isolated DB session to prevent cross-coroutine rollbacks."""
-                async with api_semaphore:
-                    task_db = None
-                    try:
-                        task_db = SessionLocal()
-                        ingest = self.market_ingestion or IngestionService(
-                            provider=self.market_provider, db=task_db
-                        )
-                        ingest.db = task_db
-                        await ingest.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
-                        task_db.commit()
-                    except Exception as e:
-                        logger.error(f"Market data ingestion failed for {sym} [{tf}]: {e}")
-                        if task_db:
-                            task_db.rollback()
-                    finally:
-                        if task_db:
-                            task_db.close()
-
-            ingestion_tasks = [
-                _sync_symbol_tf(sym, tf)
-                for sym in target_symbols
-                for tf in sync_timeframes
-            ]
+            ingestion_tasks = [_sync_symbol_15m(sym) for sym in target_symbols]
             results = await asyncio.gather(*ingestion_tasks, return_exceptions=True)
-            for r in results:
+            for idx, r in enumerate(results):
                 if isinstance(r, Exception):
-                    logger.error("Ingestion task failed", exc_info=r)
+                    logger.error(f"Scheduled 15m ingestion task {idx} failed with exception: {r}", exc_info=r)
+                else:
+                    logger.info(f"Scheduled 15m ingestion task {idx} completed successfully: {r}")
 
             logger.info("Market data ingestion completed")
 

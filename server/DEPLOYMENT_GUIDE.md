@@ -29,7 +29,7 @@ This guide provides step-by-step instructions to configure your Telegram Bot, co
 5. Choose a **username** ending in `bot` (e.g., `my_forex_signal_pro_bot`).
 6. BotFather will output your **HTTP API Token**. It looks like:
    ```text
-   7123456789:AAFlkB1234567890abcdefGhIjKlMnOpQrS
+   <YOUR_BOT_TOKEN>
    ```
    👉 **Copy this token** — this is your `TELEGRAM_BOT_TOKEN`.
 
@@ -135,8 +135,8 @@ NEWS_API_KEY=
 # ==========================================
 # Telegram Bot Configuration
 # ==========================================
-TELEGRAM_BOT_TOKEN=7123456789:AAFlkB1234567890abcdefGhIjKlMnOpQrS
-TELEGRAM_CHAT_ID=123456789
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_CHAT_ID=your_telegram_chat_id_here
 
 # ==========================================
 # Automated Background Scanner & Paper Trading

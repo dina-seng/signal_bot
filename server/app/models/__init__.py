@@ -9,6 +9,7 @@ from app.models.signal import Signal
 from app.models.signal_candidate import SignalCandidate
 from app.models.backtest import BacktestRun, BacktestTrade
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
+from app.models.api_usage import ApiUsage
 
 __all__ = [
     "Base",
@@ -25,4 +26,5 @@ __all__ = [
     "VirtualAccount",
     "PaperTrade",
     "AccountTransaction",
+    "ApiUsage",
 ]

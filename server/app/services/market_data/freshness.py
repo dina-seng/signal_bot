@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from app.core.logging import logger
 from app.schemas.candle import CandleBase
+from app.services.market_data.calendar import is_market_open, is_forex_weekend
 
 
 TIMEFRAME_DELTAS: Dict[str, timedelta] = {
@@ -194,24 +195,24 @@ def check_data_staleness(
     age_seconds = max(0.0, (ref_time - latest_close).total_seconds())
     age_hours = age_seconds / 3600.0
 
-    # If it is currently a Forex weekend and the latest candle is from Friday close (after 18:00 UTC)
-    if weekend:
-        if latest_ts.weekday() == 4 and latest_ts.hour >= 18:
-            return StalenessCheckResult(
-                is_stale=False,
-                symbol=symbol,
-                timeframe=timeframe,
-                latest_candle_time=latest_ts,
-                latest_close_time=latest_close,
-                age_seconds=age_seconds,
-                age_hours=age_hours,
-                max_allowed_hours=max_allowed_hours,
-                is_weekend=True,
-                message=(
-                    f"Market is closed for weekend. Latest candle from Friday close "
-                    f"({latest_ts.strftime('%Y-%m-%d %H:%M UTC')}) is valid."
-                ),
-            )
+    # Check if market is currently closed (weekend or daily break)
+    market_closed = not is_market_open(ref_time)
+    if market_closed:
+        return StalenessCheckResult(
+            is_stale=False,
+            symbol=symbol,
+            timeframe=timeframe,
+            latest_candle_time=latest_ts,
+            latest_close_time=latest_close,
+            age_seconds=age_seconds,
+            age_hours=age_hours,
+            max_allowed_hours=max_allowed_hours,
+            is_weekend=weekend,
+            message=(
+                f"Market is closed (weekend or daily break). Latest candle "
+                f"({latest_ts.strftime('%Y-%m-%d %H:%M UTC')}) is valid."
+            ),
+        )
 
     is_stale = age_seconds > threshold_delta.total_seconds()
 

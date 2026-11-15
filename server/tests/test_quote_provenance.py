@@ -9,8 +9,12 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.schemas.market import QuoteResponse
 from app.services.market_data.mock_provider import MockMarketDataProvider
-from app.services.market_data.twelvedata_provider import TwelveDataProvider
-from app.services.market_data.yfinance_provider import YahooFinanceProvider
+from app.services.market_data.twelvedata_provider import (
+    TwelveDataProvider,
+    TwelveDataError,
+    TwelveDataRateLimitError,
+    TokenBucketRateLimiter,
+)
 from app.api.v1.market import _quote_cache, _resolve_quote
 from app.main import app
 
@@ -47,69 +51,39 @@ def test_quote_response_provenance_fields():
 
 @pytest.mark.asyncio
 async def test_twelvedata_rejects_mismatched_echoed_symbol():
-    """Verify TwelveDataProvider rejects a quote if the echoed symbol does not match the requested symbol."""
-    mock_yahoo = AsyncMock(spec=YahooFinanceProvider)
-    sample_yahoo_quote = QuoteResponse(
-        symbol="XAU/USD",
-        price=2685.00,
-        timestamp=datetime.now(timezone.utc),
-        provider="yahoo",
-        provider_symbol="GC=F",
-        age_seconds=2.0,
-        is_stale=False,
-        degraded=True,
-        fallback_reason="TwelveData provider returned no quote",
-    )
-    mock_yahoo.fetch_quote.return_value = sample_yahoo_quote
+    """Verify TwelveDataProvider raises TwelveDataError if the echoed symbol does not match XAU/USD."""
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "symbol": "EUR/USD",  # Mismatched symbol returned by upstream
+        "close": "1.1050",
+        "timestamp": int(datetime.now(timezone.utc).timestamp()),
+    }
+    mock_client.get.return_value = mock_resp
 
-    provider = TwelveDataProvider(api_key="dummy_key", fallback_provider=mock_yahoo)
+    limiter = TokenBucketRateLimiter(rate_per_minute=100.0)
+    provider = TwelveDataProvider(api_key="test_key", http_client=mock_client, rate_limiter=limiter)
 
-    with patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock) as mock_get:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "symbol": "EUR/USD",  # Mismatched symbol returned by upstream
-            "close": "1.1050",
-            "timestamp": int(datetime.now(timezone.utc).timestamp()),
-        }
-        mock_get.return_value = mock_resp
-
-        quote = await provider.fetch_quote("XAU/USD")
-        assert quote.provider == "yahoo"
-        assert quote.fallback_reason is not None
-        assert "Twelve Data echoed symbol mismatch" in quote.fallback_reason
+    with pytest.raises(TwelveDataError, match="Echoed symbol mismatch"):
+        await provider.fetch_quote("XAU/USD")
 
 
 @pytest.mark.asyncio
-async def test_quote_fallback_sets_loud_warning_and_fallback_reason():
-    """Verify fallback from TwelveData to Yahoo logs a warning and marks degraded=True with reason."""
-    mock_yahoo = AsyncMock(spec=YahooFinanceProvider)
-    sample_yahoo_quote = QuoteResponse(
-        symbol="XAU/USD",
-        price=2685.00,
-        timestamp=datetime.now(timezone.utc),
-        provider="yahoo",
-        provider_symbol="GC=F",
-        age_seconds=5.0,
-        is_stale=False,
-        degraded=True,
-        fallback_reason="TwelveData API returned error 429",
-    )
-    mock_yahoo.fetch_quote.return_value = sample_yahoo_quote
+async def test_quote_rate_limit_fails_loudly():
+    """Verify TwelveData quote 429 fails loudly without falling back."""
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 429
+    mock_resp.text = "Rate limit reached"
+    mock_client.get.return_value = mock_resp
 
-    provider = TwelveDataProvider(api_key="test_key", fallback_provider=mock_yahoo)
+    limiter = TokenBucketRateLimiter(rate_per_minute=100.0)
+    provider = TwelveDataProvider(api_key="test_key", http_client=mock_client, rate_limiter=limiter)
 
-    with patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock) as mock_get:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 429
-        mock_resp.text = "Rate limit reached"
-        mock_get.return_value = mock_resp
-
-        quote = await provider.fetch_quote("XAU/USD")
-        assert quote.provider == "yahoo"
-        assert quote.degraded is True
-        assert quote.fallback_reason is not None
-        assert "Twelve Data API returned 429" in quote.fallback_reason
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(TwelveDataRateLimitError):
+            await provider.fetch_quote("XAU/USD")
 
 
 @pytest.mark.asyncio

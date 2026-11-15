@@ -164,6 +164,7 @@ class IngestionService:
                 low=c.low,
                 close=c.close,
                 volume=c.volume,
+                source="twelvedata",
             )
             to_insert.append(candle_model)
 
@@ -260,7 +261,7 @@ class IngestionService:
                     f"falling back to API fetch: {cache_err}"
                 )
 
-        # ── Provider API Fetch Path ───────────────────────────────────────────────
+        # ── Provider API Fetch Path (Twelve Data ONLY, no fallbacks) ──────────────
         try:
             candles = await self.provider.fetch_candles(
                 symbol=symbol,
@@ -272,41 +273,17 @@ class IngestionService:
             if not candles:
                 logger.warning(
                     f"Market data provider returned 0 candles for {symbol} [{timeframe}]. "
-                    f"Attempting fallback to YahooFinanceProvider..."
+                    "Data marked STALE. Ingestion cycle completed with 0 bars."
                 )
-                from app.services.market_data.yfinance_provider import YahooFinanceProvider
-                fallback_provider = YahooFinanceProvider()
-                candles = await fallback_provider.fetch_candles(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    start_time=start_time,
-                    end_time=end_time,
-                    limit=limit,
-                )
+            report = self.ingest_candles(candles, symbol, timeframe)
 
-            if not candles:
-                logger.warning(
-                    f"All market data providers returned 0 candles for {symbol} [{timeframe}]. "
-                    f"Ingestion cycle skipped defensively."
-                )
-            return self.ingest_candles(candles, symbol, timeframe)
+            # If 15m was ingested, automatically resample and persist 30m, 1h, 4h
+            if timeframe.lower() == "15m" and report.inserted_count > 0:
+                self._resample_and_persist_htf(symbol)
+
+            return report
         except Exception as e:
-            logger.error(f"Ingestion sync failed for {symbol} [{timeframe}]: {e}", exc_info=True)
-            try:
-                from app.services.market_data.yfinance_provider import YahooFinanceProvider
-                fallback_provider = YahooFinanceProvider()
-                candles = await fallback_provider.fetch_candles(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    start_time=start_time,
-                    end_time=end_time,
-                    limit=limit,
-                )
-                if candles:
-                    return self.ingest_candles(candles, symbol, timeframe)
-            except Exception as fb_e:
-                logger.error(f"Fallback ingestion failed for {symbol} [{timeframe}]: {fb_e}")
-
+            logger.error(f"Twelve Data ingestion sync failed for {symbol} [{timeframe}]: {e}", exc_info=True)
             return IngestionReport(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -316,6 +293,42 @@ class IngestionService:
                 invalid_candles_count=0,
                 gaps_detected=[],
             )
+
+    def _resample_and_persist_htf(self, symbol: str) -> None:
+        """Derive and persist 30m, 1h, and 4h candles locally from stored 15m bars."""
+        from app.services.market_data.resample import resample_ohlc
+        try:
+            # Query recent 15m bars from DB
+            db_15m = self.db.scalars(
+                select(Candle)
+                .where(Candle.symbol == symbol, Candle.timeframe == "15m")
+                .order_by(desc(Candle.timestamp))
+                .limit(200)
+            ).all()
+
+            if not db_15m:
+                return
+
+            candles_15m = [
+                CandleCreate(
+                    symbol=c.symbol,
+                    timeframe="15m",
+                    timestamp=ensure_utc_datetime(c.timestamp),
+                    open=c.open,
+                    high=c.high,
+                    low=c.low,
+                    close=c.close,
+                    volume=c.volume,
+                )
+                for c in reversed(db_15m)
+            ]
+
+            for htf in ("30m", "1h", "4h"):
+                resampled = resample_ohlc(candles_15m, htf, strict_completeness=True)
+                if resampled:
+                    self.ingest_candles(resampled, symbol, htf)
+        except Exception as resample_err:
+            logger.warning(f"Failed to locally resample HTF candles for {symbol}: {resample_err}")
 
     def get_fresh_candles_from_db(
         self,

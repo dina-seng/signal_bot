@@ -25,9 +25,12 @@ from app.services.news import (
 )
 
 
-def get_provider() -> BaseMarketDataProvider:
-    """Dependency for market data provider."""
-    return get_market_data_provider(settings.MARKET_DATA_PROVIDER)
+def get_provider(request: Request = None) -> TwelveDataProvider:
+    """Dependency for market data provider injecting shared http_client from app.state."""
+    http_client = None
+    if request is not None and hasattr(request, "app") and hasattr(request.app, "state"):
+        http_client = getattr(request.app.state, "http_client", None)
+    return get_market_data_provider("twelvedata", http_client=http_client)
 
 
 def get_ingestion_service(
