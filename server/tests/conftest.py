@@ -2,6 +2,10 @@
 
 import os
 
+_raw_env_url = os.environ.get("DATABASE_URL", "")
+if "postgres" in _raw_env_url.lower() or "postgresql" in _raw_env_url.lower():
+    raise RuntimeError(f"CRITICAL GUARD: DATABASE_URL points to postgres during tests! ({_raw_env_url})")
+
 # HERMETIC TEST DATABASE ISOLATION:
 # Force tests to NEVER connect to Neon production DATABASE_URL.
 # Set DATABASE_URL to in-memory SQLite before application modules are loaded.
@@ -41,11 +45,26 @@ from app.main import app
 
 @pytest.fixture(autouse=True)
 def verify_test_database_isolation():
-    """Safety check verifying tests NEVER connect to production Neon database."""
-    assert "neon.tech" not in str(db_core.engine.url), (
+    """Safety check verifying tests NEVER connect to production Neon database.
+    
+    Hard Rule 6: Tests must be hermetic: temporary SQLite, never Neon.
+    Add a conftest guard that fails if DATABASE_URL points to postgres during tests.
+    """
+    raw_env_url = os.environ.get("DATABASE_URL", "").lower()
+    engine_url = str(db_core.engine.url).lower()
+    settings_url = str(getattr(settings, "DATABASE_URL", "")).lower()
+
+    if "postgres" in raw_env_url or "postgresql" in raw_env_url:
+        pytest.fail(f"CRITICAL GUARD: DATABASE_URL points to postgres during tests! ({os.environ.get('DATABASE_URL')})")
+    if "postgres" in engine_url or "postgresql" in engine_url:
+        pytest.fail(f"CRITICAL GUARD: engine.url points to postgres during tests! ({db_core.engine.url})")
+    if "postgres" in settings_url or "postgresql" in settings_url:
+        pytest.fail(f"CRITICAL GUARD: settings.DATABASE_URL points to postgres during tests! ({settings.DATABASE_URL})")
+
+    assert "neon.tech" not in engine_url, (
         "CRITICAL ERROR: Tests attempted to connect to production Neon database!"
     )
-    assert "sqlite" in str(db_core.engine.url), (
+    assert "sqlite" in engine_url, (
         "CRITICAL ERROR: Tests must run on isolated SQLite database!"
     )
 

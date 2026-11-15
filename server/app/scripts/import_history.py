@@ -103,21 +103,12 @@ def align_timestamp(dt: datetime, tf: str) -> datetime:
         return datetime(year, month, day, hour, minute, 0, tzinfo=timezone.utc)
 
 
-def parse_and_validate_csv(
-    csv_path: str,
-) -> Tuple[List[Dict[str, Any]], int]:
-    """Parse 1-minute CSV file and reject rows violating price invariants.
-    
-    Returns:
-        (clean_1m_bars, rejected_count)
-    """
+def _parse_single_csv_file(csv_file_path: str) -> Tuple[List[Dict[str, Any]], int]:
+    """Parse a single 1-minute CSV file and reject rows violating price invariants."""
     clean_bars: List[Dict[str, Any]] = []
     rejected_count = 0
 
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"CSV file not found at: {csv_path}")
-
-    with open(csv_path, mode="r", encoding="utf-8-sig") as f:
+    with open(csv_file_path, mode="r", encoding="utf-8-sig") as f:
         reader = csv.reader(f)
         header = next(reader, None)
         if not header:
@@ -197,6 +188,57 @@ def parse_and_validate_csv(
                 "close": cl,
                 "volume": vol,
             })
+
+    return clean_bars, rejected_count
+
+
+def parse_and_validate_csv(
+    csv_path: str,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Parse 1-minute CSV file(s) and reject rows violating price invariants.
+    
+    Accepts either:
+    1. A path to a single .csv file.
+    2. A directory containing one or more .csv files.
+    
+    Returns:
+        (clean_1m_bars, rejected_count)
+    """
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Path not found: {csv_path}")
+
+    if os.path.isdir(csv_path):
+        csv_files = [
+            os.path.join(csv_path, f)
+            for f in sorted(os.listdir(csv_path))
+            if f.lower().endswith(".csv")
+        ]
+        if not csv_files:
+            raise ValueError(
+                f"Path '{csv_path}' is a directory containing no .csv files.\n"
+                f"Please specify the path to your downloaded 1-minute CSV file, for example:\n"
+                f"  python -m app.scripts.import_history --csv D:/trade/xauusd_1m.csv --timeframe-source dukascopy\n"
+                f"Or place your .csv file inside '{csv_path}'."
+            )
+        
+        all_bars: List[Dict[str, Any]] = []
+        total_rejected = 0
+        for cf in csv_files:
+            bars, rej = _parse_single_csv_file(cf)
+            all_bars.extend(bars)
+            total_rejected += rej
+        
+        all_bars.sort(key=lambda b: b["timestamp"])
+        deduped: List[Dict[str, Any]] = []
+        seen_ts = set()
+        for b in all_bars:
+            t = b["timestamp"]
+            if t not in seen_ts:
+                seen_ts.add(t)
+                deduped.append(b)
+        return deduped, total_rejected
+
+    clean_bars, rejected_count = _parse_single_csv_file(csv_path)
 
     # Sort chronologically and deduplicate 1m bars by timestamp
     clean_bars.sort(key=lambda b: b["timestamp"])
