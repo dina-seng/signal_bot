@@ -25,9 +25,18 @@ class MarketHealthResponse(BaseModel):
     server_time_utc: datetime
     scanner_enabled: Optional[bool] = None
     scanner_running: Optional[bool] = None
+    scheduler_running: Optional[bool] = None
     scanner_interval_minutes: Optional[int] = None
     last_scan: Optional[datetime] = None
     next_scan: Optional[datetime] = None
+    last_closed_15m_bar_time: Optional[datetime] = None
+    candle_age_seconds: Optional[float] = None
+    is_data_fresh: bool = False
+    data_freshness_status: str = "UNKNOWN"
+    credits_used_today: int = 0
+    credits_max_budget: int = 780
+    last_sync_status: Optional[str] = None
+    last_sync_error: Optional[str] = None
 
 
 class IngestionRequest(BaseModel):

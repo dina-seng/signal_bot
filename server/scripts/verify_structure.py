@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from app.core.database import SessionLocal, init_db
 from app.core.config import settings
-from app.services.market_data import YahooFinanceProvider, IngestionService
+from app.services.market_data import TwelveDataProvider, IngestionService
 from app.services.structure import (
     SwingDetector,
     StructureEngine,
@@ -52,7 +52,7 @@ async def run_structure_verification():
     print("\n[1/5] Initializing Database & Ensuring Historical Market Data...")
     init_db()
     db = SessionLocal()
-    provider = YahooFinanceProvider()
+    provider = TwelveDataProvider(api_key=settings.TWELVE_DATA_API_KEY)
     ingestion = IngestionService(provider=provider, db=db)
 
     symbols = ["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]

@@ -58,6 +58,7 @@ def init_db():
     import app.models.structure
     import app.models.liquidity
     import app.models.backtest
+    import app.models.api_usage
 
     logger.info("Initializing database tables...")
     try:

@@ -19,6 +19,7 @@ import app.models.signal_candidate
 import app.models.structure
 import app.models.liquidity
 import app.models.backtest
+import app.models.api_usage
 
 config = context.config
 

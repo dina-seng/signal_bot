@@ -1,4 +1,4 @@
-"""Test candle ingestion fallback to Yahoo Finance, US100 quarantine, and non-blocking Telegram webhook."""
+"""Test US100 quarantine and non-blocking Telegram webhook."""
 
 import pytest
 from unittest.mock import AsyncMock, patch
@@ -8,8 +8,7 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.models.candle import Candle
 from app.schemas.candle import CandleCreate
-from app.services.market_data.twelvedata_provider import TwelveDataProvider
-from app.services.market_data.yfinance_provider import YahooFinanceProvider
+from app.services.market_data.twelvedata_provider import TwelveDataProvider, TwelveDataError
 from app.services.market_data.mock_provider import MockMarketDataProvider
 from app.services.telegram.command_handler import TelegramCommandHandler
 from app.schemas.telegram import TelegramCommandRequest
@@ -22,35 +21,12 @@ def test_us100_quarantine_config():
     assert settings.SUPPORTED_SYMBOLS == ["XAU/USD"]
 
 
-def test_yahoofinance_provider_ticker_candidates():
-    """Verify YahooFinanceProvider maps gold to GC=F and XAUUSD=X."""
-    provider = YahooFinanceProvider()
-    candidates = provider._get_ticker_candidates("XAU/USD")
-    assert set(candidates) == {"GC=F", "XAUUSD=X"}
-
-
 @pytest.mark.asyncio
-async def test_twelvedata_fallback_to_yahoo_on_zero_candles():
-    """Verify TwelveDataProvider falls back to YahooFinanceProvider when 0 candles or error."""
-    mock_yahoo = AsyncMock(spec=YahooFinanceProvider)
-    sample_candle = CandleCreate(
-        symbol="XAU/USD",
-        timeframe="15m",
-        timestamp=datetime.now(timezone.utc) - timedelta(minutes=15),
-        open=2650.0,
-        high=2655.0,
-        low=2648.0,
-        close=2652.0,
-        volume=100.0,
-    )
-    mock_yahoo.fetch_candles.return_value = [sample_candle]
-
-    provider = TwelveDataProvider(api_key=None, fallback_provider=mock_yahoo)
-    candles = await provider.fetch_candles("XAU/USD", "15m", limit=10)
-
-    assert len(candles) == 1
-    assert candles[0].symbol == "XAU/USD"
-    mock_yahoo.fetch_candles.assert_called_once()
+async def test_twelvedata_fails_loudly_no_fallback():
+    """Verify TwelveDataProvider raises error without fallback when API key is missing."""
+    provider = TwelveDataProvider(api_key=None)
+    with pytest.raises(TwelveDataError, match="TWELVE_DATA_API_KEY is not configured"):
+        await provider.fetch_candles("XAU/USD", "15m", limit=10)
 
 
 @pytest.mark.asyncio

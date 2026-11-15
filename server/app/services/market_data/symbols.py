@@ -130,22 +130,6 @@ def get_provider_symbol(symbol: str, provider: str, yahoo_gold_symbol: Optional[
             raise UnknownSymbolError(f"TwelveData mapping not found for symbol '{canonical}'")
         return twelve_map[canonical]
         
-    elif provider_key in ("yfinance", "yahoo", "yahoofinance"):
-        gold_ticker = yahoo_gold_symbol or "XAUUSD=X"
-        yahoo_map = {
-            "XAU/USD": gold_ticker,
-            "EUR/USD": "EURUSD=X",
-            "USD/JPY": "JPY=X",
-            "GBP/USD": "GBPUSD=X",
-            "US100": "NQ=F",
-        }
-        if canonical not in yahoo_map:
-            raise UnknownSymbolError(f"Yahoo mapping not found for symbol '{canonical}'")
-        mapped = yahoo_map[canonical]
-        if "/" in mapped:
-            raise UnknownSymbolError(f"Yahoo ticker '{mapped}' contains invalid character '/'")
-        return mapped
-        
     elif provider_key == "mock":
         mock_map = {
             "XAU/USD": "MOCK_XAUUSD",

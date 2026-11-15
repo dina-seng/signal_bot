@@ -1,14 +1,16 @@
 """Health and System Status Endpoints."""
 
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
-from app.core.database import get_db
+from sqlalchemy import select, func, desc
+from app.core.database import get_db, SessionLocal
 from app.core.config import settings
 from app.models.candle import Candle
 from app.schemas.market import MarketHealthResponse
+from app.services.market_data.freshness import ensure_utc_datetime, is_forex_weekend
+from app.services.market_data.twelvedata_provider import get_daily_usage
 
 router = APIRouter(tags=["Health & Status"])
 
@@ -18,9 +20,9 @@ def get_health_status(db: Session = Depends(get_db)):
     """Check system health, database connection, and candle store status."""
     db_connected = True
     counts_map: Dict[str, Dict[str, int]] = {}
+    last_15m_bar: Optional[Candle] = None
 
     try:
-        # Query candle count per symbol and timeframe
         stmt = select(
             Candle.symbol, Candle.timeframe, func.count(Candle.id)
         ).group_by(Candle.symbol, Candle.timeframe)
@@ -36,9 +38,18 @@ def get_health_status(db: Session = Depends(get_db)):
                 counts_map[symbol] = {}
             counts_map[symbol][tf] = count
 
+        # Query latest closed 15m bar for XAU/USD
+        last_15m_bar = db.scalars(
+            select(Candle)
+            .where(Candle.symbol == "XAU/USD", Candle.timeframe == "15m")
+            .order_by(desc(Candle.timestamp))
+            .limit(1)
+        ).first()
+
     except Exception:
         db_connected = False
 
+    # Scheduler info
     scanner_running = False
     last_scan = None
     next_scan = None
@@ -51,17 +62,58 @@ def get_health_status(db: Session = Depends(get_db)):
     except Exception:
         pass
 
+    # API Usage today
+    usage_info = get_daily_usage(SessionLocal)
+    credits_today = usage_info.get("calls_today", 0)
+
+    # Freshness evaluation
+    now_utc = datetime.now(timezone.utc)
+    last_bar_time = None
+    age_seconds = None
+    is_fresh = False
+    freshness_status = "STALE"
+
+    if last_15m_bar and last_15m_bar.timestamp:
+        last_bar_time = ensure_utc_datetime(last_15m_bar.timestamp)
+        close_time = last_bar_time + (last_15m_bar.timestamp - last_15m_bar.timestamp + (datetime(2000, 1, 1, 0, 15) - datetime(2000, 1, 1, 0, 0)))
+        age_seconds = max(0.0, (now_utc - close_time).total_seconds())
+
+        weekend = is_forex_weekend(now_utc)
+        if weekend:
+            # During weekend/break, if Friday close exists, data is not stale
+            is_fresh = True
+            freshness_status = "MARKET_CLOSED"
+        elif age_seconds <= 1800.0:  # Fresh if bar is <= 30 minutes old
+            is_fresh = True
+            freshness_status = "FRESH"
+        else:
+            is_fresh = False
+            freshness_status = "STALE"
+
+    overall_status = "healthy"
+    if not db_connected or credits_today >= 780 or (not is_fresh and freshness_status == "STALE"):
+        overall_status = "degraded"
+
     return MarketHealthResponse(
-        status="healthy" if db_connected else "degraded",
+        status=overall_status,
         database_connected=db_connected,
         app_version="1.0.0",
         supported_symbols=settings.SUPPORTED_SYMBOLS,
         supported_timeframes=settings.SUPPORTED_TIMEFRAMES,
         candle_counts=counts_map,
-        server_time_utc=datetime.now(timezone.utc),
+        server_time_utc=now_utc,
         scanner_enabled=settings.SCANNER_ENABLED,
         scanner_running=scanner_running,
+        scheduler_running=scanner_running,
         scanner_interval_minutes=settings.SCANNER_INTERVAL_MINUTES,
         last_scan=last_scan,
         next_scan=next_scan,
+        last_closed_15m_bar_time=last_bar_time,
+        candle_age_seconds=round(age_seconds, 1) if age_seconds is not None else None,
+        is_data_fresh=is_fresh,
+        data_freshness_status=freshness_status,
+        credits_used_today=credits_today,
+        credits_max_budget=780,
+        last_sync_status="ok" if is_fresh else "sync_needed",
+        last_sync_error=None,
     )

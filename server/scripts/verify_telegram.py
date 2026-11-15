@@ -32,7 +32,7 @@ from app.schemas.signal import (
     SignalStatus,
 )
 from app.schemas.telegram import TelegramCommandRequest, TelegramMessageRequest
-from app.services.market_data import YahooFinanceProvider, IngestionService
+from app.services.market_data import TwelveDataProvider, IngestionService
 from app.services.telegram import (
     MockTelegramClient,
     TelegramBotService,
@@ -58,7 +58,7 @@ async def run_telegram_verification():
     print_section("[1/5] Initializing Database & Synchronizing Market Data")
     init_db()
     db = SessionLocal()
-    market_ingestion = IngestionService(provider=YahooFinanceProvider(), db=db)
+    market_ingestion = IngestionService(provider=TwelveDataProvider(api_key=settings.TWELVE_DATA_API_KEY), db=db)
 
     for sym in ["EUR/USD", "GBP/USD", "USD/JPY", "XAU/USD"]:
         count = db.query(Candle).filter_by(symbol=sym, timeframe="1h").count()
