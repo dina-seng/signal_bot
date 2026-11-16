@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import html
 from typing import Any, List, Optional, Union
 
+from app.core.config import settings
 from app.services.market_data.symbols import (
     UnknownSymbolError,
     calculate_pips,
@@ -69,16 +70,27 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
     else:
         dir_str = "N/A"
 
-    if dir_str == "BUY":
-        dir_badge = "🟢 <b>STRONG BUY (LONG)</b>"
-    elif dir_str == "SELL":
-        dir_badge = "🔴 <b>STRONG SELL (SHORT)</b>"
-    else:
-        dir_badge = f"⚪ <b>{escape_html(dir_str)}</b>"
-
     strategy_label = getattr(signal, "strategy_name", None) or "N/A"
     score_val = getattr(signal, "setup_score", None)
     score_str = f"{score_val:.1f} / 100" if score_val is not None else "N/A"
+
+    meta = getattr(signal, "metadata", {}) or {}
+    setup_state_str = meta.get("setup_state") if isinstance(meta, dict) else None
+
+    # Do not print "STRONG BUY" unless setup_state is CONFIRMED_SETUP and score is >= threshold
+    min_score = getattr(settings, "MIN_SETUP_SCORE", 75.0)
+    is_confirmed_strong = (
+        (setup_state_str == "CONFIRMED_SETUP" or setup_state_str is None)
+        and score_val is not None
+        and score_val >= min_score
+    )
+
+    if dir_str == "BUY":
+        dir_badge = "🟢 <b>STRONG BUY (LONG)</b>" if is_confirmed_strong else "🟢 <b>BUY (LONG)</b>"
+    elif dir_str == "SELL":
+        dir_badge = "🔴 <b>STRONG SELL (SHORT)</b>" if is_confirmed_strong else "🔴 <b>SELL (SHORT)</b>"
+    else:
+        dir_badge = f"⚪ <b>{escape_html(dir_str)}</b>"
 
     # 2. Strategy & Header
     lines = [
@@ -91,6 +103,21 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
         f"⭐ <b>Confluence Score:</b> <code>{score_str}</code>",
     ]
 
+    if setup_state_str:
+        lines.append(f"📌 <b>Setup State:</b> <code>{escape_html(setup_state_str)}</code>")
+
+    session_name = meta.get("session_name") if isinstance(meta, dict) else None
+    if session_name:
+        lines.append(f"🌐 <b>Session:</b> <code>{escape_html(session_name)}</code>")
+
+    sweep_level_type = meta.get("sweep_level_type") if isinstance(meta, dict) else None
+    if sweep_level_type:
+        lines.append(f"🌊 <b>Swept Level:</b> <code>{escape_html(sweep_level_type)}</code>")
+
+    nearest_obs = meta.get("nearest_obstacle") if isinstance(meta, dict) else None
+    if nearest_obs:
+        lines.append(f"🚧 <b>Nearest Obstacle:</b> <code>{escape_html(nearest_obs)}</code>")
+
     # 3. Market Regime & HTF Context
     regime = ctx.regime
     if not regime:
@@ -102,9 +129,11 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
             regime = "TREND FOLLOWING"
     lines.append(f"🔄 <b>Market Regime:</b> <code>{escape_html(regime)}</code>")
 
+    htf_source = meta.get("htf_trend_source") if isinstance(meta, dict) else None
     htf = ctx.htf_context or getattr(signal, "htf_trend", None)
     if htf:
-        lines.append(f"📈 <b>HTF Context:</b> <code>{escape_html(htf)}</code>")
+        htf_str = f"{htf} (Source: {htf_source})" if htf_source and htf_source != "none" else str(htf)
+        lines.append(f"📈 <b>HTF Context:</b> <code>{escape_html(htf_str)}</code>")
     else:
         lines.append("📈 <b>HTF Context:</b> <code>N/A</code>")
 
@@ -174,6 +203,10 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
         lines.append(f"  • <b>Risk Allocation:</b> <code>${risk_amount:,.2f}</code> (Balance: N/A)")
     else:
         lines.append("  • <b>Risk Allocation:</b> <code>N/A</code>")
+
+    risk_warning = meta.get("risk_warning") if isinstance(meta, dict) else None
+    if risk_warning:
+        lines.append(f"  ⚠️ <b>Risk Alert:</b> <code>{escape_html(risk_warning)}</code>")
 
     # 6. Pillar Breakdown
     bd = getattr(signal, "score_breakdown", None)

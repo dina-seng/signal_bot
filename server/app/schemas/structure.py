@@ -135,6 +135,11 @@ class CRTAnalysis(BaseModel):
     is_breached: bool = False
     is_confirmed: bool = False  # True if price closed back inside the range
     manip_depth_pct: float = 0.0  # Percentage of range size that was breached
+    range_open_timestamp: Optional[datetime] = None
+    breach_timestamp: Optional[datetime] = None
+    breach_wick_ratio: float = 0.0
+    confirmation_displacement: float = 0.0
+    reentry_depth_pct: float = 0.0
 
     model_config = ConfigDict(from_attributes=True)
 
