@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe - <<'PY'\nimport ast, os, sys\nsys.path.insert\\(0,'server'\\)\nfiles=sorted\\([f for f in os.listdir\\('server/scripts'\\) if f.endswith\\('.py'\\)]\\)\ndef resolvable\\(mod\\):\n    if mod.startswith\\('app.'\\):\n        p='server/'+mod.replace\\('.','/'\\)\n        return os.path.exists\\(p+'.py'\\) or os.path.exists\\(p+'/__init__.py'\\)\n    if mod.startswith\\('scripts.'\\):\n        p='server/'+mod.replace\\('.','/'\\)\n        return os.path.exists\\(p+'.py'\\) or os.path.exists\\(p+'/__init__.py'\\)\n    return None\nfor fn in files:\n    p='server/scripts/'+fn\n    t=ast.parse\\(open\\(p,encoding='utf-8'\\).read\\(\\)\\)\n    bad=set\\(\\)\n    for n in ast.walk\\(t\\):\n        if isinstance\\(n,ast.Import\\):\n            for a in n.names:\n                if a.name.startswith\\(\\('app.','scripts.'\\)\\) and resolvable\\(a.name\\) is False: bad.add\\(a.name\\)\n        elif isinstance\\(n,ast.ImportFrom\\) and n.module:\n            if n.module.startswith\\(\\('app.','scripts.'\\)\\) and resolvable\\(n.module\\) is False: bad.add\\(n.module\\)\n    print\\(f\"{fn:32s}\", \"BROKEN IMPORTS:\"+\", \".join\\(sorted\\(bad\\)\\) if bad else \"ok\"\\)\nPY)",
+      "Bash(tasklist)",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/ -q -m \"not slow\" -p no:cacheprovider)"
+    ]
+  }
+}
