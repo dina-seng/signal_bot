@@ -1,0 +1,1 @@
+signal_time_utc,direction,quality_tier,session,entry_mode,crt_entry,production_entry,entry_delta,stop_loss,take_profit_1,take_profit_2,risk_price,rr_planned,score,filled,fill_time_utc,exit_time_utc,exit_reason,r_multiple,bars_held,spread_paid,sweep_key
