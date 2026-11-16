@@ -81,9 +81,15 @@ class PaperOrderExecutor:
         now_utc = datetime.now(timezone.utc)
 
         # ------------------------------------------------------------------
-        # Gate 1 — Timestamp Staleness Check
+        # Gate 1 — Staleness Check
         # ------------------------------------------------------------------
-        signal_ts = signal.timestamp
+        # Anchor age to `created_at` (wall-clock time the signal was evaluated
+        # and persisted), NOT `timestamp` (candle open time of the last closed
+        # bar, already up to a full bar old at persist time). Measuring from the
+        # candle timestamp rejects every fresh signal once the next scanner
+        # cycle runs ("candle timestamp drift" — same rationale scanner.py uses
+        # created_at for the signal cooldown window).
+        signal_ts = signal.created_at or signal.timestamp
         if signal_ts is not None:
             # Normalise to UTC regardless of whether tzinfo is attached
             if signal_ts.tzinfo is None:

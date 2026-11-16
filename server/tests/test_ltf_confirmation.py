@@ -261,7 +261,7 @@ def _make_mock_signal(
     entry_price: float = 1950.00,
     age_minutes: float = 0.0,
 ) -> MagicMock:
-    """Build a mock Signal DB object with a configurable timestamp age."""
+    """Build a mock Signal DB object with a configurable wall-clock (created_at) age."""
     signal_ts = datetime.now(timezone.utc) - timedelta(minutes=age_minutes)
     sig = MagicMock()
     sig.id = signal_id
@@ -272,6 +272,7 @@ def _make_mock_signal(
     sig.take_profit_1 = take_profit_1
     sig.entry_price = entry_price
     sig.status = "ACTIVE"
+    sig.created_at = signal_ts
     sig.timestamp = signal_ts
     return sig
 
@@ -360,6 +361,38 @@ def test_live_price_above_sl_sell_rejected_independently():
         f"Expected price invalidation message, got: {error_msg}"
     )
     assert "SL_HIT" in error_msg, "Error must mention instant SL_HIT risk"
+
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_candle_timestamp_drift_does_not_reject_freshly_created_signal():
+    """Regression for production 400 on POST /paper/orders/from-signal:
+    the scanner stamps Signal.timestamp with the last CLOSED BAR's open time,
+    so a 1h signal persisted at 03:45 carries timestamp=02:00 (110 min "old").
+    Staleness must be measured against created_at (wall-clock persist time),
+    otherwise every manually executed signal is rejected as STALE.
+    """
+    executor = PaperOrderExecutor()
+    mock_db = MagicMock()
+
+    fresh_created_signal = _make_mock_signal(
+        timeframe="1h",
+        direction="SELL",
+        stop_loss=1960.00,
+        take_profit_1=1930.00,
+        entry_price=1950.00,
+        age_minutes=5.0,    # persisted by scanner 5 minutes ago
+    )
+    # Candle timestamp is far beyond one 1h bar (the production case: 110.5 min)
+    fresh_created_signal.timestamp = datetime.now(timezone.utc) - timedelta(minutes=110)
+
+    # Live price still inside the SL/TP corridor → must not raise
+    executor.validate_signal_before_execution(
+        db=mock_db,
+        signal=fresh_created_signal,
+        current_price=1951.00,
+    )
 
     mock_db.add.assert_not_called()
     mock_db.commit.assert_not_called()
