@@ -140,6 +140,7 @@ class CRTAnalysis(BaseModel):
     breach_wick_ratio: float = 0.0
     confirmation_displacement: float = 0.0
     reentry_depth_pct: float = 0.0
+    has_missing_timestamps: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

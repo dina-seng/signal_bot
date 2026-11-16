@@ -103,8 +103,26 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
         f"⭐ <b>Confluence Score:</b> <code>{score_str}</code>",
     ]
 
+    quality_tier = (meta.get("quality_tier_label") or meta.get("quality_tier")) if isinstance(meta, dict) else None
+    if quality_tier:
+        lines.append(f"🎖 <b>Quality Tier:</b> <code>{escape_html(quality_tier)}</code>")
+
     if setup_state_str:
         lines.append(f"📌 <b>Setup State:</b> <code>{escape_html(setup_state_str)}</code>")
+
+    entry_zone = meta.get("entry_zone") if isinstance(meta, dict) else None
+    entry_mode = meta.get("entry_mode") if isinstance(meta, dict) else None
+    ideal_entry = meta.get("ideal_entry") if isinstance(meta, dict) else None
+    if entry_zone and isinstance(entry_zone, (list, tuple)) and len(entry_zone) == 2:
+        mode_str = f" ({entry_mode})" if entry_mode else ""
+        ideal_str = f" [Ideal: {ideal_entry:.2f}]" if ideal_entry is not None else ""
+        lines.append(f"🎯 <b>Entry Zone:</b> <code>[{entry_zone[0]:.2f} - {entry_zone[1]:.2f}]</code>{mode_str}{ideal_str}")
+
+    expires_utc = meta.get("expires_at_utc") if isinstance(meta, dict) else None
+    expires_utc7 = meta.get("expires_at_utc7") if isinstance(meta, dict) else None
+    if expires_utc:
+        utc7_str = f" / {expires_utc7} UTC+7" if expires_utc7 else ""
+        lines.append(f"⏳ <b>Valid Until:</b> <code>{escape_html(expires_utc)} UTC{utc7_str}</code>")
 
     session_name = meta.get("session_name") if isinstance(meta, dict) else None
     if session_name:
@@ -130,9 +148,14 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
     lines.append(f"🔄 <b>Market Regime:</b> <code>{escape_html(regime)}</code>")
 
     htf_source = meta.get("htf_trend_source") if isinstance(meta, dict) else None
-    htf = ctx.htf_context or getattr(signal, "htf_trend", None)
-    if htf:
-        htf_str = f"{htf} (Source: {htf_source})" if htf_source and htf_source != "none" else str(htf)
+    htf = ctx.htf_context or getattr(signal, "htf_trend", None) or (meta.get("htf_trend") if isinstance(meta, dict) else None)
+    if htf or htf_source:
+        if htf_source == "structure_primary":
+            htf_str = f"{htf} (Source: Primary Structure 15m - Unconfirmed HTF)" if htf else "Primary Structure 15m - Unconfirmed HTF"
+        elif htf_source and htf_source != "none":
+            htf_str = f"{htf} (Source: {htf_source})" if htf else f"(Source: {htf_source})"
+        else:
+            htf_str = str(htf)
         lines.append(f"📈 <b>HTF Context:</b> <code>{escape_html(htf_str)}</code>")
     else:
         lines.append("📈 <b>HTF Context:</b> <code>N/A</code>")
@@ -190,23 +213,30 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
     suggested_lots = getattr(rp, "suggested_lot_size", None) or ctx.suggested_lot_size
     risk_amount = getattr(rp, "risk_amount_usd", None) or ctx.risk_amount_usd
     balance = getattr(rp, "account_balance", None) or ctx.account_balance
+    risk_warning = meta.get("risk_warning") if isinstance(meta, dict) else None
 
     lines.append("━━━━━━━━━━━━━━━━━━━━")
     risk_pct_str = f"{risk_pct:.1f}%" if risk_pct is not None else "N/A"
     lines.append(f"💼 <b>Risk Management ({risk_pct_str} Rule):</b>")
-    lots_str = f"{suggested_lots:.2f} Standard Lots" if suggested_lots is not None else "N/A"
-    lines.append(f"  • <b>Suggested Sizing:</b> <code>{lots_str}</code>")
 
-    if risk_amount is not None and balance is not None:
-        lines.append(f"  • <b>Risk Allocation:</b> <code>${risk_amount:,.2f}</code> on <code>${balance:,.0f}</code> balance")
-    elif risk_amount is not None:
-        lines.append(f"  • <b>Risk Allocation:</b> <code>${risk_amount:,.2f}</code> (Balance: N/A)")
+    if risk_warning and "RISK EXCEEDS LIMIT" in str(risk_warning):
+        lines.append(f"  ⚠️ <b>RISK EXCEEDS LIMIT:</b> <code>{escape_html(risk_warning)}</code>")
+        if risk_amount is not None:
+            lines.append(f"  • <b>Actual Risk (0.01 lot):</b> <code>${risk_amount:,.2f}</code>")
+        elif balance is not None and risk_pct is not None:
+            budget = balance * (risk_pct / 100.0)
+            lines.append(f"  • <b>Risk Budget:</b> <code>${budget:,.2f}</code> (Min lot 0.01 exceeds budget)")
     else:
-        lines.append("  • <b>Risk Allocation:</b> <code>N/A</code>")
-
-    risk_warning = meta.get("risk_warning") if isinstance(meta, dict) else None
-    if risk_warning:
-        lines.append(f"  ⚠️ <b>Risk Alert:</b> <code>{escape_html(risk_warning)}</code>")
+        lots_str = f"{suggested_lots:.2f} Standard Lots" if suggested_lots is not None else "N/A"
+        lines.append(f"  • <b>Suggested Sizing:</b> <code>{lots_str}</code>")
+        if risk_amount is not None and balance is not None:
+            lines.append(f"  • <b>Risk Allocation:</b> <code>${risk_amount:,.2f}</code> on <code>${balance:,.0f}</code> balance")
+        elif risk_amount is not None:
+            lines.append(f"  • <b>Risk Allocation:</b> <code>${risk_amount:,.2f}</code> (Balance: N/A)")
+        else:
+            lines.append("  • <b>Risk Allocation:</b> <code>N/A</code>")
+        if risk_warning:
+            lines.append(f"  ⚠️ <b>Risk Alert:</b> <code>{escape_html(risk_warning)}</code>")
 
     # 6. Pillar Breakdown
     bd = getattr(signal, "score_breakdown", None)

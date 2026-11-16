@@ -5,13 +5,13 @@ A modular, standalone strategy based on the institutional AMD framework:
 - Manipulation: Liquidity sweep breaching the range boundary on a lower timeframe (e.g. 15m)
   by at least `min_manip_pct` depth and satisfying minimum ATR/spread threshold.
 - Distribution: Confirmed when lower timeframe candle(s) close back inside the benchmark range
-  with displacement or market structure shift (MSS).
+  with displacement and market structure shift (MSS).
 
-Risk Management:
-- Entry: Current market price.
+Target & Risk Management:
+- Entry: Retracement entry zone (FVG/OB from displacement leg, fallback 50% equilibrium).
 - Stop Loss: Extreme manipulation wick plus buffer, extended beyond any adjacent liquidity pool.
-- Take Profit 1 & 2: Structure-based targets (nearest opposing liquidity) or dynamic 1.5R / 2.5R,
-  capped before any opposing unmitigated FVG or Order Block.
+- Take Profit: CRT-native targets (TP1 = range midpoint, TP2 = range high/low),
+  capped before opposing unmitigated FVG or Order Block via PathValidator.
 """
 
 from datetime import datetime, time as dtime, timedelta, timezone
@@ -34,6 +34,14 @@ from app.services.market_data.symbols import get_instrument_spec, UnknownSymbolE
 from app.services.strategies.base import BaseStrategy, StrategyResult
 from app.services.structure.crt_analyzer import CRTAnalyzer, _get_candle_ts, _get_candle_val
 
+# CRT Modular Subsystems
+from app.services.strategies.crt.daily_bias import calculate_daily_bias, classify_swept_level
+from app.services.strategies.crt.targets import calculate_crt_targets, CRTTargetPlan
+from app.services.strategies.crt.entry import calculate_retracement_entry, RetracementEntry
+from app.services.strategies.crt.confirmation import verify_ltf_confirmation, LTFConfirmationResult
+from app.services.strategies.crt.tiers import determine_quality_tier, QualityTierResult
+from app.services.strategies.crt.lifecycle import evaluate_lifecycle_state, CRTState, StateTransitionResult
+
 
 def _norm_trend(x: Any) -> str:
     """Normalize trend indicator to standard uppercase string: BULLISH, BEARISH, or RANGING."""
@@ -51,10 +59,10 @@ def _norm_trend(x: Any) -> str:
 def is_in_trading_session(dt: datetime) -> Tuple[bool, str]:
     """Check if the datetime falls within allowed institutional trading sessions in New York time.
 
-    Allowed windows (America/New_York):
-    - Asian Session: 18:00 - 00:00 NY
+    Allowed signal windows (America/New_York):
     - London Session: 03:00 - 07:00 NY
-    - New York Morning: 09:30 - 10:30 NY
+    - New York Session: 08:00 - 12:00 NY (covers 09:30-10:30 open)
+    Asian Session (18:00 - 00:00 NY) is liquidity tracking only, not an allowed signal generation window.
     """
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
@@ -66,17 +74,26 @@ def is_in_trading_session(dt: datetime) -> Tuple[bool, str]:
         ny_dt = dt
     ny_time = ny_dt.time()
 
-    # Asian Session: 18:00 to 23:59:59 (or 00:00 midnight)
-    if ny_time >= dtime(18, 0) or ny_time == dtime(0, 0):
-        return True, "Asian Session"
-    # London Session: 03:00 to 07:00
+    # London Session: 03:00 to 07:00 NY
     if dtime(3, 0) <= ny_time <= dtime(7, 0):
         return True, "London Session"
-    # New York Morning: 09:30 to 10:30
-    if dtime(9, 30) <= ny_time <= dtime(10, 30):
+    # New York Session: 08:00 to 12:00 NY
+    if dtime(8, 0) <= ny_time <= dtime(12, 0):
         return True, "New York Session"
+    # Asian Session: 18:00 to 24:00 (liquidity tracking only)
+    if ny_time >= dtime(18, 0) or ny_time == dtime(0, 0):
+        return False, "Asian Session (Liquidity Tracking Only / No Signals)"
 
     return False, f"Off-Session ({ny_time.strftime('%H:%M')} NY)"
+
+
+def _get_candle_tf(candle: Any) -> Optional[str]:
+    """Safely extract timeframe string from a CandleBase, dict, or ORM object."""
+    if candle is None:
+        return None
+    if isinstance(candle, dict):
+        return candle.get("timeframe")
+    return getattr(candle, "timeframe", None)
 
 
 class CRTStrategy(BaseStrategy):
@@ -98,34 +115,40 @@ class CRTStrategy(BaseStrategy):
         min_sweep_atr_mult: float = 0.15,
         min_disp_atr_mult: float = 0.20,
         min_range_atr_mult: float = 0.35,
-        max_range_atr_mult: float = 35.0,
-        max_risk_atr_mult: float = 8.0,
+        max_range_atr_mult: float = 4.0,
+        max_risk_atr_mult: float = 3.0,
+        min_rr_tp1: float = 1.0,
+        entry_expiry_bars: int = 8,
         pip_size: float = 0.10,
         spread: float = 0.0,
         cooldown_seconds: float = 7200.0,
+        enable_dedup: bool = True,
     ) -> None:
         self.min_manip_pct = min_manip_pct
         self.max_manip_pct = max_manip_pct
         self.confirm_bars = confirm_bars
         self.base_score = base_score
         self._min_score_threshold = (
-            min_score_threshold if min_score_threshold is not None else settings.MIN_SETUP_SCORE
+            min_score_threshold if min_score_threshold is not None else getattr(settings, "MIN_SETUP_SCORE", 75.0)
         )
         self.analyzer = analyzer or CRTAnalyzer(
             default_min_manip_pct=min_manip_pct,
             default_confirm_bars=confirm_bars,
         )
         self.session_filter_enabled = session_filter_enabled
-        self.min_sweep_atr_mult = min_sweep_atr_mult if min_sweep_atr_mult != 0.15 else 0.08
+        self.min_sweep_atr_mult = min_sweep_atr_mult
         self.min_disp_atr_mult = min_disp_atr_mult
         self.min_range_atr_mult = min_range_atr_mult
-        self.max_range_atr_mult = max_range_atr_mult if max_range_atr_mult != 4.5 else 35.0
+        self.max_range_atr_mult = max_range_atr_mult
         self.max_risk_atr_mult = max_risk_atr_mult
+        self.min_rr_tp1 = min_rr_tp1
+        self.entry_expiry_bars = entry_expiry_bars
         self.pip_size = pip_size
         self.spread = spread
         self.cooldown_seconds = cooldown_seconds
+        self.enable_dedup = enable_dedup
 
-        # Deduplication cache for emitted sweep event keys: key -> emit_timestamp
+        # Deduplication cache for emitted sweep event keys: key -> emit_timestamp (in-memory fast path)
         self._emitted_sweep_events: Dict[str, datetime] = {}
 
     @property
@@ -163,11 +186,17 @@ class CRTStrategy(BaseStrategy):
                 r_candles = kwargs.get("candles_4h")
                 if c_candles is None:
                     c_candles = candles_15m if candles_15m is not None else candles
-            elif candles_15m is not None and len(candles_15m) > 0 and candles is not candles_15m:
-                # Primary candles represent the HTF range (1H), candles_15m represents the LTF
-                r_candles = candles
-                if c_candles is None:
-                    c_candles = candles_15m
+            elif candles_15m is not None and len(candles_15m) > 0:
+                first_candle = candles[0] if candles else None
+                first_tf = _get_candle_tf(first_candle)
+                if first_tf in ("1h", "4h") or (first_tf is None and timeframe in ("1h", "4h")):
+                    r_candles = candles
+                    if c_candles is None:
+                        c_candles = candles_15m
+                elif candles == candles_15m or (first_tf in ("15m", "5m", "1m", "30m") and timeframe in ("15m", "5m", "1m", "30m")):
+                    r_candles = None
+                    if c_candles is None:
+                        c_candles = candles_15m
             elif timeframe in ("1h", "4h") and candles is not None and len(candles) > 0:
                 r_candles = candles
                 if c_candles is None:
@@ -176,15 +205,24 @@ class CRTStrategy(BaseStrategy):
         if c_candles is None:
             c_candles = candles_15m if candles_15m is not None else candles
 
+        # Disallow using LTF candles or identical series as HTF range
+        if r_candles is not None and len(r_candles) > 0:
+            last_r = r_candles[-1]
+            last_r_tf = _get_candle_tf(last_r)
+            if last_r_tf in ("15m", "5m", "1m", "30m") and timeframe in ("15m", "5m", "1m", "30m"):
+                r_candles = None
+            elif c_candles is not None and len(c_candles) > 0:
+                if r_candles == c_candles or (len(r_candles) == 1 and len(c_candles) == 1 and r_candles[0] == c_candles[0]):
+                    r_candles = None
+
         # Fix 3: SILENT CANDLE FALLBACK CHECK
-        # Missing HTF range candles or using LTF as range must return WAIT with an explicit reason.
         if r_candles is None or len(r_candles) == 0 or (r_candles is c_candles and timeframe not in ("1h", "4h")):
             return StrategyResult(
                 strategy_name=self.name,
                 direction=SignalDirection.WAIT,
                 score=0.0,
                 reasons=[
-                    "WAIT: Missing HTF accumulation range candles. CRT requires a completed higher timeframe benchmark candle (e.g. 1H or 4H); silent fallback to LTF is disabled."
+                    "WAIT: Missing HTF accumulation range candles. HTF range candle required (e.g. 1H or 4H); silent fallback to LTF is disabled."
                 ],
                 metadata={
                     "setup_state": "NO_SETUP",
@@ -267,6 +305,8 @@ class CRTStrategy(BaseStrategy):
             htf_trend_source = "explicit"
             if trend_1h == "RANGING":
                 trend_1h = resolved_htf_trend
+            if trend_4h == "RANGING":
+                trend_4h = resolved_htf_trend
         elif structure is not None and hasattr(structure, "trend") and structure.trend:
             s_trend = _norm_trend(structure.trend)
             if s_trend in ("BULLISH", "BEARISH"):
@@ -299,7 +339,7 @@ class CRTStrategy(BaseStrategy):
             effective_atr = float(kwargs["atr_value"])
 
         # ------------------------------------------------------------------
-        # 5. Qualification Gates (Hard, before scoring) (Enhancement B)
+        # 5. Qualification Gates (Hard, before scoring)
         # ------------------------------------------------------------------
         reasons: List[str] = []
         score_audit: List[Dict[str, Any]] = []
@@ -313,7 +353,7 @@ class CRTStrategy(BaseStrategy):
                 direction=SignalDirection.WAIT,
                 score=0.0,
                 reasons=[
-                    f"WAIT (Session Gate): Outside allowed institutional trading sessions (Asia 18:00-00:00 NY, London 03:00-07:00 NY, NY 09:30-10:30 NY). Current status: {session_name}."
+                    f"WAIT (Session Gate): Outside allowed institutional trading sessions (London 03:00-07:00 NY, NY 08:00-12:00 NY). Current status: {session_name}."
                 ],
                 metadata={
                     "setup_state": "NO_SETUP",
@@ -337,6 +377,37 @@ class CRTStrategy(BaseStrategy):
                 take_profit_2=0.0,
                 risk_reward=0.0,
                 breach_point=analysis.breach_point,
+            )
+
+        # Missing Timestamps Gate
+        if getattr(analysis, "has_missing_timestamps", False) or analysis.range_open_timestamp is None:
+            return StrategyResult(
+                strategy_name=self.name,
+                direction=SignalDirection.WAIT,
+                score=0.0,
+                reasons=["WAIT (Missing Timestamps): Missing timestamps on range or confirmation candles. Cannot chronologically verify setup."],
+                metadata={
+                    "setup_state": "NO_SETUP",
+                    "gatekeeper_passed": False,
+                    "rejection_gate": "MISSING_TIMESTAMPS",
+                    "crt_analysis": analysis.model_dump(),
+                    "htf_trend": resolved_htf_trend,
+                    "htf_trend_source": htf_trend_source,
+                },
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0,
+                    liquidity_score=0.0,
+                    indicators_score=0.0,
+                    price_action_score=0.0,
+                    total_score=0.0,
+                    is_qualified=False,
+                ),
+                entry_price=round(current_price, 5),
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                breach_point=None,
             )
 
         # Basic AMD Pattern detection
@@ -500,7 +571,7 @@ class CRTStrategy(BaseStrategy):
                     breach_point=analysis.breach_point,
                 )
 
-        # Minimum Sweep Size Gate (Absolute dollars and ATR fraction)
+        # Minimum Sweep Size Gate
         swept_edge = analysis.range_low if analysis.positive_direction else analysis.range_high
         sweep_distance = abs(swept_edge - analysis.breach_point)
         min_sweep_dollars = max(self.spread * 3.0, self.min_sweep_atr_mult * effective_atr) if effective_atr > 0 else (self.spread * 3.0)
@@ -566,18 +637,39 @@ class CRTStrategy(BaseStrategy):
                 breach_point=analysis.breach_point,
             )
 
-        # Confirmation State Gate
-        if not analysis.is_confirmed:
+        # Sweep Extreme Invalidation Gate
+        first_breach_extreme = analysis.breach_point
+        if c_candles:
+            for c in c_candles:
+                if analysis.positive_direction and _get_candle_val(c, "low") < analysis.range_low:
+                    first_breach_extreme = _get_candle_val(c, "low")
+                    break
+                elif not analysis.positive_direction and _get_candle_val(c, "high") > analysis.range_high:
+                    first_breach_extreme = _get_candle_val(c, "high")
+                    break
+
+        is_extreme_broken = False
+        if direction == SignalDirection.BUY:
+            if (analysis.breach_point is not None and current_price <= analysis.breach_point) or \
+               (first_breach_extreme is not None and current_price <= first_breach_extreme):
+                is_extreme_broken = True
+        else:
+            if (analysis.breach_point is not None and current_price >= analysis.breach_point) or \
+               (first_breach_extreme is not None and current_price >= first_breach_extreme):
+                is_extreme_broken = True
+
+        if is_extreme_broken:
             return StrategyResult(
                 strategy_name=self.name,
                 direction=SignalDirection.WAIT,
                 score=0.0,
                 reasons=[
-                    f"WAIT (Confirmation Pending): Manipulation breach at {analysis.breach_point:.5f} detected, awaiting close back inside range."
+                    f"INVALIDATED (Sweep Extreme Broken): Price ({current_price:.5f}) broke beyond manipulation extreme ({analysis.breach_point:.5f}) before entry."
                 ],
                 metadata={
-                    "setup_state": "WAITING_FOR_CONFIRMATION",
+                    "setup_state": "INVALIDATED_SETUP",
                     "gatekeeper_passed": False,
+                    "rejection_gate": "SWEEP_EXTREME_BROKEN",
                     "crt_analysis": analysis.model_dump(),
                     "htf_trend": resolved_htf_trend,
                     "htf_trend_source": htf_trend_source,
@@ -599,14 +691,140 @@ class CRTStrategy(BaseStrategy):
             )
 
         # ------------------------------------------------------------------
-        # 6. Stop Loss & Take Profit Target Calculation (Enhancements C & D)
+        # 6. LTF Confirmation Check (Range Re-entry + Displacement + MSS)
         # ------------------------------------------------------------------
-        # Buffer is added beyond sweep extreme: max(spread, 0.10 * ATR)
+        if not analysis.is_confirmed:
+            return StrategyResult(
+                strategy_name=self.name,
+                direction=SignalDirection.WAIT,
+                score=0.0,
+                reasons=[
+                    f"WAIT (Confirmation Pending): Manipulation breach at {analysis.breach_point:.5f} detected, awaiting close back inside range."
+                ],
+                metadata={
+                    "setup_state": "WAITING_FOR_CONFIRMATION",
+                    "gatekeeper_passed": False,
+                    "rejection_gate": "CONFIRMATION_PENDING",
+                    "crt_analysis": analysis.model_dump(),
+                    "htf_trend": resolved_htf_trend,
+                    "htf_trend_source": htf_trend_source,
+                },
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0,
+                    liquidity_score=0.0,
+                    indicators_score=0.0,
+                    price_action_score=0.0,
+                    total_score=0.0,
+                    is_qualified=False,
+                ),
+                entry_price=round(current_price, 5),
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                breach_point=analysis.breach_point,
+            )
+
+        confirmation_res: LTFConfirmationResult = verify_ltf_confirmation(
+            direction=direction,
+            range_high=analysis.range_high,
+            range_low=analysis.range_low,
+            candles_15m=c_candles,
+            breach_point=analysis.breach_point,
+            manip_candle_index=getattr(analysis, "manipulation_candle_index", 0),
+            atr=effective_atr,
+            min_disp_atr_mult=self.min_disp_atr_mult,
+            structure=structure,
+        )
+
+        if not confirmation_res.is_confirmed:
+            return StrategyResult(
+                strategy_name=self.name,
+                direction=SignalDirection.WAIT,
+                score=0.0,
+                reasons=[
+                    f"WAIT (Confirmation Pending): {confirmation_res.reason}"
+                ],
+                metadata={
+                    "setup_state": "WAITING_FOR_CONFIRMATION",
+                    "gatekeeper_passed": False,
+                    "rejection_gate": "CONFIRMATION_PENDING",
+                    "confirmation_detail": confirmation_res.reason,
+                    "crt_analysis": analysis.model_dump(),
+                    "htf_trend": resolved_htf_trend,
+                    "htf_trend_source": htf_trend_source,
+                },
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0,
+                    liquidity_score=0.0,
+                    indicators_score=0.0,
+                    price_action_score=0.0,
+                    total_score=0.0,
+                    is_qualified=False,
+                ),
+                entry_price=round(current_price, 5),
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                breach_point=analysis.breach_point,
+            )
+
+        # ------------------------------------------------------------------
+        # 7. Retracement Entry Zone Calculation & Missed Setup Check
+        # ------------------------------------------------------------------
+        raw_midpoint = (analysis.range_high + analysis.range_low) / 2.0
+        entry_res: RetracementEntry = calculate_retracement_entry(
+            direction=direction,
+            sweep_extreme=analysis.breach_point,
+            displacement_extreme=confirmation_res.displacement_extreme,
+            candles_15m=c_candles,
+            current_price=current_price,
+            target_tp1=raw_midpoint,
+            atr=effective_atr,
+            spread=self.spread,
+            expiry_bars=self.entry_expiry_bars,
+        )
+
+        if entry_res.is_missed:
+            return StrategyResult(
+                strategy_name=self.name,
+                direction=SignalDirection.WAIT,
+                score=0.0,
+                reasons=[
+                    f"MISSED SETUP: {entry_res.missed_reason}"
+                ],
+                metadata={
+                    "setup_state": "MISSED",
+                    "gatekeeper_passed": False,
+                    "rejection_gate": "MISSED_SETUP",
+                    "entry_zone": [entry_res.zone_low, entry_res.zone_high],
+                    "ideal_entry": entry_res.ideal_entry,
+                    "crt_analysis": analysis.model_dump(),
+                },
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0,
+                    liquidity_score=0.0,
+                    indicators_score=0.0,
+                    price_action_score=0.0,
+                    total_score=0.0,
+                    is_qualified=False,
+                ),
+                entry_price=round(current_price, 5),
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                breach_point=analysis.breach_point,
+            )
+
+        # ------------------------------------------------------------------
+        # 8. Stop Loss & Risk Geometry Validation
+        # ------------------------------------------------------------------
         sl_buffer = max(self.spread, 0.10 * effective_atr) if (self.spread > 0 or effective_atr > 0) else 0.0
 
         if direction == SignalDirection.BUY:
-            raw_sl = analysis.breach_point - sl_buffer
-            # Protect beyond nearby liquidity pool / swing low if present
+            raw_sl = entry_res.stop_loss
             if structure is not None and structure.liquidity_pools:
                 for pool in structure.liquidity_pools:
                     if pool.pool_type == LiquidityEventType.EQUAL_LOWS and pool.price_level < current_price:
@@ -614,7 +832,6 @@ class CRTStrategy(BaseStrategy):
                             raw_sl = min(raw_sl, pool.price_level - sl_buffer)
             stop_loss = round(raw_sl, 5)
 
-            # Fix 4: Direction / Risk Validation (No abs() masking)
             if stop_loss >= current_price:
                 return StrategyResult(
                     strategy_name=self.name,
@@ -644,42 +861,10 @@ class CRTStrategy(BaseStrategy):
                     risk_reward=0.0,
                     breach_point=analysis.breach_point,
                 )
-
-            # Check if price has broken below breach extreme before entry
-            if current_price <= analysis.breach_point:
-                return StrategyResult(
-                    strategy_name=self.name,
-                    direction=SignalDirection.WAIT,
-                    score=0.0,
-                    reasons=["INVALIDATED: Price broke below the manipulation extreme before entry."],
-                    metadata={
-                        "setup_state": "INVALIDATED_SETUP",
-                        "gatekeeper_passed": False,
-                        "rejection_gate": "SWEEP_EXTREME_BROKEN",
-                    },
-                    score_breakdown=ScoreBreakdown(
-                        structure_score=0.0,
-                        liquidity_score=0.0,
-                        indicators_score=0.0,
-                        price_action_score=0.0,
-                        total_score=0.0,
-                        is_qualified=False,
-                    ),
-                    entry_price=round(current_price, 5),
-                    stop_loss=0.0,
-                    take_profit_1=0.0,
-                    take_profit_2=0.0,
-                    risk_reward=0.0,
-                    breach_point=analysis.breach_point,
-                )
-
             risk_distance = current_price - stop_loss
-            base_tp1 = current_price + (risk_distance * 1.5)
-            base_tp2 = current_price + (risk_distance * 2.5)
 
         else:  # SELL
-            raw_sl = analysis.breach_point + sl_buffer
-            # Protect beyond nearby liquidity pool / swing high if present
+            raw_sl = entry_res.stop_loss
             if structure is not None and structure.liquidity_pools:
                 for pool in structure.liquidity_pools:
                     if pool.pool_type == LiquidityEventType.EQUAL_HIGHS and pool.price_level > current_price:
@@ -687,7 +872,6 @@ class CRTStrategy(BaseStrategy):
                             raw_sl = max(raw_sl, pool.price_level + sl_buffer)
             stop_loss = round(raw_sl, 5)
 
-            # Fix 4: Direction / Risk Validation (No abs() masking)
             if stop_loss <= current_price:
                 return StrategyResult(
                     strategy_name=self.name,
@@ -717,37 +901,7 @@ class CRTStrategy(BaseStrategy):
                     risk_reward=0.0,
                     breach_point=analysis.breach_point,
                 )
-
-            if current_price >= analysis.breach_point:
-                return StrategyResult(
-                    strategy_name=self.name,
-                    direction=SignalDirection.WAIT,
-                    score=0.0,
-                    reasons=["INVALIDATED: Price broke above the manipulation extreme before entry."],
-                    metadata={
-                        "setup_state": "INVALIDATED_SETUP",
-                        "gatekeeper_passed": False,
-                        "rejection_gate": "SWEEP_EXTREME_BROKEN",
-                    },
-                    score_breakdown=ScoreBreakdown(
-                        structure_score=0.0,
-                        liquidity_score=0.0,
-                        indicators_score=0.0,
-                        price_action_score=0.0,
-                        total_score=0.0,
-                        is_qualified=False,
-                    ),
-                    entry_price=round(current_price, 5),
-                    stop_loss=0.0,
-                    take_profit_1=0.0,
-                    take_profit_2=0.0,
-                    risk_reward=0.0,
-                    breach_point=analysis.breach_point,
-                )
-
             risk_distance = stop_loss - current_price
-            base_tp1 = current_price - (risk_distance * 1.5)
-            base_tp2 = current_price - (risk_distance * 2.5)
 
         # Enforce maximum risk distance
         if effective_atr > 0.0 and risk_distance > (self.max_risk_atr_mult * effective_atr):
@@ -781,173 +935,171 @@ class CRTStrategy(BaseStrategy):
             )
 
         # ------------------------------------------------------------------
-        # Clear Path & Take Profit Capping before Opposing OB/FVG
+        # 9. CRT-Native Targets & Path Validation via PathValidator
         # ------------------------------------------------------------------
-        nearest_obstacle_price: Optional[float] = None
-        nearest_obstacle_desc: Optional[str] = None
+        target_plan: CRTTargetPlan = calculate_crt_targets(
+            direction=direction,
+            entry_price=current_price,
+            stop_loss=stop_loss,
+            range_high=analysis.range_high,
+            range_low=analysis.range_low,
+            atr=effective_atr,
+            min_rr=self.min_rr_tp1,
+            structure=structure,
+            indicators=indicators,
+        )
 
-        if direction == SignalDirection.BUY:
-            # Check Bearish FVGs above entry
-            if indicators is not None and indicators.active_fvgs:
-                for fvg in indicators.active_fvgs:
-                    if fvg.fvg_type == FVGType.BEARISH_FVG and not fvg.is_mitigated and fvg.bottom_price > current_price:
-                        if nearest_obstacle_price is None or fvg.bottom_price < nearest_obstacle_price:
-                            nearest_obstacle_price = fvg.bottom_price
-                            nearest_obstacle_desc = f"Bearish FVG at {fvg.bottom_price:.2f}"
-            # Check Resistance zones above entry
-            if structure is not None and structure.sr_zones:
-                for sr in structure.sr_zones:
-                    if sr.zone_type == ZoneType.RESISTANCE and sr.price_low > current_price:
-                        if nearest_obstacle_price is None or sr.price_low < nearest_obstacle_price:
-                            nearest_obstacle_price = sr.price_low
-                            nearest_obstacle_desc = f"Resistance Zone at {sr.price_low:.2f}"
+        if not target_plan.is_valid:
+            gate_code = target_plan.rejection_gate or "INSUFFICIENT_RR"
+            return StrategyResult(
+                strategy_name=self.name,
+                direction=SignalDirection.WAIT,
+                score=0.0,
+                reasons=[
+                    target_plan.rejection_reason or f"WAIT ({gate_code}): Target plan rejected."
+                ],
+                metadata={
+                    "setup_state": "POTENTIAL_SETUP",
+                    "gatekeeper_passed": False,
+                    "rejection_gate": gate_code,
+                    "nearest_obstacle": target_plan.obstacle_type,
+                    "obstacle_r": target_plan.risk_reward_tp1 if target_plan.capped_by_obstacle else None,
+                    "risk_reward_tp1": target_plan.risk_reward_tp1,
+                    "risk_reward_tp2": target_plan.risk_reward_tp2,
+                },
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0,
+                    liquidity_score=0.0,
+                    indicators_score=0.0,
+                    price_action_score=0.0,
+                    total_score=0.0,
+                    is_qualified=False,
+                ),
+                entry_price=round(current_price, 5),
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                breach_point=analysis.breach_point,
+            )
 
-            take_profit_1 = base_tp1
-            take_profit_2 = base_tp2
+        take_profit_1 = target_plan.take_profit_1
+        take_profit_2 = target_plan.take_profit_2
+        rr_tp1 = target_plan.risk_reward_tp1
+        rr_tp2 = target_plan.risk_reward_tp2
 
-            if nearest_obstacle_price is not None:
-                dist_to_obs = nearest_obstacle_price - current_price
-                obs_r = dist_to_obs / max(1e-6, risk_distance)
-                if obs_r < 1.0:
-                    return StrategyResult(
-                        strategy_name=self.name,
-                        direction=SignalDirection.WAIT,
-                        score=0.0,
-                        reasons=[
-                            f"WAIT (Clear Path Blocked): Opposing {nearest_obstacle_desc} is only {obs_r:.2f}R from entry (< 1.0R minimum clear path required)."
-                        ],
-                        metadata={
-                            "setup_state": "POTENTIAL_SETUP",
-                            "gatekeeper_passed": False,
-                            "rejection_gate": "PATH_BLOCKED",
-                            "nearest_obstacle": nearest_obstacle_desc,
-                            "obstacle_r": round(obs_r, 2),
-                        },
-                        score_breakdown=ScoreBreakdown(
-                            structure_score=0.0,
-                            liquidity_score=0.0,
-                            indicators_score=0.0,
-                            price_action_score=0.0,
-                            total_score=0.0,
-                            is_qualified=False,
-                        ),
-                        entry_price=round(current_price, 5),
-                        stop_loss=0.0,
-                        take_profit_1=0.0,
-                        take_profit_2=0.0,
-                        risk_reward=0.0,
-                        breach_point=analysis.breach_point,
-                    )
-                elif nearest_obstacle_price < take_profit_1:
-                    take_profit_1 = round(nearest_obstacle_price - sl_buffer, 5)
-                    reasons.append(f"TP1 capped before opposing {nearest_obstacle_desc}.")
-
-        else:  # SELL
-            # Check Bullish FVGs below entry
-            if indicators is not None and indicators.active_fvgs:
-                for fvg in indicators.active_fvgs:
-                    if fvg.fvg_type == FVGType.BULLISH_FVG and not fvg.is_mitigated and fvg.top_price < current_price:
-                        if nearest_obstacle_price is None or fvg.top_price > nearest_obstacle_price:
-                            nearest_obstacle_price = fvg.top_price
-                            nearest_obstacle_desc = f"Bullish FVG at {fvg.top_price:.2f}"
-            # Check Support zones below entry
-            if structure is not None and structure.sr_zones:
-                for sr in structure.sr_zones:
-                    if sr.zone_type == ZoneType.SUPPORT and sr.price_high < current_price:
-                        if nearest_obstacle_price is None or sr.price_high > nearest_obstacle_price:
-                            nearest_obstacle_price = sr.price_high
-                            nearest_obstacle_desc = f"Support Zone at {sr.price_high:.2f}"
-
-            take_profit_1 = base_tp1
-            take_profit_2 = base_tp2
-
-            if nearest_obstacle_price is not None:
-                dist_to_obs = current_price - nearest_obstacle_price
-                obs_r = dist_to_obs / max(1e-6, risk_distance)
-                if obs_r < 1.0:
-                    return StrategyResult(
-                        strategy_name=self.name,
-                        direction=SignalDirection.WAIT,
-                        score=0.0,
-                        reasons=[
-                            f"WAIT (Clear Path Blocked): Opposing {nearest_obstacle_desc} is only {obs_r:.2f}R from entry (< 1.0R minimum clear path required)."
-                        ],
-                        metadata={
-                            "setup_state": "POTENTIAL_SETUP",
-                            "gatekeeper_passed": False,
-                            "rejection_gate": "PATH_BLOCKED",
-                            "nearest_obstacle": nearest_obstacle_desc,
-                            "obstacle_r": round(obs_r, 2),
-                        },
-                        score_breakdown=ScoreBreakdown(
-                            structure_score=0.0,
-                            liquidity_score=0.0,
-                            indicators_score=0.0,
-                            price_action_score=0.0,
-                            total_score=0.0,
-                            is_qualified=False,
-                        ),
-                        entry_price=round(current_price, 5),
-                        stop_loss=0.0,
-                        take_profit_1=0.0,
-                        take_profit_2=0.0,
-                        risk_reward=0.0,
-                        breach_point=analysis.breach_point,
-                    )
-                elif nearest_obstacle_price > take_profit_1:
-                    take_profit_1 = round(nearest_obstacle_price + sl_buffer, 5)
-                    reasons.append(f"TP1 capped before opposing {nearest_obstacle_desc}.")
-
-        # Real R:R computations
-        rr_tp1 = round(abs(take_profit_1 - current_price) / max(1e-6, risk_distance), 2)
-        rr_tp2 = round(abs(take_profit_2 - current_price) / max(1e-6, risk_distance), 2)
+        if target_plan.notes:
+            reasons.extend(target_plan.notes)
 
         # ------------------------------------------------------------------
-        # 7. Deduplication (Enhancement F)
+        # 10. Deduplication (Key: symbol_tf_dir_rangeopen_breachts + Cooldown)
         # ------------------------------------------------------------------
         range_open_ts_str = str(analysis.range_open_timestamp or "0")
         breach_ts_str = str(analysis.breach_timestamp or "0")
         sweep_event_key = f"{symbol}_{timeframe}_{direction.value}_{range_open_ts_str}_{breach_ts_str}"
 
         now_utc = datetime.now(timezone.utc)
-        if sweep_event_key in self._emitted_sweep_events:
-            prev_time = self._emitted_sweep_events[sweep_event_key]
-            if (now_utc - prev_time).total_seconds() < self.cooldown_seconds:
-                return StrategyResult(
-                    strategy_name=self.name,
-                    direction=SignalDirection.WAIT,
-                    score=0.0,
-                    reasons=[f"DEDUPLICATED: Repeat signal for sweep event {sweep_event_key} suppressed by cooldown."],
-                    metadata={
-                        "setup_state": "NO_SETUP",
-                        "gatekeeper_passed": False,
-                        "rejection_gate": "DEDUPLICATED",
-                        "sweep_event_key": sweep_event_key,
-                    },
-                    score_breakdown=ScoreBreakdown(
-                        structure_score=0.0,
-                        liquidity_score=0.0,
-                        indicators_score=0.0,
-                        price_action_score=0.0,
-                        total_score=0.0,
-                        is_qualified=False,
-                    ),
-                    entry_price=round(current_price, 5),
-                    stop_loss=0.0,
-                    take_profit_1=0.0,
-                    take_profit_2=0.0,
-                    risk_reward=0.0,
-                    breach_point=analysis.breach_point,
-                )
+        enable_dedup = kwargs.get("enable_dedup", getattr(self, "enable_dedup", True))
+        is_deduped = False
+        dedup_reason = f"DEDUPLICATED: Repeat signal for sweep event {sweep_event_key} suppressed by cooldown."
+
+        if enable_dedup:
+            if sweep_event_key in self._emitted_sweep_events:
+                prev_time = self._emitted_sweep_events[sweep_event_key]
+                if (now_utc - prev_time).total_seconds() < self.cooldown_seconds:
+                    is_deduped = True
+            else:
+                db_conn = kwargs.get("db")
+                close_sess = False
+                if db_conn is None:
+                    try:
+                        from app.core.database import SessionLocal
+                        db_conn = SessionLocal()
+                        close_sess = True
+                    except Exception:
+                        db_conn = None
+                if db_conn is not None:
+                    try:
+                        from app.models.crt_sweep_event import CRTSweepEvent
+                        record = db_conn.query(CRTSweepEvent).filter(CRTSweepEvent.sweep_key == sweep_event_key).first()
+                        if record is not None and record.cooldown_until is not None:
+                            cd_dt = record.cooldown_until
+                            if cd_dt.tzinfo is None:
+                                cd_dt = cd_dt.replace(tzinfo=timezone.utc)
+                            if now_utc < cd_dt:
+                                em_dt = record.emitted_at
+                                if em_dt.tzinfo is None:
+                                    em_dt = em_dt.replace(tzinfo=timezone.utc)
+                                self._emitted_sweep_events[sweep_event_key] = em_dt
+                                is_deduped = True
+                                dedup_reason = f"DEDUPLICATED: Repeat signal for sweep event {sweep_event_key} suppressed by database cooldown."
+                    except Exception as e:
+                        logger.debug(f"CRT DB dedup check bypassed: {e}")
+                    finally:
+                        if close_sess and db_conn:
+                            db_conn.close()
+
+        if is_deduped:
+            return StrategyResult(
+                strategy_name=self.name,
+                direction=SignalDirection.WAIT,
+                score=0.0,
+                reasons=[dedup_reason],
+                metadata={
+                    "setup_state": "NO_SETUP",
+                    "gatekeeper_passed": False,
+                    "rejection_gate": "DEDUPLICATED",
+                    "sweep_event_key": sweep_event_key,
+                },
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0,
+                    liquidity_score=0.0,
+                    indicators_score=0.0,
+                    price_action_score=0.0,
+                    total_score=0.0,
+                    is_qualified=False,
+                ),
+                entry_price=round(current_price, 5),
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                breach_point=analysis.breach_point,
+            )
 
         # ------------------------------------------------------------------
-        # 8. Auditable 3-Pillar Scoring Engine (Enhancement A)
+        # 11. Daily Bias & Swept Level Classification
+        # ------------------------------------------------------------------
+        daily_bias_res = calculate_daily_bias(
+            candles_1h=r_candles,
+            current_time=latest_ts,
+            current_price=current_price,
+        )
+        sweep_level_type, level_points = classify_swept_level(
+            breach_point=analysis.breach_point,
+            positive_direction=analysis.positive_direction,
+            daily_bias=daily_bias_res,
+            structure=structure,
+            atr=effective_atr,
+        )
+
+        # ------------------------------------------------------------------
+        # 12. Auditable 3-Pillar Scoring Engine
         # ------------------------------------------------------------------
         # Pillar 1: Structure & MTF (Max 35)
         structure_score = 0.0
         aligned_trend = "BULLISH" if direction == SignalDirection.BUY else "BEARISH"
+
         # 1.1 HTF 1H Alignment (max 12)
-        if trend_1h == aligned_trend:
+        if htf_trend_source == "structure_primary":
+            score_audit.append({
+                "pillar": "Structure & MTF",
+                "rule": "1H Alignment",
+                "points": 0.0,
+                "max": 12.0,
+                "reason": "1H Trend source is structure_primary (No HTF credit awarded)",
+            })
+        elif trend_1h == aligned_trend:
             structure_score += 12.0
             score_audit.append({"pillar": "Structure & MTF", "rule": "1H Alignment", "points": 12.0, "max": 12.0, "reason": f"1H Trend is aligned ({trend_1h})"})
         elif trend_1h == "RANGING":
@@ -957,7 +1109,15 @@ class CRTStrategy(BaseStrategy):
             score_audit.append({"pillar": "Structure & MTF", "rule": "1H Alignment", "points": 0.0, "max": 12.0, "reason": f"1H Trend opposes ({trend_1h})"})
 
         # 1.2 HTF 4H Alignment (max 8)
-        if trend_4h == aligned_trend:
+        if htf_trend_source == "structure_primary":
+            score_audit.append({
+                "pillar": "Structure & MTF",
+                "rule": "4H Alignment",
+                "points": 0.0,
+                "max": 8.0,
+                "reason": "4H Trend source is structure_primary (No HTF credit awarded)",
+            })
+        elif trend_4h == aligned_trend:
             structure_score += 8.0
             score_audit.append({"pillar": "Structure & MTF", "rule": "4H Alignment", "points": 8.0, "max": 8.0, "reason": f"4H Trend is aligned ({trend_4h})"})
         elif trend_4h == "RANGING":
@@ -967,32 +1127,24 @@ class CRTStrategy(BaseStrategy):
             score_audit.append({"pillar": "Structure & MTF", "rule": "4H Alignment", "points": 0.0, "max": 8.0, "reason": f"4H Trend opposes ({trend_4h})"})
 
         # 1.3 MSS / CHoCH after sweep (max 8)
-        has_mss = False
-        if structure is not None and structure.choch_events:
-            for ev in structure.choch_events:
-                if (direction == SignalDirection.BUY and ev.event_type == BOSCHOCHType.BULLISH_CHOCH) or (
-                    direction == SignalDirection.SELL and ev.event_type == BOSCHOCHType.BEARISH_CHOCH
-                ):
-                    has_mss = True
-                    break
-        if has_mss:
+        if confirmation_res.has_mss:
             structure_score += 8.0
-            score_audit.append({"pillar": "Structure & MTF", "rule": "MSS / CHoCH", "points": 8.0, "max": 8.0, "reason": "Confirmed Market Structure Shift (CHoCH) after sweep"})
+            score_audit.append({"pillar": "Structure & MTF", "rule": "MSS / CHoCH", "points": 8.0, "max": 8.0, "reason": "Confirmed Market Structure Shift (MSS) after sweep"})
         else:
-            structure_score += 6.0
-            score_audit.append({"pillar": "Structure & MTF", "rule": "MSS / CHoCH", "points": 6.0, "max": 8.0, "reason": "Clean AMD reversal structure"})
+            structure_score += 4.0
+            score_audit.append({"pillar": "Structure & MTF", "rule": "MSS / CHoCH", "points": 4.0, "max": 8.0, "reason": "Baseline reversal structure"})
 
-        # 1.4 Displacement candle strength (max 4)
-        disp_body = analysis.confirmation_displacement
+        # 1.4 Displacement candle strength (max 5)
+        disp_body = confirmation_res.displacement_size or analysis.confirmation_displacement
         if effective_atr > 0.0 and disp_body >= 0.30 * effective_atr:
             structure_score += 5.0
             score_audit.append({"pillar": "Structure & MTF", "rule": "Displacement Strength", "points": 5.0, "max": 5.0, "reason": f"Strong confirmation displacement (${disp_body:.2f} >= 0.3x ATR)"})
         elif disp_body > 0:
-            structure_score += 5.0
-            score_audit.append({"pillar": "Structure & MTF", "rule": "Displacement Strength", "points": 5.0, "max": 5.0, "reason": f"Clean confirmation displacement (${disp_body:.2f})"})
+            structure_score += 4.0
+            score_audit.append({"pillar": "Structure & MTF", "rule": "Displacement Strength", "points": 4.0, "max": 5.0, "reason": f"Clean confirmation displacement (${disp_body:.2f})"})
         else:
-            structure_score += 3.0
-            score_audit.append({"pillar": "Structure & MTF", "rule": "Displacement Strength", "points": 3.0, "max": 5.0, "reason": "Baseline displacement"})
+            structure_score += 2.0
+            score_audit.append({"pillar": "Structure & MTF", "rule": "Displacement Strength", "points": 2.0, "max": 5.0, "reason": "Baseline displacement"})
 
         # 1.5 Premium / Discount alignment (max 4)
         mid_point = analysis.range_low + (range_size * 0.5)
@@ -1008,64 +1160,42 @@ class CRTStrategy(BaseStrategy):
         # Pillar 2: Liquidity & POIs (Max 40)
         liquidity_score = 0.0
         # 2.1 Swept Level Significance (max 18)
-        sweep_level_type = "Benchmark Range Extreme"
-        level_points = 14.0
-        if structure is not None and structure.liquidity_pools:
-            for pool in structure.liquidity_pools:
-                if (direction == SignalDirection.BUY and pool.pool_type == LiquidityEventType.EQUAL_LOWS) or (
-                    direction == SignalDirection.SELL and pool.pool_type == LiquidityEventType.EQUAL_HIGHS
-                ):
-                    if abs(pool.price_level - swept_edge) <= 1.0 * (effective_atr or 5.0):
-                        sweep_level_type = "Equal Highs/Lows Liquidity Pool"
-                        level_points = 18.0
-                        break
-
-        if sweep_level_type == "Benchmark Range Extreme" and structure is not None and structure.base_structure.swing_points:
-            for sp in structure.base_structure.swing_points:
-                if abs(sp.price - swept_edge) <= 1.0 * (effective_atr or 5.0):
-                    sweep_level_type = f"Confirmed {sp.swing_type.value}"
-                    level_points = 16.0
-                    break
-
         liquidity_score += level_points
         score_audit.append({"pillar": "Liquidity & POIs", "rule": "Swept Level", "points": level_points, "max": 18.0, "reason": f"Swept level: {sweep_level_type}"})
 
         # 2.2 Entry inside/near valid FVG or Order Block (max 12)
         poi_points = 8.0
-        poi_reason = "Benchmark accumulation manipulation zone"
-        if indicators is not None and indicators.active_fvgs:
+        poi_reason = f"Retracement {entry_res.zone_type} zone entry"
+        if entry_res.zone_type in ("FVG", "ORDER_BLOCK"):
+            poi_points = 12.0
+            poi_reason = f"Entry sitting directly inside fresh {entry_res.zone_type}"
+        elif indicators is not None and indicators.active_fvgs:
             for fvg in indicators.active_fvgs:
                 if (direction == SignalDirection.BUY and fvg.fvg_type == FVGType.BULLISH_FVG) or (
                     direction == SignalDirection.SELL and fvg.fvg_type == FVGType.BEARISH_FVG
                 ):
-                    if not fvg.is_mitigated:
-                        if fvg.bottom_price <= current_price <= fvg.top_price:
-                            poi_points = 12.0
-                            poi_reason = "Entry sitting directly inside fresh aligned FVG"
-                            break
-                        elif abs(current_price - (fvg.top_price if direction == SignalDirection.BUY else fvg.bottom_price)) <= 0.5 * risk_distance:
-                            poi_points = 10.0
-                            poi_reason = "Entry adjacent to fresh aligned FVG"
-                            break
+                    if not fvg.is_mitigated and fvg.bottom_price <= current_price <= fvg.top_price:
+                        poi_points = 12.0
+                        poi_reason = "Entry sitting directly inside fresh aligned FVG"
+                        break
 
         liquidity_score += poi_points
         score_audit.append({"pillar": "Liquidity & POIs", "rule": "POI Proximity", "points": poi_points, "max": 12.0, "reason": poi_reason})
 
         # 2.3 Clean path to target (max 10)
-        if nearest_obstacle_price is None:
+        if not target_plan.capped_by_obstacle:
             liquidity_score += 10.0
             score_audit.append({"pillar": "Liquidity & POIs", "rule": "Clean Path", "points": 10.0, "max": 10.0, "reason": "Unobstructed path to targets (No opposing unmitigated zones)"})
         else:
-            obs_r = abs(nearest_obstacle_price - current_price) / max(1e-6, risk_distance)
-            if obs_r >= 2.0:
+            if rr_tp1 >= 2.0:
                 liquidity_score += 8.0
-                score_audit.append({"pillar": "Liquidity & POIs", "rule": "Clean Path", "points": 8.0, "max": 10.0, "reason": f"Generous clear path ({obs_r:.1f}R to {nearest_obstacle_desc})"})
-            elif obs_r >= 1.2:
+                score_audit.append({"pillar": "Liquidity & POIs", "rule": "Clean Path", "points": 8.0, "max": 10.0, "reason": f"Generous clear path ({rr_tp1:.1f}R to {target_plan.obstacle_type})"})
+            elif rr_tp1 >= 1.2:
                 liquidity_score += 6.0
-                score_audit.append({"pillar": "Liquidity & POIs", "rule": "Clean Path", "points": 6.0, "max": 10.0, "reason": f"Adequate clear path ({obs_r:.1f}R to {nearest_obstacle_desc})"})
+                score_audit.append({"pillar": "Liquidity & POIs", "rule": "Clean Path", "points": 6.0, "max": 10.0, "reason": f"Adequate clear path ({rr_tp1:.1f}R to {target_plan.obstacle_type})"})
             else:
                 liquidity_score += 3.0
-                score_audit.append({"pillar": "Liquidity & POIs", "rule": "Clean Path", "points": 3.0, "max": 10.0, "reason": f"Tight obstacle margin ({obs_r:.1f}R to {nearest_obstacle_desc})"})
+                score_audit.append({"pillar": "Liquidity & POIs", "rule": "Clean Path", "points": 3.0, "max": 10.0, "reason": f"Tight obstacle margin ({rr_tp1:.1f}R to {target_plan.obstacle_type})"})
 
         liquidity_score = min(40.0, max(0.0, liquidity_score))
 
@@ -1114,11 +1244,13 @@ class CRTStrategy(BaseStrategy):
 
         # Penalties (subtract)
         penalties = 0.0
-        if nearest_obstacle_price is not None:
-            obs_r = abs(nearest_obstacle_price - current_price) / max(1e-6, risk_distance)
-            if obs_r < 1.2:
-                penalties += 5.0
-                score_audit.append({"pillar": "Penalties", "rule": "Near Obstacle", "points": -5.0, "max": 0.0, "reason": f"Obstacle at {obs_r:.2f}R (< 1.2R)"})
+        if not is_session_open:
+            penalties += 8.0
+            score_audit.append({"pillar": "Penalties", "rule": "Off-Session Execution", "points": -8.0, "max": 0.0, "reason": f"Formed outside allowed trading sessions ({session_name})"})
+
+        if target_plan.capped_by_obstacle and rr_tp1 < 1.2:
+            penalties += 5.0
+            score_audit.append({"pillar": "Penalties", "rule": "Near Obstacle", "points": -5.0, "max": 0.0, "reason": f"Obstacle at {rr_tp1:.2f}R (< 1.2R)"})
 
         # Calculate Total Composite Score
         total_score = round(max(0.0, min(100.0, structure_score + liquidity_score + price_action_score - penalties)), 1)
@@ -1134,7 +1266,7 @@ class CRTStrategy(BaseStrategy):
         )
 
         # ------------------------------------------------------------------
-        # 9. Position Sizing & Pips Math (Fixes 5 & 6)
+        # 13. Position Sizing & Pips Math
         # ------------------------------------------------------------------
         contract_size = 100.0
         broker_step = 0.01
@@ -1173,16 +1305,50 @@ class CRTStrategy(BaseStrategy):
             actual_risk_dollars = round(lots * dollar_risk_per_lot, 2)
 
         # ------------------------------------------------------------------
-        # 10. Assemble Strategy Result & Setup State
+        # 14. Quality Tiering & Lifecycle State Evaluation
         # ------------------------------------------------------------------
+        quality_tier_res: QualityTierResult = determine_quality_tier(
+            score=total_score,
+            gatekeeper_passed=is_qualified,
+        )
+
         setup_state = "CONFIRMED_SETUP" if is_qualified else "POTENTIAL_SETUP"
 
+        expires_at = entry_res.expires_at
+        expires_at_utc_str = expires_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            bangkok_tz = ZoneInfo("Asia/Bangkok")
+            expires_at_utc7_str = expires_at.astimezone(bangkok_tz).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            expires_at_utc7_str = expires_at_utc_str
+
+        lifecycle_res: StateTransitionResult = evaluate_lifecycle_state(
+            sweep_key=sweep_event_key,
+            direction=direction,
+            current_price=current_price,
+            current_time=latest_ts,
+            entry_price=current_price,
+            stop_loss=stop_loss,
+            tp1=take_profit_1,
+            tp2=take_profit_2,
+            zone_high=entry_res.zone_high,
+            zone_low=entry_res.zone_low,
+            expires_at=expires_at,
+            db_conn=kwargs.get("db"),
+            is_missed=entry_res.is_missed,
+            is_sweep_broken=is_extreme_broken,
+        )
+
+        # ------------------------------------------------------------------
+        # 15. Assemble Strategy Result & Metadata
+        # ------------------------------------------------------------------
         bias_str = "BULLISH" if direction == SignalDirection.BUY else "BEARISH"
         reasons.extend([
             f"CRT AMD Setup Confirmed ({direction.value}): {bias_str} Accumulation -> Manipulation -> Distribution",
             f"Accumulation: High={analysis.range_high:.5f}, Low={analysis.range_low:.5f}, Size=${range_size:.2f}",
             f"Manipulation: Extreme breach at {analysis.breach_point:.5f} ({analysis.manip_depth_pct:.1f}% depth >= {self.min_manip_pct:.1f}% min)",
             f"Distribution: Price closed back inside range at {current_price:.5f}",
+            f"Retracement Entry: Mode={entry_res.entry_mode}, Zone=[{entry_res.zone_low:.2f}, {entry_res.zone_high:.2f}], Ideal={entry_res.ideal_entry:.2f}",
             f"Risk Profile: Entry={current_price:.5f}, SL={stop_loss:.5f} ({risk_pips:.1f} pips | ${actual_risk_dollars:.2f} risk), TP1={take_profit_1:.5f} ({rr_tp1:.1f} R:R)",
             f"Confluence Score: {total_score:.1f}/100 (Structure: {structure_score:.0f}/35, Liquidity: {liquidity_score:.0f}/40, PriceAction: {price_action_score:.0f}/25)",
         ])
@@ -1209,7 +1375,7 @@ class CRTStrategy(BaseStrategy):
             "htf_trend_source": htf_trend_source,
             "setup_state": setup_state,
             "sweep_level_type": sweep_level_type,
-            "nearest_obstacle": nearest_obstacle_desc,
+            "nearest_obstacle": target_plan.obstacle_type,
             "session_name": session_name,
             "score_audit": score_audit,
             "suggested_lot_size": suggested_lots,
@@ -1217,13 +1383,84 @@ class CRTStrategy(BaseStrategy):
             "risk_warning": risk_warning,
             "sweep_event_key": sweep_event_key,
             "gatekeeper_passed": is_qualified,
+            "quality_tier": quality_tier_res.tier,
+            "quality_tier_label": quality_tier_res.tier_label,
+            "should_alert_telegram": quality_tier_res.should_alert_telegram,
+            "entry_zone": [entry_res.zone_low, entry_res.zone_high],
+            "ideal_entry": entry_res.ideal_entry,
+            "entry_mode": entry_res.entry_mode,
+            "target_type": target_plan.target_type,
+            "expires_at": expires_at,
+            "expires_at_utc": expires_at_utc_str,
+            "expires_at_utc7": expires_at_utc7_str,
+            "lifecycle_state": lifecycle_res.current_state,
+            "previous_state": lifecycle_res.previous_state,
+            "transition_occurred": lifecycle_res.transition_occurred,
+            "should_send_management_alert": lifecycle_res.should_send_management_alert,
+            "daily_bias": daily_bias_res.bias,
+            "premium_discount": daily_bias_res.premium_discount,
         }
 
         # If not qualified, map direction to WAIT
         result_dir = direction if is_qualified else SignalDirection.WAIT
 
-        if is_qualified:
+        if is_qualified and enable_dedup:
             self._emitted_sweep_events[sweep_event_key] = now_utc
+            db_conn = kwargs.get("db")
+            close_sess = False
+            if db_conn is None:
+                try:
+                    from app.core.database import SessionLocal
+                    db_conn = SessionLocal()
+                    close_sess = True
+                except Exception:
+                    db_conn = None
+            if db_conn is not None:
+                try:
+                    from app.models.crt_sweep_event import CRTSweepEvent
+                    from app.core.database import engine, Base
+                    Base.metadata.create_all(bind=engine, tables=[CRTSweepEvent.__table__])
+                    cd_until = now_utc + timedelta(seconds=self.cooldown_seconds)
+                    ev = db_conn.query(CRTSweepEvent).filter(CRTSweepEvent.sweep_key == sweep_event_key).first()
+                    if ev is not None:
+                        ev.emitted_at = now_utc
+                        ev.cooldown_until = cd_until
+                        ev.current_state = setup_state
+                        ev.quality_tier = quality_tier_res.tier
+                        ev.entry_price = current_price
+                        ev.stop_loss = stop_loss
+                        ev.take_profit_1 = take_profit_1
+                        ev.take_profit_2 = take_profit_2
+                        ev.zone_high = entry_res.zone_high
+                        ev.zone_low = entry_res.zone_low
+                        ev.expires_at = expires_at
+                    else:
+                        ev = CRTSweepEvent(
+                            sweep_key=sweep_event_key,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            direction=direction.value,
+                            emitted_at=now_utc,
+                            cooldown_until=cd_until,
+                            current_state=setup_state,
+                            quality_tier=quality_tier_res.tier,
+                            entry_price=current_price,
+                            stop_loss=stop_loss,
+                            take_profit_1=take_profit_1,
+                            take_profit_2=take_profit_2,
+                            zone_high=entry_res.zone_high,
+                            zone_low=entry_res.zone_low,
+                            expires_at=expires_at,
+                        )
+                        db_conn.add(ev)
+                    db_conn.commit()
+                except Exception as e:
+                    if db_conn:
+                        db_conn.rollback()
+                    logger.debug(f"CRT DB dedup persistence: {e}")
+                finally:
+                    if close_sess and db_conn:
+                        db_conn.close()
 
         result = StrategyResult(
             strategy_name=self.name,

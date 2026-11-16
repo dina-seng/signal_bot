@@ -6,7 +6,7 @@ Implements the Accumulation, Manipulation, and Distribution (AMD) framework:
 - Distribution: Confirms setup validity when price closes back inside the benchmark range.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional, Sequence, Union
 from app.core.logging import logger
 from app.schemas.structure import CRTAnalysis
@@ -27,6 +27,26 @@ def _get_candle_ts(candle: Any) -> Optional[datetime]:
     if isinstance(raw, datetime):
         return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
     return None
+
+
+def _get_timeframe_duration(tf: Optional[str]) -> timedelta:
+    """Resolve duration of higher timeframe accumulation range candle."""
+    if not tf:
+        return timedelta(hours=1)
+    tf_lower = str(tf).lower().strip()
+    if tf_lower in ("1h", "60", "60m"):
+        return timedelta(hours=1)
+    elif tf_lower in ("4h", "240", "240m"):
+        return timedelta(hours=4)
+    elif tf_lower in ("1d", "d"):
+        return timedelta(days=1)
+    elif tf_lower in ("15m", "15"):
+        return timedelta(minutes=15)
+    elif tf_lower in ("30m", "30"):
+        return timedelta(minutes=30)
+    elif tf_lower in ("5m", "5"):
+        return timedelta(minutes=5)
+    return timedelta(hours=1)
 
 
 class CRTAnalyzer:
@@ -112,25 +132,32 @@ class CRTAnalyzer:
         # --------------------------------------------------------------
         # Chronological Verification: No-lookahead filtering
         # --------------------------------------------------------------
-        # If candles carry meaningful, distinct timestamps, confirm/manipulation
-        # candles must occur AFTER or at the close of the range candle.
-        # When timestamps are missing or identical (e.g. synthetic test fixtures),
-        # all provided confirm_candles are accepted.
-        filtered_confirms: List[Any] = []
-        if range_open_ts is not None:
-            has_distinct_ts = any(
-                _get_candle_ts(c) is not None and _get_candle_ts(c) != range_open_ts
-                for c in confirm_candles
+        # Check for missing timestamps: if range candle or any confirm candle lacks a timestamp, return WAIT
+        if range_open_ts is None or any(_get_candle_ts(c) is None for c in confirm_candles):
+            return CRTAnalysis(
+                range_high=round(range_high, 5),
+                range_low=round(range_low, 5),
+                range_open=round(range_open, 5),
+                range_close=round(range_close, 5),
+                positive_direction=positive_direction,
+                breach_point=None,
+                is_breached=False,
+                is_confirmed=False,
+                manip_depth_pct=0.0,
+                range_open_timestamp=range_open_ts,
+                has_missing_timestamps=True,
             )
-            if has_distinct_ts:
-                filtered_confirms = [
-                    c for c in confirm_candles
-                    if _get_candle_ts(c) is None or _get_candle_ts(c) >= range_open_ts
-                ]
-            else:
-                filtered_confirms = list(confirm_candles)
-        else:
-            filtered_confirms = list(confirm_candles)
+
+        # Manipulation/confirmation candles must start at or after range_open + HTF_duration (the HTF candle's close),
+        # never merely at or after its open.
+        ref_tf = getattr(ref_candle, "timeframe", None) if not isinstance(ref_candle, dict) else ref_candle.get("timeframe")
+        htf_duration = _get_timeframe_duration(ref_tf)
+        range_close_ts = range_open_ts + htf_duration
+
+        filtered_confirms = [
+            c for c in confirm_candles
+            if _get_candle_ts(c) is not None and _get_candle_ts(c) >= range_close_ts
+        ]
 
         if not filtered_confirms:
             return CRTAnalysis(
