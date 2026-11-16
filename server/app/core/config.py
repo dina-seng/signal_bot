@@ -58,6 +58,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MAX_RISK_PERCENT", "RISK_PER_ORDER_PCT"),
     )
 
+    # Candle Range Theory (CRT) & SMC Sweep Defaults
+    CRT_MIN_RR_TP1: float = Field(default=1.0, ge=0.5, description="Minimum acceptable R:R for TP1")
+    CRT_MIN_RANGE_ATR_MULT: float = Field(default=0.35, ge=0.1, description="Minimum benchmark range height vs ATR")
+    CRT_MAX_RANGE_ATR_MULT: float = Field(default=4.0, ge=1.0, description="Maximum benchmark range height vs ATR")
+    CRT_MAX_RISK_ATR_MULT: float = Field(default=3.0, ge=0.5, description="Maximum risk distance vs ATR")
+    CRT_MIN_SWEEP_ATR_MULT: float = Field(default=0.15, ge=0.01, description="Minimum sweep distance vs ATR")
+    CRT_ENTRY_EXPIRY_BARS: int = Field(default=8, ge=1, description="Limit entry zone expiry in LTF bars")
+
     # Backtesting & Execution Friction (USD per ounce for XAU/USD)
     XAUUSD_SPREAD: float = Field(
         default=0.30,

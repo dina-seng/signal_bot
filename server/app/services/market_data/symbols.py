@@ -32,8 +32,8 @@ INSTRUMENT_SPECS: Dict[str, InstrumentSpec] = {
         canonical="XAU/USD",
         base_currency="XAU",
         quote_currency="USD",
-        pip_size=0.01,
-        point_value_per_lot=1.0,  # 100 oz * $0.01 = $1.00 per pip per standard lot
+        pip_size=0.10,  # 1 pip = $0.10 for XAU/USD (standard retail broker convention; $0.01 is 1 point)
+        point_value_per_lot=10.0,  # 100 oz * $0.10 = $10.00 per pip per standard lot
         contract_size=100.0,
         digits=2,
         description="Gold Spot / US Dollar",

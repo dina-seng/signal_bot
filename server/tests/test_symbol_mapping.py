@@ -38,8 +38,8 @@ def test_unknown_symbol_raises_unknown_symbol_error():
 
 def test_pip_distance_and_price_formatting():
     """Verify pip calculations and formatting across instruments (gold, forex, JPY, index)."""
-    # Gold: pip = 0.01 (1 cent) -> $5.00 move is 500 pips
-    assert calculate_pips(2650.00, 2655.00, "XAU/USD") == 500.0
+    # Gold: pip = 0.10 ($0.10) -> $5.00 move is 50 pips
+    assert calculate_pips(2650.00, 2655.00, "XAU/USD") == 50.0
     assert format_price(2650.50, "XAU/USD") == "2650.50"
 
     # EUR/USD: pip = 0.0001

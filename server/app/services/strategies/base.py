@@ -24,6 +24,12 @@ class StrategyResult:
     reasons: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     score_breakdown: Optional[ScoreBreakdown] = None
+    entry_price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    take_profit_1: Optional[float] = None
+    take_profit_2: Optional[float] = None
+    risk_reward: Optional[float] = None
+    breach_point: Optional[float] = None
 
 
 class BaseStrategy(ABC):
