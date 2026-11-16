@@ -112,7 +112,7 @@ class TestCRTStrategy:
             base_time=now,
         )
 
-        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
         result = strategy.analyze(
             symbol="XAU/USD",
             timeframe="1h",
@@ -125,18 +125,19 @@ class TestCRTStrategy:
         assert result.score_breakdown.is_qualified is True
         assert result.score_breakdown.total_score == result.score
 
-        expected_entry = 1965.0
+        expected_entry = 1955.0  # Retracement limit ideal entry
         expected_sl = 1935.0
         risk_dist = expected_entry - expected_sl
         expected_tp1 = 2025.0  # CRT-Native Range Midpoint: (2100 + 1950) / 2
         expected_tp2 = 2100.0  # CRT-Native Range High
+        expected_rr = round((expected_tp1 - expected_entry) / risk_dist, 2)  # 3.5R
 
         assert result.stop_loss == expected_sl
         assert result.metadata["stop_loss"] == expected_sl
         assert result.metadata["entry_price"] == expected_entry
         assert result.metadata["take_profit_1"] == pytest.approx(expected_tp1)
         assert result.metadata["take_profit_2"] == pytest.approx(expected_tp2)
-        assert result.metadata["risk_reward"] == pytest.approx(2.0)
+        assert result.metadata["risk_reward"] == pytest.approx(expected_rr)
         assert result.metadata["target_type"] == "CRT_RANGE"
 
         crt_data = result.metadata["crt_analysis"]
@@ -157,12 +158,12 @@ class TestCRTStrategy:
         now = SESSION_ACTIVE_TS
         range_candle, manip_candle, confirm_candle = _make_amd_fixture(
             2080.0, 2100.0, 1950.0, 1970.0,
-            2095.0, 2115.0, 2085.0, 2105.0,
+            2095.0, 2115.0, 2090.0, 2105.0,
             2105.0, 2108.0, 2075.0, 2085.0,
             base_time=now,
         )
 
-        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
         result = strategy.analyze(
             symbol="XAU/USD",
             timeframe="1h",
@@ -174,15 +175,16 @@ class TestCRTStrategy:
         assert result.score >= 75.0
         assert result.stop_loss == 2115.0
 
-        expected_entry = 2085.0
+        expected_entry = 2095.0  # Retracement limit ideal entry
         expected_sl = 2115.0
         risk_dist = expected_sl - expected_entry
         expected_tp1 = 2025.0  # CRT-Native Range Midpoint: (2100 + 1950) / 2
         expected_tp2 = 1950.0  # CRT-Native Range Low
+        expected_rr = round((expected_entry - expected_tp1) / risk_dist, 2)  # 3.5R
 
         assert result.metadata["take_profit_1"] == pytest.approx(expected_tp1)
         assert result.metadata["take_profit_2"] == pytest.approx(expected_tp2)
-        assert result.metadata["risk_reward"] == pytest.approx(2.0)
+        assert result.metadata["risk_reward"] == pytest.approx(expected_rr)
         assert result.metadata["target_type"] == "CRT_RANGE"
         assert result.metadata["crt_analysis"]["manip_depth_pct"] == pytest.approx(10.0)
         assert result.metadata["crt_analysis"]["positive_direction"] is False
@@ -197,7 +199,7 @@ class TestCRTStrategy:
             base_time=now,
         )
 
-        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
         result = strategy.analyze(
             symbol="XAU/USD",
             timeframe="1h",
@@ -247,7 +249,7 @@ class TestCRTStrategy:
             base_time=now,
         )
 
-        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
         result = strategy.analyze(
             symbol="XAU/USD",
             timeframe="1h",
@@ -366,20 +368,20 @@ class TestCRTStrategy:
 
     def test_confluence_engine_evaluates_crt_custom_sl(self):
         """Verify ConfluenceEngine respects CRT custom SL and TP in SignalResponse."""
-        now = datetime.now(timezone.utc)
+        now = SESSION_ACTIVE_TS
         candles_1h = [
             _make_candle(
                 2000.0, 2030.0, 1995.0, 2025.0,
-                timestamp=now - timedelta(hours=31 - k),
+                timestamp=now - timedelta(hours=30 - k),
                 timeframe="1h",
             )
             for k in range(30)
         ]
         # Confirmation candles occur strictly after the last 1h candle
         candles_15m = [
-            _make_candle(1996.0, 1998.0, 1988.0, 1990.0, timestamp=now - timedelta(minutes=45), timeframe="15m"),
-            _make_candle(1990.0, 2005.0, 1989.0, 2000.0, timestamp=now - timedelta(minutes=30), timeframe="15m"),
-            _make_candle(2000.0, 2002.0, 1994.0, 1998.0, timestamp=now - timedelta(minutes=15), timeframe="15m"),
+            _make_candle(1996.0, 1998.0, 1988.0, 1990.0, timestamp=now + timedelta(minutes=15), timeframe="15m"),
+            _make_candle(1990.0, 2005.0, 1989.0, 2000.0, timestamp=now + timedelta(minutes=30), timeframe="15m"),
+            _make_candle(2000.0, 2002.0, 1994.0, 1998.0, timestamp=now + timedelta(minutes=45), timeframe="15m"),
         ]
 
         engine = ConfluenceEngine()
@@ -388,6 +390,8 @@ class TestCRTStrategy:
             timeframe="1h",
             candles_primary=candles_1h,
             candles_15m=candles_15m,
+            as_of=now + timedelta(minutes=50),
+            backtest_mode=True,
         )
 
         crt_sig = next((s for s in signals if s.strategy_name == "Candle Range Theory (CRT)"), None)
@@ -406,7 +410,7 @@ class TestCRTStrategy:
             base_time=now,
         )
 
-        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
         result = strategy.analyze(
             symbol="XAU/USD",
             timeframe="15m",
@@ -430,7 +434,7 @@ class TestCRTStrategy:
             base_time=now,
         )
 
-        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
         result = strategy.analyze(
             symbol="XAU/USD",
             timeframe="15m",
@@ -504,7 +508,7 @@ class TestCRTStrategy:
             trend=TrendDirection.BEARISH, trend_strength=0.8, market_state="TRENDING_BEARISH", base_structure=base_struct,
         )
 
-        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1)
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
         res_struct = strategy.analyze(
             symbol="XAU/USD",
             timeframe="15m",
@@ -517,19 +521,19 @@ class TestCRTStrategy:
 
     def test_confluence_engine_passes_htf_trend_to_crt(self):
         """Verify ConfluenceEngine forwards HTF trend into strategy.analyze and rejects counter-trend CRT."""
-        now = datetime.now(timezone.utc)
+        now = SESSION_ACTIVE_TS
         candles_1h = [
             _make_candle(
                 2080.0, 2100.0, 1950.0, 1970.0,
-                timestamp=now - timedelta(hours=31 - k),
+                timestamp=now - timedelta(hours=30 - k),
                 timeframe="1h",
             )
             for k in range(30)
         ]
         candles_15m = [
-            _make_candle(1955.0, 1960.0, 1935.0, 1945.0, timestamp=now - timedelta(minutes=45), timeframe="15m"),
-            _make_candle(1945.0, 1970.0, 1940.0, 1965.0, timestamp=now - timedelta(minutes=30), timeframe="15m"),
-            _make_candle(1965.0, 1975.0, 1960.0, 1970.0, timestamp=now - timedelta(minutes=15), timeframe="15m"),
+            _make_candle(1955.0, 1960.0, 1935.0, 1945.0, timestamp=now + timedelta(minutes=15), timeframe="15m"),
+            _make_candle(1945.0, 1970.0, 1940.0, 1965.0, timestamp=now + timedelta(minutes=30), timeframe="15m"),
+            _make_candle(1965.0, 1975.0, 1960.0, 1970.0, timestamp=now + timedelta(minutes=45), timeframe="15m"),
         ]
 
         engine = ConfluenceEngine()
@@ -538,6 +542,8 @@ class TestCRTStrategy:
             timeframe="1h",
             candles_primary=candles_1h,
             candles_15m=candles_15m,
+            as_of=now + timedelta(minutes=50),
+            backtest_mode=True,
         )
 
         crt_sig = next((s for s in signals if s.strategy_name == "Candle Range Theory (CRT)"), None)
@@ -756,11 +762,11 @@ class TestCRTStrategy:
             base_time=now,
         )
 
-        # Entry = 2000.0, SL = 1988.0 (risk = 12.0). Base TP1 would be 2000 + 18 = 2018.0.
-        # Opposing Bearish FVG sits at 2015.0 (15.0 away = 1.25R >= 1.0R, but < 2018.0).
+        # Ideal limit entry = 1996.0, SL = 1987.0 (risk = 9.0). Range Midpoint = 2012.5.
+        # Opposing Bearish FVG sits at 2008.0 (12.0 away = 1.33R >= 1.0R, but < 2012.5).
         opposing_fvg = FairValueGap(
-            index=1, timestamp=now, fvg_type=FVGType.BEARISH_FVG, top_price=2020.0,
-            bottom_price=2015.0, gap_size=5.0, gap_pips=50.0, is_mitigated=False,
+            index=1, timestamp=now, fvg_type=FVGType.BEARISH_FVG, top_price=2012.0,
+            bottom_price=2008.0, gap_size=4.0, gap_pips=40.0, is_mitigated=False,
         )
         indicators = IndicatorAnalysisResponse(
             symbol="XAU/USD", timeframe="1h", timestamp=now, current_price=2000.0,
@@ -780,7 +786,7 @@ class TestCRTStrategy:
         )
 
         assert result.direction == SignalDirection.BUY
-        assert result.take_profit_1 <= 2015.0
+        assert result.take_profit_1 <= 2008.0
         assert "TP1 capped before opposing" in " ".join(result.reasons)
 
     def test_pip_and_lot_math_risk_exceeds_limit(self):
@@ -788,8 +794,8 @@ class TestCRTStrategy:
         now = SESSION_ACTIVE_TS
         range_c, manip_c, confirm_c = _make_amd_fixture(
             2648.0, 2665.0, 2645.0, 2662.0,
-            2646.0, 2648.0, 2641.45, 2644.0,
-            2644.0, 2652.0, 2643.0, 2650.00,
+            2650.0, 2650.0, 2641.45, 2644.0,
+            2644.0, 2652.0, 2643.0, 2651.00,
             base_time=now,
         )
 
@@ -981,11 +987,11 @@ class TestCRTStrategy:
     def test_boundary_max_risk_distance(self):
         """Item 2: Risk distance boundary at 3.0x ATR (== 3.0 accepted, > 3.0 rejected)."""
         now = SESSION_ACTIVE_TS
-        # ATR = 10.0 -> max risk = 30.0. sl_buffer = 0.10*ATR = 1.0.
-        # Breach = 1971.0 -> SL = 1970.0. Entry = 2000.0 -> Risk = 30.0 (3.0x ATR) passes
+        # ATR = 10.0 -> max risk = 30.0. sl_buffer = 0.10*ATR = 1.0. Ideal entry = 1996.0.
+        # Breach = 1967.0 -> SL = 1966.0. Entry = 1996.0 -> Risk = 30.0 (3.0x ATR) passes
         rc_pass, mc_pass, cc_pass = _make_amd_fixture(
             2000.0, 2025.0, 1995.0, 2020.0,
-            1996.0, 1998.0, 1971.0, 1975.0,
+            1996.0, 1998.0, 1967.0, 1975.0,
             1975.0, 2005.0, 1974.0, 2000.0,
             base_time=now,
         )
@@ -996,10 +1002,10 @@ class TestCRTStrategy:
         )
         assert res_pass.metadata.get("rejection_gate") != "EXCESSIVE_RISK_DISTANCE"
 
-        # Breach = 1970.90 -> SL = 1969.90. Entry = 2000.0 -> Risk = 30.10 (> 3.0x ATR) is rejected
+        # Breach = 1966.90 -> SL = 1965.90. Entry = 1996.0 -> Risk = 30.10 (> 3.0x ATR) is rejected
         rc_fail, mc_fail, cc_fail = _make_amd_fixture(
             2000.0, 2025.0, 1995.0, 2020.0,
-            1996.0, 1998.0, 1970.90, 1975.0,
+            1996.0, 1998.0, 1966.90, 1975.0,
             1975.0, 2005.0, 1974.0, 2000.0,
             base_time=now,
         )
@@ -1251,8 +1257,8 @@ class TestCRTStrategy:
         assert result.metadata["target_type"] == "CRT_RANGE"
         assert result.take_profit_1 == pytest.approx(2050.0)  # Midpoint
         assert result.take_profit_2 == pytest.approx(2100.0)  # Range High
-        expected_rr_tp1 = round((2050.0 - 2010.0) / 20.0, 2)  # 2.0R
-        expected_rr_tp2 = round((2100.0 - 2010.0) / 20.0, 2)  # 4.5R
+        expected_rr_tp1 = round((2050.0 - 2005.0) / 15.0, 2)  # 3.0R (using ideal limit entry 2005.0)
+        expected_rr_tp2 = round((2100.0 - 2005.0) / 15.0, 2)  # 6.33R
         assert result.metadata["risk_reward_tp1"] == pytest.approx(expected_rr_tp1)
         assert result.metadata["risk_reward_tp2"] == pytest.approx(expected_rr_tp2)
 
@@ -1264,10 +1270,10 @@ class TestCRTStrategy:
         manip_c = _make_candle(2002.0, 2004.0, 1995.0, 1996.0, timestamp=now + timedelta(hours=1), timeframe="15m")
         confirm_c = _make_candle(1996.0, 2022.0, 1996.0, 2020.0, timestamp=now + timedelta(hours=1, minutes=15), timeframe="15m")
 
-        # Opposing FVG at 2025.0 (only 5.0 away, while risk = 2020 - 1985 = 35.0 -> 0.14R < 1.0R)
+        # Opposing FVG at 2005.0 (only 3.0 away from ideal entry 2002.0, while risk = 8.0 -> 0.38R < 1.0R)
         blocking_fvg = FairValueGap(
-            index=1, timestamp=now, fvg_type=FVGType.BEARISH_FVG, top_price=2030.0,
-            bottom_price=2025.0, gap_size=5.0, gap_pips=50.0, is_mitigated=False,
+            index=1, timestamp=now, fvg_type=FVGType.BEARISH_FVG, top_price=2008.0,
+            bottom_price=2005.0, gap_size=3.0, gap_pips=30.0, is_mitigated=False,
         )
         indicators = IndicatorAnalysisResponse(
             symbol="XAU/USD", timeframe="1h", timestamp=now, current_price=2020.0,
@@ -1291,10 +1297,10 @@ class TestCRTStrategy:
     def test_crt_fallback_targets_labeled_when_midpoint_invalid(self):
         """Item 1: When range midpoint is behind entry, falls back to 1.5R/2.5R and labels it."""
         now = SESSION_ACTIVE_TS
-        # Range 2000.0 to 2040.0 (midpoint = 2020.0). Confirmation closes at 2025.0 (past midpoint!)
+        # Range 2000.0 to 2040.0 (midpoint = 2020.0). Ideal limit entry at 2025.0 (past midpoint!)
         range_c = _make_candle(2010.0, 2040.0, 2000.0, 2035.0, timestamp=now)
-        manip_c = _make_candle(2005.0, 2008.0, 1990.0, 1995.0, timestamp=now + timedelta(hours=1), timeframe="15m")
-        confirm_c = _make_candle(1995.0, 2030.0, 1994.0, 2025.0, timestamp=now + timedelta(hours=1, minutes=15), timeframe="15m")
+        manip_c = _make_candle(2025.0, 2026.0, 1990.0, 1995.0, timestamp=now + timedelta(hours=1), timeframe="15m")
+        confirm_c = _make_candle(1995.0, 2030.0, 1994.0, 2028.0, timestamp=now + timedelta(hours=1, minutes=15), timeframe="15m")
 
         strategy = CRTStrategy(spread=0.0)
         result = strategy.analyze(
@@ -1535,3 +1541,815 @@ class TestCRTStrategy:
             atr=10.0,
         )
         assert score_rand < 18.0
+
+
+
+class TestCRTAuditRemediations:
+    """32 focused regression tests covering all 6 remediation areas from REPORT.md."""
+
+    # =========================================================================
+    # Group 1: Confirmation Tests (1-12)
+    # Tasks A, B, C: Displacement gate, Chronological MSS filtering, Body-close MSS
+    # =========================================================================
+
+    def test_reentry_displacement_post_sweep_mss_confirmed(self):
+        """1. Re-entry candle with valid displacement + valid post-sweep MSS body close confirms BUY."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1945.0, 1950.0, 1935.0, 1940.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(1940.0, 1965.0, 1938.0, 1962.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=t0,
+            atr=10.0,
+        )
+        assert res.is_confirmed is True
+        assert res.has_reentered_range is True
+        assert res.has_displacement is True
+        assert res.has_mss is True
+
+    def test_reentry_no_displacement_mss_not_confirmed(self):
+        """2. Re-entry candle with MSS but lacking displacement returns is_confirmed=False."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1945.0, 1950.0, 1935.0, 1940.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(1953.0, 1960.0, 1940.0, 1954.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=t0,
+            atr=10.0,
+        )
+        assert res.is_confirmed is False
+        assert res.has_displacement is False
+        assert res.state == "WAITING_FOR_CONFIRMATION"
+        assert "displacement" in res.reason.lower()
+
+    def test_reentry_displacement_no_mss_not_confirmed(self):
+        """3. Re-entry candle with displacement but lacking post-sweep MSS returns is_confirmed=False."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1950.0, 1970.0, 1935.0, 1940.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(1940.0, 1957.0, 1940.0, 1955.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=t0,
+            atr=10.0,
+        )
+        assert res.is_confirmed is False
+        assert res.has_displacement is True
+        assert res.has_mss is False
+        assert "mss" in res.reason.lower()
+
+    def test_reentry_no_displacement_no_mss_not_confirmed(self):
+        """4. Re-entry candle with neither displacement nor MSS returns is_confirmed=False."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1950.0, 1970.0, 1935.0, 1940.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(1951.0, 1955.0, 1949.0, 1952.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=t0,
+            atr=10.0,
+        )
+        assert res.is_confirmed is False
+        assert res.has_displacement is False
+        assert res.has_mss is False
+
+    def test_doji_cannot_qualify_as_displacement(self):
+        """5. A doji (tiny body, long wicks) cannot qualify as displacement."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1945.0, 1950.0, 1935.0, 1940.0, timestamp=t0, timeframe="15m")
+        c_doji = _make_candle(1951.0, 1968.0, 1936.0, 1951.2, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_doji],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=t0,
+            atr=10.0,
+        )
+        assert res.has_displacement is False
+        assert res.is_confirmed is False
+
+    def test_presweep_bullish_choch_cannot_confirm_buy(self):
+        """6. Pre-sweep bullish CHOCH/BOS event (timestamp <= breach_timestamp) cannot confirm a BUY."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        from types import SimpleNamespace
+        t0 = SESSION_ACTIVE_TS
+        breach_ts = t0 + timedelta(hours=1)
+        pre_sweep_event = SimpleNamespace(
+            event_type="BULLISH_CHOCH",
+            timestamp=t0 + timedelta(minutes=30),
+        )
+        mock_structure = SimpleNamespace(recent_events=[pre_sweep_event])
+
+        c_sweep = _make_candle(1950.0, 1970.0, 1935.0, 1940.0, timestamp=breach_ts, timeframe="15m")
+        c_confirm = _make_candle(1940.0, 1958.0, 1938.0, 1955.0, timestamp=breach_ts + timedelta(minutes=15), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=breach_ts,
+            atr=10.0,
+            structure=mock_structure,
+        )
+        assert res.has_displacement is True
+        assert res.has_mss is False
+        assert res.is_confirmed is False
+
+    def test_presweep_bearish_choch_cannot_confirm_sell(self):
+        """7. Pre-sweep bearish CHOCH/BOS event cannot confirm a SELL."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        from types import SimpleNamespace
+        t0 = SESSION_ACTIVE_TS
+        breach_ts = t0 + timedelta(hours=1)
+        pre_sweep_event = SimpleNamespace(
+            event_type="BEARISH_CHOCH",
+            timestamp=t0 + timedelta(minutes=30),
+        )
+        mock_structure = SimpleNamespace(recent_events=[pre_sweep_event])
+
+        c_sweep = _make_candle(2050.0, 2065.0, 2030.0, 2060.0, timestamp=breach_ts, timeframe="15m")
+        c_confirm = _make_candle(2060.0, 2062.0, 2042.0, 2045.0, timestamp=breach_ts + timedelta(minutes=15), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.SELL,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=2065.0,
+            manip_candle_index=0,
+            breach_timestamp=breach_ts,
+            atr=10.0,
+            structure=mock_structure,
+        )
+        assert res.has_displacement is True
+        assert res.has_mss is False
+        assert res.is_confirmed is False
+
+    def test_postsweep_valid_mss_can_qualify(self):
+        """8. Post-sweep valid MSS (timestamp > breach_timestamp) qualifies for confirmation."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        from types import SimpleNamespace
+        t0 = SESSION_ACTIVE_TS
+        breach_ts = t0 + timedelta(hours=1)
+        post_sweep_event = SimpleNamespace(
+            event_type="BULLISH_CHOCH",
+            timestamp=breach_ts + timedelta(minutes=15),
+        )
+        mock_structure = SimpleNamespace(recent_events=[post_sweep_event])
+
+        c_sweep = _make_candle(1950.0, 1970.0, 1935.0, 1940.0, timestamp=breach_ts, timeframe="15m")
+        c_confirm = _make_candle(1940.0, 1958.0, 1938.0, 1955.0, timestamp=breach_ts + timedelta(minutes=15), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=breach_ts,
+            atr=10.0,
+            structure=mock_structure,
+        )
+        assert res.has_displacement is True
+        assert res.has_mss is True
+        assert res.is_confirmed is True
+
+    def test_mss_missing_timestamp_cannot_bypass_chronology(self):
+        """9. Event with timestamp=None cannot bypass chronological filtering and is skipped."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        from types import SimpleNamespace
+        t0 = SESSION_ACTIVE_TS
+        breach_ts = t0 + timedelta(hours=1)
+        no_ts_event = SimpleNamespace(
+            event_type="BULLISH_CHOCH",
+            timestamp=None,
+        )
+        mock_structure = SimpleNamespace(recent_events=[no_ts_event])
+
+        c_sweep = _make_candle(1950.0, 1970.0, 1935.0, 1940.0, timestamp=breach_ts, timeframe="15m")
+        c_confirm = _make_candle(1940.0, 1958.0, 1938.0, 1955.0, timestamp=breach_ts + timedelta(minutes=15), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=breach_ts,
+            atr=10.0,
+            structure=mock_structure,
+        )
+        assert res.has_mss is False
+        assert res.is_confirmed is False
+
+    def test_wick_only_bullish_break_cannot_qualify_mss(self):
+        """10. Wick-only break above swing high without body close cannot qualify as MSS."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1945.0, 1960.0, 1935.0, 1940.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(1940.0, 1965.0, 1938.0, 1958.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=t0,
+            atr=10.0,
+        )
+        assert res.has_mss is False
+        assert res.is_confirmed is False
+
+    def test_wick_only_bearish_break_cannot_qualify_mss(self):
+        """11. Wick-only break below swing low without body close cannot qualify as MSS."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(2055.0, 2065.0, 2040.0, 2060.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(2060.0, 2062.0, 2035.0, 2042.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.SELL,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=2065.0,
+            manip_candle_index=0,
+            breach_timestamp=t0,
+            atr=10.0,
+        )
+        assert res.has_mss is False
+        assert res.is_confirmed is False
+
+    def test_close_beyond_swing_level_qualifies_mss(self):
+        """12. Candle body close strictly beyond swing level qualifies as MSS."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1945.0, 1960.0, 1935.0, 1940.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(1940.0, 1965.0, 1938.0, 1962.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_confirm],
+            breach_point=1935.0,
+            manip_candle_index=0,
+            breach_timestamp=t0,
+            atr=10.0,
+        )
+        assert res.has_mss is True
+        assert res.is_confirmed is True
+
+    # =========================================================================
+    # Group 2: Manipulation Candle Tests (13-17)
+    # Task D: Correct manipulation candle identification and slice isolation
+    # =========================================================================
+
+    def test_manipulation_candle_metadata_propagated_correctly(self):
+        """13. CRTAnalysis.manipulation_candle_index accurately identifies extreme sweep candle."""
+        from app.services.structure.crt_analyzer import CRTAnalyzer
+        t0 = SESSION_ACTIVE_TS
+        rc = _make_candle(2000.0, 2050.0, 1950.0, 2020.0, timestamp=t0, timeframe="1h")
+        c0 = _make_candle(1955.0, 1960.0, 1945.0, 1948.0, timestamp=t0 + timedelta(hours=1), timeframe="15m")
+        c1 = _make_candle(1948.0, 1950.0, 1932.0, 1936.0, timestamp=t0 + timedelta(hours=1, minutes=15), timeframe="15m")
+        c2 = _make_candle(1936.0, 1965.0, 1935.0, 1960.0, timestamp=t0 + timedelta(hours=1, minutes=30), timeframe="15m")
+
+        analyzer = CRTAnalyzer()
+        analysis = analyzer.analyze([rc], confirm_candles=[c0, c1, c2])
+
+        assert analysis.is_breached is True
+        assert analysis.breach_point == 1932.0
+        assert analysis.breach_timestamp == c1.timestamp
+        assert analysis.manipulation_candle_index == 1
+
+    def test_presweep_candles_cannot_contribute_to_displacement(self):
+        """14. Pre-sweep candles prior to manipulation extreme cannot satisfy displacement requirement."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c0 = _make_candle(1940.0, 1970.0, 1938.0, 1968.0, timestamp=t0, timeframe="15m")
+        c1 = _make_candle(1968.0, 1970.0, 1930.0, 1932.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        c2 = _make_candle(1952.0, 1954.0, 1951.0, 1953.0, timestamp=t0 + timedelta(minutes=30), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c0, c1, c2],
+            breach_point=1930.0,
+            manip_candle_index=1,
+            breach_timestamp=c1.timestamp,
+            atr=10.0,
+        )
+        assert res.has_displacement is False
+        assert res.is_confirmed is False
+
+    def test_presweep_candles_cannot_contribute_to_mss(self):
+        """15. Pre-sweep candles cannot contribute to MSS breakout verification."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c0 = _make_candle(1950.0, 1960.0, 1948.0, 1955.0, timestamp=t0, timeframe="15m")
+        c1 = _make_candle(1955.0, 1966.0, 1954.0, 1965.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        c2 = _make_candle(1965.0, 1966.0, 1930.0, 1935.0, timestamp=t0 + timedelta(minutes=30), timeframe="15m")
+        c3 = _make_candle(1935.0, 1956.0, 1934.0, 1955.0, timestamp=t0 + timedelta(minutes=45), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c0, c1, c2, c3],
+            breach_point=1930.0,
+            manip_candle_index=2,
+            breach_timestamp=c2.timestamp,
+            atr=10.0,
+        )
+        assert res.has_displacement is True
+        assert res.has_mss is False
+        assert res.is_confirmed is False
+
+    def test_incorrect_or_missing_manipulation_metadata_fails_safely(self):
+        """16. Missing or out-of-bounds manipulation metadata fails safely without uncaught exceptions."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c0 = _make_candle(1950.0, 1960.0, 1935.0, 1940.0, timestamp=t0, timeframe="15m")
+        c1 = _make_candle(1940.0, 1965.0, 1938.0, 1962.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+
+        res_none = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c0, c1],
+            breach_point=1935.0,
+            manip_candle_index=None,
+            atr=10.0,
+        )
+        assert isinstance(res_none.is_confirmed, bool)
+
+        res_oob = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c0, c1],
+            breach_point=1935.0,
+            manip_candle_index=99,
+            atr=10.0,
+        )
+        assert res_oob.is_confirmed is False
+        assert res_oob.state == "WAITING_FOR_CONFIRMATION"
+
+    def test_filtered_candle_lists_timestamp_reference_prevents_misalignment(self):
+        """17. Timestamp-based alignment between candle lists prevents index misalignment."""
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        t0 = SESSION_ACTIVE_TS
+        c0 = _make_candle(1955.0, 1960.0, 1945.0, 1948.0, timestamp=t0, timeframe="15m")
+        c1 = _make_candle(1948.0, 1950.0, 1932.0, 1936.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        c2 = _make_candle(1936.0, 1965.0, 1935.0, 1962.0, timestamp=t0 + timedelta(minutes=30), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c0, c1, c2],
+            breach_point=1932.0,
+            manip_candle_index=0,
+            breach_timestamp=c1.timestamp,
+            atr=10.0,
+        )
+        assert res.is_confirmed is True
+
+    # =========================================================================
+    # Group 3: Entry Geometry Tests (18-25)
+    # Task E: Intended entry price, target calculations, and real R:R geometry
+    # =========================================================================
+
+    def test_buy_market_entry_geometry(self):
+        """18. Market BUY entry geometry uses current/confirmation close for all risk-reward calculations."""
+        from app.services.strategies.crt.entry import calculate_retracement_entry
+        from app.services.strategies.crt.targets import calculate_crt_targets
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1955.0, 1960.0, 1935.0, 1945.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(1945.0, 1960.0, 1940.0, 1955.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+
+        entry_res = calculate_retracement_entry(
+            direction=SignalDirection.BUY,
+            sweep_extreme=1935.0,
+            displacement_extreme=1960.0,
+            candles_15m=[c_sweep, c_confirm],
+            current_price=1955.0,
+            target_tp1=2025.0,
+            atr=10.0,
+        )
+        assert entry_res.entry_mode == "market"
+        target_plan = calculate_crt_targets(
+            direction=SignalDirection.BUY,
+            entry_price=1955.0,
+            stop_loss=entry_res.stop_loss,
+            range_high=2100.0,
+            range_low=1950.0,
+        )
+        assert target_plan.is_valid is True
+        expected_rr = (2025.0 - 1955.0) / (1955.0 - entry_res.stop_loss)
+        assert target_plan.risk_reward_tp1 == pytest.approx(expected_rr, 0.01)
+
+    def test_sell_market_entry_geometry(self):
+        """19. Market SELL entry geometry uses current/confirmation close for all risk-reward calculations."""
+        from app.services.strategies.crt.entry import calculate_retracement_entry
+        from app.services.strategies.crt.targets import calculate_crt_targets
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(2045.0, 2065.0, 2040.0, 2055.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(2055.0, 2060.0, 2040.0, 2045.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        midpoint_eq = (2065.0 + 2040.0) / 2.0
+
+        entry_res = calculate_retracement_entry(
+            direction=SignalDirection.SELL,
+            sweep_extreme=2065.0,
+            displacement_extreme=2040.0,
+            candles_15m=[c_sweep, c_confirm],
+            current_price=midpoint_eq,
+            target_tp1=1975.0,
+            atr=10.0,
+        )
+        assert entry_res.entry_mode == "market"
+        target_plan = calculate_crt_targets(
+            direction=SignalDirection.SELL,
+            entry_price=midpoint_eq,
+            stop_loss=entry_res.stop_loss,
+            range_high=2050.0,
+            range_low=1950.0,
+        )
+        assert target_plan.is_valid is True
+        expected_rr = (midpoint_eq - 2000.0) / (entry_res.stop_loss - midpoint_eq)
+        assert target_plan.risk_reward_tp1 == pytest.approx(expected_rr, 0.01)
+
+    def test_buy_limit_entry_uses_intended_limit_price_for_rr(self):
+        """20. Limit-zone BUY entry uses intended limit price (ideal_entry) for R:R calculations (3.08R vs 1.04R)."""
+        from app.services.strategies.crt.targets import calculate_crt_targets
+        plan = calculate_crt_targets(
+            direction=SignalDirection.BUY,
+            entry_price=1994.0,
+            stop_loss=1988.0,
+            range_high=2030.0,
+            range_low=1995.0,
+        )
+        assert plan.is_valid is True
+        assert plan.risk_usd == 6.0
+        assert plan.reward_usd_tp1 == 18.5
+        assert plan.risk_reward_tp1 == pytest.approx(3.08, 0.01)
+
+    def test_sell_limit_entry_uses_intended_limit_price_for_rr(self):
+        """21. Limit-zone SELL entry uses intended limit price (ideal_entry) for R:R calculations."""
+        from app.services.strategies.crt.targets import calculate_crt_targets
+        plan = calculate_crt_targets(
+            direction=SignalDirection.SELL,
+            entry_price=2006.0,
+            stop_loss=2012.0,
+            range_high=2005.0,
+            range_low=1970.0,
+        )
+        assert plan.is_valid is True
+        assert plan.risk_usd == 6.0
+        assert plan.reward_usd_tp1 == 18.5
+        assert plan.risk_reward_tp1 == pytest.approx(3.08, 0.01)
+
+    def test_stop_loss_validation_uses_effective_entry(self):
+        """22. Stop loss validation enforces stop_loss < effective_entry (BUY) and stop_loss > effective_entry (SELL)."""
+        from app.services.strategies.crt.targets import calculate_crt_targets
+        plan_buy_inv = calculate_crt_targets(
+            direction=SignalDirection.BUY,
+            entry_price=1994.0,
+            stop_loss=1995.0,
+            range_high=2030.0,
+            range_low=1995.0,
+        )
+        assert plan_buy_inv.is_valid is False
+        assert plan_buy_inv.rejection_gate == "INVALID_RISK_GEOMETRY"
+
+        plan_sell_inv = calculate_crt_targets(
+            direction=SignalDirection.SELL,
+            entry_price=2006.0,
+            stop_loss=2005.0,
+            range_high=2005.0,
+            range_low=1970.0,
+        )
+        assert plan_sell_inv.is_valid is False
+        assert plan_sell_inv.rejection_gate == "INVALID_RISK_GEOMETRY"
+
+    def test_obstacle_path_rr_uses_effective_entry(self):
+        """23. Obstacle path validator calculates reward-to-risk from effective_entry to obstacle price."""
+        from app.services.strategies.crt.targets import calculate_crt_targets
+        from app.schemas.liquidity import SupportResistanceZone, ZoneType
+        from types import SimpleNamespace
+        # Obstacle at 2002.0. Effective entry is 1994.0, SL is 1988.0 (risk = 6.0).
+        # Capped TP1 = 2001.5. Reward = 2001.5 - 1994.0 = 7.5 -> R:R = 7.5 / 6.0 = 1.25R (>= 1.0R min_rr).
+        zone = SupportResistanceZone(
+            zone_type=ZoneType.RESISTANCE,
+            price_high=2003.0,
+            price_low=2001.0,
+            center_price=2002.0,
+            touch_count=3,
+            first_touch=SESSION_ACTIVE_TS,
+            last_touch=SESSION_ACTIVE_TS,
+            strength=0.8,
+        )
+        structure = SimpleNamespace(sr_zones=[zone], liquidity_pools=[])
+        plan = calculate_crt_targets(
+            direction=SignalDirection.BUY,
+            entry_price=1994.0,
+            stop_loss=1988.0,
+            range_high=2030.0,
+            range_low=1995.0,
+            structure=structure,
+            min_rr=1.0,
+        )
+        assert plan.is_valid is True
+        assert plan.capped_by_obstacle is True
+        assert plan.take_profit_1 == 2001.5
+        assert plan.risk_reward_tp1 == pytest.approx(1.25, 0.01)
+
+    def test_position_sizing_uses_executable_entry(self):
+        """24. Position sizing risk distance uses abs(effective_entry - stop_loss)."""
+        now = SESSION_ACTIVE_TS
+        range_candle, manip_candle, confirm_candle = _make_amd_fixture(
+            2000.0, 2100.0, 1950.0, 2080.0,
+            1955.0, 1960.0, 1935.0, 1945.0,
+            1945.0, 1970.0, 1940.0, 1965.0,
+            base_time=now,
+        )
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
+        result = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="1h",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_candle],
+            account_balance=10000.0,
+            risk_percent=1.0,
+        )
+        assert result.direction == SignalDirection.BUY
+        effective_entry = result.metadata["entry_price"]
+        expected_sl = result.metadata["stop_loss"]
+        expected_risk_dist = effective_entry - expected_sl  # 1955.0 - 1935.0 = 20.0
+        # 20.0 price distance in Gold = 200 pips (pip_size=0.1)
+        assert result.metadata["risk_pips"] == pytest.approx(200.0)
+        assert "risk_amount_usd" in result.metadata
+        assert result.metadata["risk_amount_usd"] <= 100.0
+        assert result.metadata["suggested_lot_size"] > 0
+
+    def test_invalid_geometry_rejected_safely(self):
+        """25. Inverted or zero risk distance is rejected safely with INVALID_RISK_GEOMETRY."""
+        from app.services.strategies.crt.targets import calculate_crt_targets
+        plan_zero = calculate_crt_targets(
+            direction=SignalDirection.BUY,
+            entry_price=2000.0,
+            stop_loss=2000.0,
+            range_high=2050.0,
+            range_low=1950.0,
+        )
+        assert plan_zero.is_valid is False
+        assert plan_zero.rejection_gate == "INVALID_RISK_GEOMETRY"
+
+    # =========================================================================
+    # Group 4: Lifecycle Tests (26-32)
+    # Task F: Entry lifecycle state machine and chronological fill detection
+    # =========================================================================
+
+    def test_lifecycle_pending_order_missed_after_threshold(self):
+        """26. Pending limit order running > 0.5R toward TP1 without filling transitions to MISSED."""
+        from app.services.strategies.crt.entry import calculate_retracement_entry
+        from app.services.strategies.crt.lifecycle import evaluate_lifecycle_state, CRTState
+        t0 = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(1955.0, 1960.0, 1935.0, 1945.0, timestamp=t0, timeframe="15m")
+        c_confirm = _make_candle(1945.0, 1970.0, 1940.0, 1965.0, timestamp=t0 + timedelta(minutes=15), timeframe="15m")
+        c_runaway = _make_candle(1965.0, 1982.0, 1960.0, 1980.0, timestamp=t0 + timedelta(minutes=30), timeframe="15m")
+
+        entry_res = calculate_retracement_entry(
+            direction=SignalDirection.BUY,
+            sweep_extreme=1935.0,
+            displacement_extreme=1970.0,
+            candles_15m=[c_sweep, c_confirm, c_runaway],
+            current_price=1980.0,
+            target_tp1=2025.0,
+            atr=10.0,
+        )
+        assert entry_res.is_missed is True
+
+        lifecycle_res = evaluate_lifecycle_state(
+            sweep_key="TEST_BUY_MISSED_1",
+            direction=SignalDirection.BUY,
+            current_price=1980.0,
+            current_time=t0 + timedelta(minutes=30),
+            entry_price=entry_res.ideal_entry,
+            stop_loss=entry_res.stop_loss,
+            tp1=2025.0,
+            tp2=2100.0,
+            zone_high=entry_res.zone_high,
+            zone_low=entry_res.zone_low,
+            expires_at=entry_res.expires_at,
+            is_missed=entry_res.is_missed,
+            initial_state=CRTState.CONFIRMED,
+        )
+        assert lifecycle_res.current_state == CRTState.MISSED
+
+    def test_lifecycle_pending_order_fills_at_t1_remains_filled_at_t2(self):
+        """27. Pending limit order fills when price touches ideal_entry at t1 and remains FILLED at t2."""
+        from app.services.strategies.crt.lifecycle import evaluate_lifecycle_state, CRTState
+        from app.core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            key = "TEST_LIFECYCLE_FILL_PERSIST_1"
+            now = SESSION_ACTIVE_TS
+            expiry = now + timedelta(hours=2)
+
+            res_init = evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=2005.0, current_time=now,
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            assert res_init.current_state == CRTState.CONFIRMED
+
+            res_fill = evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=1998.0, current_time=now + timedelta(minutes=15),
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            assert res_fill.current_state == CRTState.ENTRY_FILLED
+
+            res_t2 = evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=2010.0, current_time=now + timedelta(minutes=30),
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            assert res_t2.current_state == CRTState.ENTRY_FILLED
+        finally:
+            db.close()
+
+    def test_lifecycle_filled_setup_cannot_become_missed_at_t3(self):
+        """28. Filled setup running toward TP1 at t3 cannot regress to MISSED."""
+        from app.services.strategies.crt.lifecycle import evaluate_lifecycle_state, CRTState
+        from app.core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            key = "TEST_FILLED_CANNOT_MISS_1"
+            now = SESSION_ACTIVE_TS
+            expiry = now + timedelta(hours=2)
+
+            evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=1998.0, current_time=now,
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+
+            res_t3 = evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=2015.0, current_time=now + timedelta(hours=1),
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+                is_missed=True,
+            )
+            assert res_t3.current_state == CRTState.ENTRY_FILLED
+            assert res_t3.current_state != CRTState.MISSED
+        finally:
+            db.close()
+
+    def test_lifecycle_filled_setup_transitions_to_tp1_hit(self):
+        """29. Filled setup reaching TP1 transitions to TP1_HIT with one-time alert."""
+        from app.services.strategies.crt.lifecycle import evaluate_lifecycle_state, CRTState
+        from app.core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            key = "TEST_TP1_TRANSITION_1"
+            now = SESSION_ACTIVE_TS
+            expiry = now + timedelta(hours=2)
+
+            evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=1998.0, current_time=now,
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            res_tp1 = evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=2031.0, current_time=now + timedelta(minutes=45),
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            assert res_tp1.current_state == CRTState.TP1_HIT
+            assert res_tp1.should_send_management_alert is True
+            assert "TP1_HIT" in res_tp1.alert_title
+        finally:
+            db.close()
+
+    def test_lifecycle_filled_setup_transitions_to_stopped(self):
+        """30. Filled setup reaching SL transitions to STOPPED with one-time alert."""
+        from app.services.strategies.crt.lifecycle import evaluate_lifecycle_state, CRTState
+        from app.core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            key = "TEST_STOPPED_TRANSITION_1"
+            now = SESSION_ACTIVE_TS
+            expiry = now + timedelta(hours=2)
+
+            evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=1998.0, current_time=now,
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            res_stopped = evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=1978.0, current_time=now + timedelta(minutes=45),
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            assert res_stopped.current_state == CRTState.STOPPED
+            assert res_stopped.should_send_management_alert is True
+            assert "STOPPED" in res_stopped.alert_title
+        finally:
+            db.close()
+
+    def test_lifecycle_future_candles_cannot_alter_historical_decision_at_t(self):
+        """31. Zero lookahead: evaluating at time t produces identical decision regardless of future candles."""
+        now = SESSION_ACTIVE_TS
+        range_candle, manip_candle, confirm_candle = _make_amd_fixture(
+            2000.0, 2100.0, 1950.0, 2080.0,
+            1955.0, 1960.0, 1935.0, 1945.0,
+            1945.0, 1970.0, 1940.0, 1965.0,
+            base_time=now,
+        )
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False)
+        res_t = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="1h",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_candle],
+        )
+
+        res_repeat = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="1h",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_candle],
+        )
+        assert res_t.direction == res_repeat.direction
+        assert res_t.entry_price == res_repeat.entry_price
+        assert res_t.stop_loss == res_repeat.stop_loss
+        assert res_t.score == res_repeat.score
+
+    def test_lifecycle_repeated_evaluation_no_duplicate_alerts(self):
+        """32. Repeated evaluation in the same state does not trigger duplicate management alerts."""
+        from app.services.strategies.crt.lifecycle import evaluate_lifecycle_state, CRTState
+        from app.core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            key = "TEST_NO_DUPLICATE_ALERTS_1"
+            now = SESSION_ACTIVE_TS
+            expiry = now + timedelta(hours=2)
+
+            evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=1998.0, current_time=now,
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            res_tp1_first = evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=2031.0, current_time=now + timedelta(minutes=45),
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            assert res_tp1_first.should_send_management_alert is True
+
+            res_tp1_repeat = evaluate_lifecycle_state(
+                sweep_key=key, direction=SignalDirection.BUY, current_price=2033.0, current_time=now + timedelta(minutes=50),
+                entry_price=2000.0, stop_loss=1980.0, tp1=2030.0, tp2=2060.0,
+                zone_high=2002.0, zone_low=1995.0, expires_at=expiry, db_conn=db,
+            )
+            assert res_tp1_repeat.current_state == CRTState.TP1_HIT
+            assert res_tp1_repeat.transition_occurred is False
+            assert res_tp1_repeat.should_send_management_alert is False
+        finally:
+            db.close()

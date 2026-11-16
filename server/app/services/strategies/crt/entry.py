@@ -173,16 +173,23 @@ def calculate_retracement_entry(
     missed_reason = None
 
     if risk > 0 and entry_mode == "limit_zone" and post_confirm_candles:
+        was_filled = False
         for c in post_confirm_candles:
             c_c = _get_val(c, "close")
             c_h = _get_val(c, "high")
             c_l = _get_val(c, "low")
             if direction == SignalDirection.BUY:
+                if c_l <= ideal_entry:
+                    was_filled = True
+                    break
                 if c_c > zone_high + (0.50 * risk) or c_h > zone_high + (0.75 * risk):
                     is_missed = True
                     missed_reason = f"MISSED: Price ran +{(c_c - zone_high) / risk:.2f}R toward TP1 without filling limit zone."
                     break
             else:
+                if c_h >= ideal_entry:
+                    was_filled = True
+                    break
                 if c_c < zone_low - (0.50 * risk) or c_l < zone_low - (0.75 * risk):
                     is_missed = True
                     missed_reason = f"MISSED: Price ran +{(zone_low - c_c) / risk:.2f}R toward TP1 without filling limit zone."
