@@ -60,7 +60,8 @@ def calculate_crt_targets(
         validator = path_validator
 
     risk_usd = abs(entry_price - stop_loss)
-    if risk_usd <= 0.0:
+    is_opposed = (direction == SignalDirection.BUY and stop_loss >= entry_price) or (direction == SignalDirection.SELL and stop_loss <= entry_price)
+    if risk_usd <= 0.0 or is_opposed:
         return CRTTargetPlan(
             take_profit_1=0.0,
             take_profit_2=0.0,
@@ -72,7 +73,7 @@ def calculate_crt_targets(
             target_type="INVALID",
             is_valid=False,
             rejection_gate="INVALID_RISK_GEOMETRY",
-            rejection_reason="Stop loss equals or opposes entry price (zero risk distance).",
+            rejection_reason="Stop loss equals or opposes entry price (zero or inverted risk distance).",
             notes=notes,
         )
 

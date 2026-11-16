@@ -732,6 +732,7 @@ class CRTStrategy(BaseStrategy):
             candles_15m=c_candles,
             breach_point=analysis.breach_point,
             manip_candle_index=getattr(analysis, "manipulation_candle_index", 0),
+            breach_timestamp=getattr(analysis, "breach_timestamp", None),
             atr=effective_atr,
             min_disp_atr_mult=self.min_disp_atr_mult,
             structure=structure,
@@ -786,6 +787,9 @@ class CRTStrategy(BaseStrategy):
             expiry_bars=self.entry_expiry_bars,
         )
 
+        # Task E: For limit-zone setups, use ideal_entry for geometry calculations
+        effective_entry = entry_res.ideal_entry if entry_res.entry_mode == "limit_zone" else current_price
+
         if entry_res.is_missed:
             return StrategyResult(
                 strategy_name=self.name,
@@ -832,13 +836,13 @@ class CRTStrategy(BaseStrategy):
                             raw_sl = min(raw_sl, pool.price_level - sl_buffer)
             stop_loss = round(raw_sl, 5)
 
-            if stop_loss >= current_price:
+            if stop_loss >= effective_entry:
                 return StrategyResult(
                     strategy_name=self.name,
                     direction=SignalDirection.WAIT,
                     score=0.0,
                     reasons=[
-                        f"REJECTED (Invalid Risk Geometry): BUY Stop Loss ({stop_loss:.5f}) >= Entry Price ({current_price:.5f})."
+                        f"REJECTED (Invalid Risk Geometry): BUY Stop Loss ({stop_loss:.5f}) >= Entry Price ({effective_entry:.5f})."
                     ],
                     metadata={
                         "setup_state": "INVALIDATED_SETUP",
@@ -861,7 +865,7 @@ class CRTStrategy(BaseStrategy):
                     risk_reward=0.0,
                     breach_point=analysis.breach_point,
                 )
-            risk_distance = current_price - stop_loss
+            risk_distance = effective_entry - stop_loss
 
         else:  # SELL
             raw_sl = entry_res.stop_loss
@@ -872,13 +876,13 @@ class CRTStrategy(BaseStrategy):
                             raw_sl = max(raw_sl, pool.price_level + sl_buffer)
             stop_loss = round(raw_sl, 5)
 
-            if stop_loss <= current_price:
+            if stop_loss <= effective_entry:
                 return StrategyResult(
                     strategy_name=self.name,
                     direction=SignalDirection.WAIT,
                     score=0.0,
                     reasons=[
-                        f"REJECTED (Invalid Risk Geometry): SELL Stop Loss ({stop_loss:.5f}) <= Entry Price ({current_price:.5f})."
+                        f"REJECTED (Invalid Risk Geometry): SELL Stop Loss ({stop_loss:.5f}) <= Entry Price ({effective_entry:.5f})."
                     ],
                     metadata={
                         "setup_state": "INVALIDATED_SETUP",
@@ -901,7 +905,7 @@ class CRTStrategy(BaseStrategy):
                     risk_reward=0.0,
                     breach_point=analysis.breach_point,
                 )
-            risk_distance = stop_loss - current_price
+            risk_distance = stop_loss - effective_entry
 
         # Enforce maximum risk distance
         if effective_atr > 0.0 and risk_distance > (self.max_risk_atr_mult * effective_atr):
@@ -939,7 +943,7 @@ class CRTStrategy(BaseStrategy):
         # ------------------------------------------------------------------
         target_plan: CRTTargetPlan = calculate_crt_targets(
             direction=direction,
-            entry_price=current_price,
+            entry_price=effective_entry,
             stop_loss=stop_loss,
             range_high=analysis.range_high,
             range_low=analysis.range_low,
@@ -1275,10 +1279,10 @@ class CRTStrategy(BaseStrategy):
         account_balance = float(kwargs.get("account_balance", 10000.0))
         risk_percent = float(kwargs.get("risk_percent", 0.5))
 
-        stop_distance_dollars = round(abs(current_price - stop_loss), 5)
+        stop_distance_dollars = round(abs(effective_entry - stop_loss), 5)
         risk_pips = round(stop_distance_dollars / self.pip_size, 1)
-        tp1_pips = round(abs(take_profit_1 - current_price) / self.pip_size, 1)
-        tp2_pips = round(abs(take_profit_2 - current_price) / self.pip_size, 1)
+        tp1_pips = round(abs(take_profit_1 - effective_entry) / self.pip_size, 1)
+        tp2_pips = round(abs(take_profit_2 - effective_entry) / self.pip_size, 1)
 
         risk_budget_dollars = round(account_balance * (risk_percent / 100.0), 2)
         dollar_risk_per_lot = stop_distance_dollars * contract_size
@@ -1327,7 +1331,7 @@ class CRTStrategy(BaseStrategy):
             direction=direction,
             current_price=current_price,
             current_time=latest_ts,
-            entry_price=current_price,
+            entry_price=effective_entry,
             stop_loss=stop_loss,
             tp1=take_profit_1,
             tp2=take_profit_2,
@@ -1349,7 +1353,7 @@ class CRTStrategy(BaseStrategy):
             f"Manipulation: Extreme breach at {analysis.breach_point:.5f} ({analysis.manip_depth_pct:.1f}% depth >= {self.min_manip_pct:.1f}% min)",
             f"Distribution: Price closed back inside range at {current_price:.5f}",
             f"Retracement Entry: Mode={entry_res.entry_mode}, Zone=[{entry_res.zone_low:.2f}, {entry_res.zone_high:.2f}], Ideal={entry_res.ideal_entry:.2f}",
-            f"Risk Profile: Entry={current_price:.5f}, SL={stop_loss:.5f} ({risk_pips:.1f} pips | ${actual_risk_dollars:.2f} risk), TP1={take_profit_1:.5f} ({rr_tp1:.1f} R:R)",
+            f"Risk Profile: Entry={effective_entry:.5f}, SL={stop_loss:.5f} ({risk_pips:.1f} pips | ${actual_risk_dollars:.2f} risk), TP1={take_profit_1:.5f} ({rr_tp1:.1f} R:R)",
             f"Confluence Score: {total_score:.1f}/100 (Structure: {structure_score:.0f}/35, Liquidity: {liquidity_score:.0f}/40, PriceAction: {price_action_score:.0f}/25)",
         ])
 
@@ -1357,7 +1361,7 @@ class CRTStrategy(BaseStrategy):
             reasons.append(f"WARNING: {risk_warning}")
 
         metadata: Dict[str, Any] = {
-            "entry_price": round(current_price, 5),
+            "entry_price": round(effective_entry, 5),
             "stop_loss": round(stop_loss, 5),
             "take_profit_1": round(take_profit_1, 5),
             "take_profit_2": round(take_profit_2, 5),
@@ -1469,7 +1473,7 @@ class CRTStrategy(BaseStrategy):
             reasons=reasons,
             metadata=metadata,
             score_breakdown=score_breakdown,
-            entry_price=round(current_price, 5),
+            entry_price=round(effective_entry, 5),
             stop_loss=round(stop_loss, 5),
             take_profit_1=round(take_profit_1, 5),
             take_profit_2=round(take_profit_2, 5),

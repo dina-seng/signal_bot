@@ -239,6 +239,12 @@ class CRTAnalyzer:
         # Round depth percentage for clean representation
         manip_depth_pct = round(manip_depth_pct, 4)
         breach_wick_ratio = round(breach_wick_ratio, 4)
+        manip_idx = None
+        if is_breached and "extreme_candle" in locals():
+            try:
+                manip_idx = filtered_confirms.index(extreme_candle)
+            except ValueError:
+                manip_idx = None
 
         # --------------------------------------------------------------
         # 3. Distribution (Confirmation): Close Back Inside Range
@@ -285,4 +291,5 @@ class CRTAnalyzer:
             breach_wick_ratio=breach_wick_ratio,
             confirmation_displacement=confirmation_displacement,
             reentry_depth_pct=reentry_depth_pct,
+            manipulation_candle_index=manip_idx,
         )
