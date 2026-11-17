@@ -2,6 +2,8 @@
 
 Entry zone from the first valid LTF FVG/OB made by the displacement leg,
 falling back to 50% equilibrium of the [sweep_extreme -> displacement_extreme] leg.
+All geometry is anchored to the manipulation candle so re-analysis of the same
+sweep produces the same zone and expiry.
 """
 
 from dataclasses import dataclass
@@ -27,6 +29,7 @@ class RetracementEntry:
     expires_at: datetime
     is_missed: bool = False
     missed_reason: Optional[str] = None
+    zone_invalid: bool = False
 
 
 def _get_val(c: Any, field: str) -> float:
@@ -59,10 +62,23 @@ def calculate_retracement_entry(
     expiry_bars: int = 8,
     sl_buffer_mult: float = 0.10,
     liquidity_pools: Optional[Sequence[Any]] = None,
+    manip_candle_index: int = 0,
+    tick_size: float = 0.01,
 ) -> RetracementEntry:
-    """Calculate the entry zone, ideal entry, stop loss, and check missed status."""
+    """Calculate the entry zone, ideal entry, stop loss, and check missed status.
+
+    ``manip_candle_index`` is the index of the sweep/manipulation bar inside
+    ``candles_15m``. Every zone / expiry / missed decision uses only the bars
+    at or after that index, so a re-analysis of the same sweep is stable.
+    """
     sl_buffer = max(spread, sl_buffer_mult * atr) if (spread > 0 or atr > 0) else 0.0
-    created_time = _get_ts(candles_15m[-1]) if candles_15m else datetime.now(UTC_TZ)
+
+    n = len(candles_15m)
+    manip_idx = max(0, min(int(manip_candle_index or 0), n - 1)) if n else 0
+
+    # Expiry anchored to the manipulation bar, not the last bar of a sliding
+    # window; this keeps ``expires_at`` stable across re-analysis.
+    created_time = _get_ts(candles_15m[manip_idx]) if n else datetime.now(UTC_TZ)
     expires_at = created_time + timedelta(minutes=15 * expiry_bars)
 
     # 1. Stop Loss calculation beyond sweep extreme
@@ -87,7 +103,7 @@ def calculate_retracement_entry(
                         raw_sl = max(raw_sl, p_level + sl_buffer)
         stop_loss = round(raw_sl, 5)
 
-    # 2. Search for FVG along recent confirmation candles
+    # 2. Entry zone: FIRST valid FVG of the displacement leg (forward scan)
     zone_type = "EQUILIBRIUM_50"
     zone_high = 0.0
     zone_low = 0.0
@@ -98,9 +114,8 @@ def calculate_retracement_entry(
 
     found_zone = False
 
-    # Scan last 4 candles for an FVG
-    if candles_15m and len(candles_15m) >= 3:
-        for k in range(len(candles_15m) - 1, 1, -1):
+    if n >= 3:
+        for k in range(manip_idx + 2, n):
             c_curr = candles_15m[k]
             c_prev2 = candles_15m[k - 2]
             h_curr = _get_val(c_curr, "high")
@@ -127,35 +142,44 @@ def calculate_retracement_entry(
                     found_zone = True
                     break
 
-    # 3. Fallback: Order Block or 50% Equilibrium
-    if not found_zone:
-        # Search for OB: last opposing candle before displacement
-        if candles_15m and len(candles_15m) >= 2:
-            for k in range(len(candles_15m) - 2, max(-1, len(candles_15m) - 5), -1):
-                c = candles_15m[k]
-                c_o = _get_val(c, "open")
-                c_c = _get_val(c, "close")
-                c_h = _get_val(c, "high")
-                c_l = _get_val(c, "low")
-                if direction == SignalDirection.BUY and c_c <= c_o:
-                    zone_low = c_l
-                    zone_high = c_h
-                    ideal_entry = c_o
-                    zone_type = "ORDER_BLOCK"
-                    found_zone = True
-                    break
-                elif direction == SignalDirection.SELL and c_c >= c_o:
-                    zone_high = c_h
-                    zone_low = c_l
-                    ideal_entry = c_o
-                    zone_type = "ORDER_BLOCK"
-                    found_zone = True
-                    break
+    # 3. Fallback: Order Block in the post-sweep leg, before the first
+    #    displacement bar. Body direction must be strictly opposing (no doji).
+    if not found_zone and n:
+        first_disp = n
+        for k in range(manip_idx + 1, n):
+            c = candles_15m[k]
+            if direction == SignalDirection.BUY and _get_val(c, "high") >= displacement_extreme:
+                first_disp = k
+                break
+            if direction == SignalDirection.SELL and _get_val(c, "low") <= displacement_extreme:
+                first_disp = k
+                break
+
+        for k in range(first_disp - 1, manip_idx - 1, -1):
+            c = candles_15m[k]
+            c_o = _get_val(c, "open")
+            c_c = _get_val(c, "close")
+            c_h = _get_val(c, "high")
+            c_l = _get_val(c, "low")
+            if direction == SignalDirection.BUY and c_c < c_o:
+                zone_low = c_l
+                zone_high = c_h
+                ideal_entry = c_o
+                zone_type = "ORDER_BLOCK"
+                found_zone = True
+                break
+            elif direction == SignalDirection.SELL and c_c > c_o:
+                zone_high = c_h
+                zone_low = c_l
+                ideal_entry = c_o
+                zone_type = "ORDER_BLOCK"
+                found_zone = True
+                break
 
     if not found_zone:
         zone_type = "EQUILIBRIUM_50"
         ideal_entry = eq_midpoint
-        half_width = max(0.50, 0.05 * atr)
+        half_width = max(2.0 * tick_size, 0.05 * atr)
         zone_high = ideal_entry + half_width
         zone_low = ideal_entry - half_width
 
@@ -165,22 +189,26 @@ def calculate_retracement_entry(
     else:
         entry_mode = "limit_zone"
 
-    # 5. Missed setup detection:
-    # If entry mode is limit_zone and subsequent candles have run > 0.5R past the zone boundary toward TP1
-    post_confirm_candles = candles_15m[2:] if (candles_15m and len(candles_15m) > 2) else []
+    # A zone that is not clear of the stop cannot be executed safely.
+    zone_invalid = (
+        (direction == SignalDirection.BUY and stop_loss > zone_low)
+        or (direction == SignalDirection.SELL and stop_loss < zone_high)
+    )
+
+    # 5. Missed setup detection — post-sweep bars only. The sweep and
+    #    displacement bars themselves can neither fill nor invalidate the zone.
+    post_sweep_candles = list(candles_15m[manip_idx + 1:])
     risk = abs(ideal_entry - stop_loss)
     is_missed = False
     missed_reason = None
 
-    if risk > 0 and entry_mode == "limit_zone" and post_confirm_candles:
-        was_filled = False
-        for c in post_confirm_candles:
+    if risk > 0 and entry_mode == "limit_zone" and post_sweep_candles:
+        for c in post_sweep_candles:
             c_c = _get_val(c, "close")
             c_h = _get_val(c, "high")
             c_l = _get_val(c, "low")
             if direction == SignalDirection.BUY:
                 if c_l <= ideal_entry:
-                    was_filled = True
                     break
                 if c_c > zone_high + (0.50 * risk) or c_h > zone_high + (0.75 * risk):
                     is_missed = True
@@ -188,7 +216,6 @@ def calculate_retracement_entry(
                     break
             else:
                 if c_h >= ideal_entry:
-                    was_filled = True
                     break
                 if c_c < zone_low - (0.50 * risk) or c_l < zone_low - (0.75 * risk):
                     is_missed = True
@@ -207,4 +234,5 @@ def calculate_retracement_entry(
         expires_at=expires_at,
         is_missed=is_missed,
         missed_reason=missed_reason,
+        zone_invalid=zone_invalid,
     )

@@ -365,8 +365,18 @@ class ConfluenceEngine:
                 raw_lots = risk_amount_usd / max(1e-6, risk_pips * pip_val)
                 suggested_lots = round(max(0.01, min(100.0, raw_lots)), 2)
 
+                # Limit-zone setups are executable at the planned limit price,
+                # not at the current market price. Keep market-mode behaviour.
+                result_meta = result.metadata or {}
+                limit_entry = result_meta.get("ideal_entry")
+                resolved_entry = (
+                    float(limit_entry)
+                    if result_meta.get("entry_mode") == "limit_zone" and limit_entry
+                    else current_price
+                )
+
                 risk_params = RiskParameters(
-                    entry_price=round(current_price, 5),
+                    entry_price=round(resolved_entry, 5),
                     stop_loss=round(custom_sl, 5),
                     take_profit_1=round(custom_tp1, 5),
                     take_profit_2=round(custom_tp2, 5),

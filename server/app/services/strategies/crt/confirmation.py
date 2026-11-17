@@ -77,6 +77,19 @@ def verify_ltf_confirmation(
         if found_idx is not None:
             manip_idx = found_idx
 
+    # Chronology anchor for structure events. When the caller does not supply an
+    # explicit breach timestamp, fall back to the manipulation candle's own
+    # timestamp so a pre-sweep CHoCH/BOS cannot confirm an unconfirmed sweep.
+    effective_bt = breach_timestamp
+    if effective_bt is None and 0 <= manip_idx < len(candles_15m):
+        _mc = candles_15m[manip_idx]
+        _raw_ts = _mc.get("timestamp") if isinstance(_mc, dict) else getattr(_mc, "timestamp", None)
+        if isinstance(_raw_ts, datetime):
+            effective_bt = (
+                _raw_ts if _raw_ts.tzinfo is not None
+                else _raw_ts.replace(tzinfo=timezone.utc)
+            )
+
     post_sweep_candles = candles_15m[manip_idx + 1:] if len(candles_15m) > (manip_idx + 1) else []
     if not post_sweep_candles:
         return LTFConfirmationResult(
@@ -159,9 +172,9 @@ def verify_ltf_confirmation(
             for ev in structure.recent_events:
                 ev_type = str(getattr(ev, "event_type", ""))
                 ev_ts = getattr(ev, "timestamp", None)
-                if breach_timestamp is not None and ev_ts is not None:
+                if effective_bt is not None and ev_ts is not None:
                     _ev_ts = ev_ts if ev_ts.tzinfo is not None else ev_ts.replace(tzinfo=timezone.utc)
-                    _bt = breach_timestamp if breach_timestamp.tzinfo is not None else breach_timestamp.replace(tzinfo=timezone.utc)
+                    _bt = effective_bt if effective_bt.tzinfo is not None else effective_bt.replace(tzinfo=timezone.utc)
                     if _ev_ts <= _bt:
                         continue
                 elif ev_ts is None:
@@ -178,9 +191,9 @@ def verify_ltf_confirmation(
                 for ev in bs.choch_events:
                     ev_type = str(getattr(ev, "event_type", ""))
                     ev_ts = getattr(ev, "timestamp", None)
-                    if breach_timestamp is not None and ev_ts is not None:
+                    if effective_bt is not None and ev_ts is not None:
                         _ev_ts = ev_ts if ev_ts.tzinfo is not None else ev_ts.replace(tzinfo=timezone.utc)
-                        _bt = breach_timestamp if breach_timestamp.tzinfo is not None else breach_timestamp.replace(tzinfo=timezone.utc)
+                        _bt = effective_bt if effective_bt.tzinfo is not None else effective_bt.replace(tzinfo=timezone.utc)
                         if _ev_ts <= _bt:
                             continue
                     elif ev_ts is None:

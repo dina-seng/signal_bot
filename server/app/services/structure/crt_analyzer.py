@@ -291,5 +291,5 @@ class CRTAnalyzer:
             breach_wick_ratio=breach_wick_ratio,
             confirmation_displacement=confirmation_displacement,
             reentry_depth_pct=reentry_depth_pct,
-            manipulation_candle_index=manip_idx,
+            manipulation_candle_index=manip_idx if manip_idx is not None else 0,
         )

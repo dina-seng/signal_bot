@@ -1358,10 +1358,13 @@ class TestCRTStrategy:
             candles_15m=[manip_c, confirm_c, runaway_c],
         )
 
-        assert result.direction == SignalDirection.WAIT
-        assert result.metadata["setup_state"] == "MISSED"
-        assert result.metadata["rejection_gate"] == "MISSED_SETUP"
-        assert "MISSED" in result.reasons[0]
+        # Post-sweep window (fix E5): the confirmation candle has low 2004 <=
+        # ideal 2005, so the limit order fills before the runaway bar. The setup
+        # is live, not missed.
+        assert result.direction == SignalDirection.BUY
+        assert result.metadata["setup_state"] == "CONFIRMED_SETUP"
+        assert result.metadata.get("rejection_gate") is None
+        assert "MISSED" not in " ".join(result.reasons)
 
     def test_ltf_confirmation_mss_required(self):
         """Item 3: Close back inside range without Market Structure Shift -> WAITING_FOR_CONFIRMATION."""
@@ -2162,7 +2165,9 @@ class TestCRTAuditRemediations:
             target_tp1=2025.0,
             atr=10.0,
         )
-        assert entry_res.is_missed is True
+        # The confirmation candle's low (1940) reaches ideal_entry (1955), so
+        # the pending limit is filled on that bar rather than missed later.
+        assert entry_res.is_missed is False
 
         lifecycle_res = evaluate_lifecycle_state(
             sweep_key="TEST_BUY_MISSED_1",
@@ -2179,7 +2184,7 @@ class TestCRTAuditRemediations:
             is_missed=entry_res.is_missed,
             initial_state=CRTState.CONFIRMED,
         )
-        assert lifecycle_res.current_state == CRTState.MISSED
+        assert lifecycle_res.current_state == CRTState.CONFIRMED
 
     def test_lifecycle_pending_order_fills_at_t1_remains_filled_at_t2(self):
         """27. Pending limit order fills when price touches ideal_entry at t1 and remains FILLED at t2."""

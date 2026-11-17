@@ -141,7 +141,7 @@ class CRTAnalysis(BaseModel):
     confirmation_displacement: float = 0.0
     reentry_depth_pct: float = 0.0
     has_missing_timestamps: bool = False
-    manipulation_candle_index: Optional[int] = None
+    manipulation_candle_index: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 

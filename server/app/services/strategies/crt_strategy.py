@@ -785,10 +785,48 @@ class CRTStrategy(BaseStrategy):
             atr=effective_atr,
             spread=self.spread,
             expiry_bars=self.entry_expiry_bars,
+            manip_candle_index=getattr(analysis, "manipulation_candle_index", 0),
+            tick_size=self.pip_size / 10.0,
         )
 
         # Task E: For limit-zone setups, use ideal_entry for geometry calculations
         effective_entry = entry_res.ideal_entry if entry_res.entry_mode == "limit_zone" else current_price
+
+        # An entry zone that straddles the stop is not executable. Reject it the
+        # same way a missed setup is rejected, with a distinct gate code.
+        if entry_res.zone_invalid:
+            return StrategyResult(
+                strategy_name=self.name,
+                direction=SignalDirection.WAIT,
+                score=0.0,
+                reasons=[
+                    f"REJECTED (Invalid Entry Zone): entry zone "
+                    f"[{entry_res.zone_low:.5f}, {entry_res.zone_high:.5f}] is not clear of "
+                    f"stop loss {entry_res.stop_loss:.5f}."
+                ],
+                metadata={
+                    "setup_state": "INVALIDATED_SETUP",
+                    "gatekeeper_passed": False,
+                    "rejection_gate": "INVALID_ENTRY_ZONE",
+                    "entry_zone": [entry_res.zone_low, entry_res.zone_high],
+                    "ideal_entry": entry_res.ideal_entry,
+                    "crt_analysis": analysis.model_dump(),
+                },
+                score_breakdown=ScoreBreakdown(
+                    structure_score=0.0,
+                    liquidity_score=0.0,
+                    indicators_score=0.0,
+                    price_action_score=0.0,
+                    total_score=0.0,
+                    is_qualified=False,
+                ),
+                entry_price=round(current_price, 5),
+                stop_loss=0.0,
+                take_profit_1=0.0,
+                take_profit_2=0.0,
+                risk_reward=0.0,
+                breach_point=analysis.breach_point,
+            )
 
         if entry_res.is_missed:
             return StrategyResult(
