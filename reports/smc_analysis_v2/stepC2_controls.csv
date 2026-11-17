@@ -1,0 +1,5 @@
+split,n_entries,real_mean_r,ratio_preserving_mean_r,ratio_preserving_p95,ratio_preserving_percentile,always_buy_mean_r,always_sell_mean_r,neutral_alpha_mean,neutral_alpha_cluster_se,neutral_alpha_t_stat,neutral_alpha_p_val,buy_alpha_mean,sell_alpha_mean
+calibration,333,0.0437,0.0407,0.1352,52.2%,0.1453,-0.1490,0.0455,0.0816,0.56,5.7718e-01,0.1492,-0.1435
+validation,102,0.3424,0.2672,0.4119,79.5%,0.5627,-0.5028,0.3124,0.1541,2.03,4.2629e-02,0.5825,-0.4013
+test,103,-0.0131,0.0028,0.1932,46.6%,-0.1920,0.3057,-0.0699,0.1474,-0.47,6.3528e-01,-0.2606,0.2303
+pooled,538,0.0894,0.0603,0.1380,72.9%,0.1599,-0.1291,0.0740,0.0652,1.13,2.5648e-01,0.1670,-0.1019
