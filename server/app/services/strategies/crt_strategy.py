@@ -881,8 +881,24 @@ class CRTStrategy(BaseStrategy):
                     "setup_state": "INVALIDATED_SETUP",
                     "gatekeeper_passed": False,
                     "rejection_gate": "INVALID_ENTRY_ZONE",
-                    "entry_zone": [entry_res.zone_low, entry_res.zone_high],
-                    "ideal_entry": entry_res.ideal_entry,
+                    "entry_zone": [round(entry_res.zone_low, 5), round(entry_res.zone_high, 5)],
+                    "ideal_entry": round(entry_res.ideal_entry, 5),
+                    "entry_mode": entry_res.entry_mode,
+                    "stop_loss": round(entry_res.stop_loss, 5),
+                    "take_profit_1": 0.0,
+                    "risk_distance": round(abs(entry_res.ideal_entry - entry_res.stop_loss), 5),
+                    "effective_atr": round(effective_atr, 5),
+                    "displacement_size": round(confirmation_res.displacement_size or 0.0, 5),
+                    "displacement_extreme": round(confirmation_res.displacement_extreme or 0.0, 5),
+                    "sub_condition": (
+                        f"BUY: stop_loss ({entry_res.stop_loss:.5f}) > zone_low ({entry_res.zone_low:.5f})"
+                        if direction == SignalDirection.BUY and entry_res.stop_loss > entry_res.zone_low
+                        else (
+                            f"SELL: stop_loss ({entry_res.stop_loss:.5f}) < zone_high ({entry_res.zone_high:.5f})"
+                            if direction == SignalDirection.SELL and entry_res.stop_loss < entry_res.zone_high
+                            else f"zone_invalid"
+                        )
+                    ),
                     "crt_analysis": analysis.model_dump(),
                 },
                 score_breakdown=ScoreBreakdown(
@@ -913,8 +929,16 @@ class CRTStrategy(BaseStrategy):
                     "setup_state": "MISSED",
                     "gatekeeper_passed": False,
                     "rejection_gate": "MISSED_SETUP",
-                    "entry_zone": [entry_res.zone_low, entry_res.zone_high],
-                    "ideal_entry": entry_res.ideal_entry,
+                    "entry_zone": [round(entry_res.zone_low, 5), round(entry_res.zone_high, 5)],
+                    "ideal_entry": round(entry_res.ideal_entry, 5),
+                    "entry_mode": entry_res.entry_mode,
+                    "stop_loss": round(entry_res.stop_loss, 5),
+                    "take_profit_1": 0.0,
+                    "risk_distance": round(abs(entry_res.ideal_entry - entry_res.stop_loss), 5),
+                    "effective_atr": round(effective_atr, 5),
+                    "displacement_size": round(confirmation_res.displacement_size or 0.0, 5),
+                    "displacement_extreme": round(confirmation_res.displacement_extreme or 0.0, 5),
+                    "sub_condition": str(entry_res.missed_reason or "MISSED_SETUP"),
                     "crt_analysis": analysis.model_dump(),
                 },
                 score_breakdown=ScoreBreakdown(
@@ -959,6 +983,16 @@ class CRTStrategy(BaseStrategy):
                         "setup_state": "INVALIDATED_SETUP",
                         "gatekeeper_passed": False,
                         "rejection_gate": "INVALID_RISK_GEOMETRY",
+                        "entry_zone": [round(entry_res.zone_low, 5), round(entry_res.zone_high, 5)],
+                        "ideal_entry": round(entry_res.ideal_entry, 5),
+                        "entry_mode": entry_res.entry_mode,
+                        "stop_loss": round(stop_loss, 5),
+                        "take_profit_1": 0.0,
+                        "risk_distance": round(abs(effective_entry - stop_loss), 5),
+                        "effective_atr": round(effective_atr, 5),
+                        "displacement_size": round(confirmation_res.displacement_size or 0.0, 5),
+                        "displacement_extreme": round(confirmation_res.displacement_extreme or 0.0, 5),
+                        "sub_condition": f"BUY: stop_loss ({stop_loss:.5f}) >= effective_entry ({effective_entry:.5f})",
                         "crt_analysis": analysis.model_dump(),
                     },
                     score_breakdown=ScoreBreakdown(
@@ -999,6 +1033,16 @@ class CRTStrategy(BaseStrategy):
                         "setup_state": "INVALIDATED_SETUP",
                         "gatekeeper_passed": False,
                         "rejection_gate": "INVALID_RISK_GEOMETRY",
+                        "entry_zone": [round(entry_res.zone_low, 5), round(entry_res.zone_high, 5)],
+                        "ideal_entry": round(entry_res.ideal_entry, 5),
+                        "entry_mode": entry_res.entry_mode,
+                        "stop_loss": round(stop_loss, 5),
+                        "take_profit_1": 0.0,
+                        "risk_distance": round(abs(effective_entry - stop_loss), 5),
+                        "effective_atr": round(effective_atr, 5),
+                        "displacement_size": round(confirmation_res.displacement_size or 0.0, 5),
+                        "displacement_extreme": round(confirmation_res.displacement_extreme or 0.0, 5),
+                        "sub_condition": f"SELL: stop_loss ({stop_loss:.5f}) <= effective_entry ({effective_entry:.5f})",
                         "crt_analysis": analysis.model_dump(),
                     },
                     score_breakdown=ScoreBreakdown(
@@ -1031,7 +1075,17 @@ class CRTStrategy(BaseStrategy):
                     "setup_state": "NO_SETUP",
                     "gatekeeper_passed": False,
                     "rejection_gate": "EXCESSIVE_RISK_DISTANCE",
-                    "risk_distance": risk_distance,
+                    "entry_zone": [round(entry_res.zone_low, 5), round(entry_res.zone_high, 5)],
+                    "ideal_entry": round(entry_res.ideal_entry, 5),
+                    "entry_mode": entry_res.entry_mode,
+                    "stop_loss": round(stop_loss, 5),
+                    "take_profit_1": 0.0,
+                    "risk_distance": round(risk_distance, 5),
+                    "effective_atr": round(effective_atr, 5),
+                    "displacement_size": round(confirmation_res.displacement_size or 0.0, 5),
+                    "displacement_extreme": round(confirmation_res.displacement_extreme or 0.0, 5),
+                    "sub_condition": f"risk_distance ({risk_distance:.5f}) > max_risk ({self.max_risk_atr_mult * effective_atr:.5f})",
+                    "crt_analysis": analysis.model_dump(),
                 },
                 score_breakdown=ScoreBreakdown(
                     structure_score=0.0,
@@ -1078,10 +1132,21 @@ class CRTStrategy(BaseStrategy):
                     "setup_state": "POTENTIAL_SETUP",
                     "gatekeeper_passed": False,
                     "rejection_gate": gate_code,
+                    "entry_zone": [round(entry_res.zone_low, 5), round(entry_res.zone_high, 5)],
+                    "ideal_entry": round(entry_res.ideal_entry, 5),
+                    "entry_mode": entry_res.entry_mode,
+                    "stop_loss": round(stop_loss, 5),
+                    "take_profit_1": round(target_plan.take_profit_1, 5),
+                    "risk_distance": round(abs(target_entry - stop_loss), 5),
+                    "effective_atr": round(effective_atr, 5),
+                    "displacement_size": round(confirmation_res.displacement_size or 0.0, 5),
+                    "displacement_extreme": round(confirmation_res.displacement_extreme or 0.0, 5),
+                    "sub_condition": str(target_plan.rejection_reason or gate_code),
                     "nearest_obstacle": target_plan.obstacle_type,
                     "obstacle_r": target_plan.risk_reward_tp1 if target_plan.capped_by_obstacle else None,
                     "risk_reward_tp1": target_plan.risk_reward_tp1,
                     "risk_reward_tp2": target_plan.risk_reward_tp2,
+                    "crt_analysis": analysis.model_dump(),
                 },
                 score_breakdown=ScoreBreakdown(
                     structure_score=0.0,
@@ -1523,6 +1588,15 @@ class CRTStrategy(BaseStrategy):
             "premium_discount": daily_bias_res.premium_discount,
             "counter_trend_bypassed": counter_trend_bypassed,
             "trend_conflict": is_counter_trend and not counter_trend_bypassed,
+            "effective_atr": round(effective_atr, 5),
+            "displacement_size": round(confirmation_res.displacement_size or 0.0, 5),
+            "displacement_extreme": round(confirmation_res.displacement_extreme or 0.0, 5),
+            "risk_distance": round(actual_risk_dollars, 5),
+            "sub_condition": (
+                "PASSED (CONFIRMED_SETUP)"
+                if is_qualified
+                else f"SCORE_BELOW_THRESHOLD: total_score ({total_score:.1f}) < min_score ({self._min_score_threshold:.1f})"
+            ),
         }
 
         # If not qualified, map direction to WAIT

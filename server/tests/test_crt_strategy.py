@@ -2578,3 +2578,51 @@ class TestCRTAuditRemediations:
         assert res_at.has_mss is False
         assert res_at.is_confirmed is False
         assert res_at.state == "WAITING_FOR_CONFIRMATION"
+
+    def test_retracement_entry_sliding_window_manip_index_misalignment_defect(self):
+        """Geometry Defect Demonstration: manip_candle_index from filtered_confirms causes sliding-window misalignment.
+
+        In evaluate_bar, analysis.manipulation_candle_index is the index within filtered_confirms
+        (typically 0 or 1), but is passed to calculate_retracement_entry alongside c_candles (a sliding
+        window of up to 200 bars). This causes calculate_retracement_entry to anchor created_time,
+        expiry, and FVG/OB detection to candles from 2-3 days ago (c_candles[0]), finding ancient
+        zones that conflict with current stop loss and triggering false INVALID_ENTRY_ZONE rejections.
+        """
+        from app.services.strategies.crt.entry import calculate_retracement_entry
+
+        t_base = SESSION_ACTIVE_TS - timedelta(days=2)
+        # Create 50 historical bars at ~2900 with an FVG at bars 0..2
+        candles_50 = []
+        candles_50.append(_make_candle(2905.0, 2909.0, 2904.0, 2908.0, timestamp=t_base, timeframe="15m"))
+        candles_50.append(_make_candle(2908.0, 2912.0, 2907.0, 2911.0, timestamp=t_base + timedelta(minutes=15), timeframe="15m"))
+        candles_50.append(_make_candle(2911.0, 2915.0, 2910.0, 2914.0, timestamp=t_base + timedelta(minutes=30), timeframe="15m"))
+        for idx in range(3, 48):
+            candles_50.append(_make_candle(2910.0, 2912.0, 2908.0, 2910.0, timestamp=t_base + timedelta(minutes=15 * idx), timeframe="15m"))
+
+        # Today's bars (bars 48 and 49) at price ~2860
+        t_today = SESSION_ACTIVE_TS
+        c_sweep = _make_candle(2860.0, 2865.0, 2858.0, 2863.0, timestamp=t_today, timeframe="15m")
+        c_disp = _make_candle(2863.0, 2864.0, 2856.0, 2858.0, timestamp=t_today + timedelta(minutes=15), timeframe="15m")
+        candles_50.append(c_sweep)
+        candles_50.append(c_disp)
+
+        # In filtered_confirms, c_sweep is index 0.
+        # But in candles_50, c_sweep is index 48.
+        # When CRTStrategy passes manip_candle_index=0:
+        entry_res = calculate_retracement_entry(
+            direction=SignalDirection.SELL,
+            sweep_extreme=2865.0,
+            displacement_extreme=2856.0,
+            candles_15m=candles_50,
+            current_price=2858.0,
+            target_tp1=2840.0,
+            atr=8.0,
+            spread=0.40,
+            expiry_bars=8,
+            manip_candle_index=0,  # The index from filtered_confirms passed by crt_strategy.py!
+            tick_size=0.01,
+        )
+
+        # Expected behavior: created_time is t_today (not 2 days ago), and zone_invalid is False
+        assert entry_res.created_time == t_today, f"Expected created_time {t_today}, got {entry_res.created_time} (anchored to bar 0 from 2 days ago!)"
+        assert entry_res.zone_invalid is False, "Expected valid entry zone for today's sweep, but got INVALID_ENTRY_ZONE due to ancient FVG at 2909"

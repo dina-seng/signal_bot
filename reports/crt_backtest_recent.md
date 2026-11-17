@@ -5,11 +5,16 @@
 **Execution Engine**: `simulate_outcome` with strict zero-lookahead, **$0.40 round-trip friction**
 **Confirmation Engine**: Post-defect fix (Displacement prerequisite + Chronological MSS filtering)
 
+> [!WARNING]
+> ### ⚠️ UNDERPOWERED — n < 30 (n = 1)
+> Total realized trades (1) is strictly below the statistical power threshold (n ≥ 30).
+> Any performance metrics must be interpreted with extreme caution due to small sample variance.
+
 ## Executive Summary
 
 | Metric | Value | Benchmark / Target | Status |
 | :--- | :--- | :--- | :--- |
-| **Total Realized Trades** | **1** | ≥ 30 for statistical power | UNDERPOWERED |
+| **Total Realized Trades** | **1** | ≥ 30 for statistical power | UNDERPOWERED — n < 30 |
 | **Win Rate (%)** | **100.00%** | > 40.0% | PASS |
 | **Loss Rate (%)** | **0.00%** | - | - |
 | **Expectancy per Trade** | **+0.6258 R** | > +0.2000 R | PASS |
@@ -20,6 +25,10 @@
 | **Max Drawdown (R)** | **0.00 R** | < 15.0 R | PASS |
 | **Max Drawdown (%)** | **0.00%** | < 15.0% (1R=1%) | PASS |
 | **Sharpe Ratio (Daily Ann.)** | **0.66** | > 1.00 | SUB-OPTIMAL |
+| **Holding Time (Median)** | **1.5 hours** | - | - |
+| **Holding Time (p75)** | **1.5 hours** | - | - |
+| **Holding Time (p90)** | **1.5 hours** | - | - |
+| **Holding Time (Max)** | **1.5 hours** | - | - |
 | **Average Holding Time** | **1.5 hours** | < 48.0 hours | - |
 | **Trades per Trading Day** | **0.002** | Target ~0.5 - 2.0 | - |
 
@@ -53,22 +62,22 @@ The portfolio simulation enforces the four strict institutional gates:
 | `OFF_SESSION` | Pre-Sweep | 0 | |
 | `MISSING_TIMESTAMPS` | Pre-Sweep | 0 | |
 | `NO_SWEEP` | Pre-Sweep | 37,822 | |
-| `TREND_CONFLICT` | Post-Sweep | 2 | |
-| `MICRO_RANGE` | Pre-Sweep | 399 | |
+| `TREND_CONFLICT` | Post-Sweep | 2,796 | |
+| `MICRO_RANGE` | Pre-Sweep | 236 | |
 | `EXCESSIVE_RANGE` | Pre-Sweep | 0 | |
-| `MICRO_SWEEP` | Post-Sweep | 2,213 | |
-| `EXCESSIVE_MANIPULATION` | Post-Sweep | 699 | |
+| `MICRO_SWEEP` | Post-Sweep | 1,212 | |
+| `EXCESSIVE_MANIPULATION` | Post-Sweep | 386 | |
 | `SWEEP_EXTREME_BROKEN` | Post-Sweep | 0 | |
-| `CONFIRMATION_PENDING` | Post-Sweep | 2,880 | |
-| `MISSED_SETUP` | Post-Sweep | 4 | |
+| `CONFIRMATION_PENDING` | Post-Sweep | 1,602 | |
+| `MISSED_SETUP` | Post-Sweep | 1 | |
 | `INVALID_RISK_GEOMETRY` | Post-Sweep | 0 | |
-| `EXCESSIVE_RISK_DISTANCE` | Post-Sweep | 28 | |
+| `EXCESSIVE_RISK_DISTANCE` | Post-Sweep | 2 | |
 | `INSUFFICIENT_RR` | Post-Sweep | 0 | |
-| `PATH_BLOCKED` | Post-Sweep | 6 | |
+| `PATH_BLOCKED` | Post-Sweep | 1 | |
 | `SCORE_BELOW_THRESHOLD` | Post-Sweep | 2 | |
 | `DUPLICATE_SUPPRESSED` | Post-Sweep | 0 | |
 | `OTHER_WAIT` | Post-Sweep | 0 | |
-| `INVALID_ENTRY_ZONE` | Post-Sweep | 25 | |
+| `INVALID_ENTRY_ZONE` | Post-Sweep | 20 | |
 | `CONFIRMED_SETUP` | **Emitted** | **1** | Validated setup |
 
 ### Confirmation Engine Breakdown
@@ -77,10 +86,10 @@ Observations from `CONFIRMATION_PENDING` (verifying recent bug fix effectiveness
 
 | Reason | Frequency |
 | :--- | ---: |
-| Analyzer: no close back inside range yet | 1,875 |
-| Awaiting post-sweep confirmation candles. | 525 |
-| Awaiting valid displacement candle after range re-entry. | 257 |
-| Awaiting Market Structure Shift (MSS) after sweep. | 223 |
+| Analyzer: no close back inside range yet | 1,029 |
+| Awaiting post-sweep confirmation candles. | 305 |
+| Awaiting valid displacement candle after range re-entry. | 159 |
+| Awaiting Market Structure Shift (MSS) after sweep. | 109 |
 
 ## Trade Execution & Outcome Breakdown
 

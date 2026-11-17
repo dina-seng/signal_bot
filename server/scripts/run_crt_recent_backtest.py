@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import sqlite3
 import sys
@@ -152,9 +153,11 @@ def run_bar_by_bar_replay(
     expiry_bars: int = 8,
     max_hold_bars: int = 500,
     warmup_bars: int = 100,
+    dump_finalists: bool = True,
+    finalists_path: Optional[Path] = None,
 ) -> Tuple[Dict[str, int], List[SignalRecord], ReplayStats]:
     """Replay bars in chronological order and simulate outcomes for emitted CRT signals."""
-    crt = CRTStrategy(enable_dedup=False)
+    crt = CRTStrategy(enable_dedup=False, allow_counter_trend_bypass=False)
     engine = ConfluenceEngine(strategy_manager=StrategyManager([crt]))
 
     funnel = _empty_funnel()
@@ -164,20 +167,30 @@ def run_bar_by_bar_replay(
     bar_close = [b.timestamp + TF_15M for b in bars]
     n = len(bars)
 
-    t_start = time.time()
-    last_log_time = t_start
+    finalists_file = None
+    if dump_finalists:
+        out_jsonl = Path(finalists_path) if finalists_path else (REPO_ROOT / "reports" / "crt_finalists_recent.jsonl")
+        out_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        finalists_file = out_jsonl.open("w", encoding="utf-8")
 
-    print(f"[*] Starting bar-by-bar replay across {n:,} 15m open-market bars...")
+    t_start = time.time()
+    t_est_seconds = n / 1000.0
+    print(f"[*] Starting bar-by-bar replay across {n:,} 15m open-market bars (estimated nominal duration: ~{t_est_seconds:.0f}s)...")
+
+    current_month_key: Optional[str] = None
 
     for i, bar in enumerate(bars):
         decision_time = bar_close[i]
 
-        # Log periodic progress
-        if i > 0 and (i % 5000 == 0 or i == n - 1):
+        # Log month-by-month progress
+        bar_month = bar.timestamp.strftime("%Y-%m")
+        if bar_month != current_month_key:
+            current_month_key = bar_month
             now_t = time.time()
             elapsed = now_t - t_start
             rate = i / elapsed if elapsed > 0 else 0.0
-            print(f"    [{i:,}/{n:,} bars - {i/n*100:.1f}%] Date: {bar.timestamp.strftime('%Y-%m-%d')} | Signals: {len(raw_signals):,} | Speed: {rate:.1f} bars/s")
+            eta = (n - i) / rate if rate > 0 else 0.0
+            print(f"    [{bar_month}] bar {i:,}/{n:,} ({i/n*100:.1f}%) | Signals: {len(raw_signals):,} | INVALID_ENTRY_ZONE: {funnel.get('INVALID_ENTRY_ZONE', 0)} | Speed: {rate:.0f} bars/s | ETA: {eta:.0f}s")
 
         if i < warmup_bars:
             stats.warmup_skipped += 1
@@ -231,7 +244,83 @@ def run_bar_by_bar_replay(
         crt_analysis = meta.get("crt_analysis") or {}
         is_breached = bool(crt_analysis.get("is_breached"))
 
-        if state == CONFIRMED_STATE and result.direction.value in ("BUY", "SELL"):
+        FINALIST_GATES = {
+            "INVALID_ENTRY_ZONE",
+            "MISSED_SETUP",
+            "INVALID_RISK_GEOMETRY",
+            "EXCESSIVE_RISK_DISTANCE",
+            "INSUFFICIENT_RR",
+            "PATH_BLOCKED",
+            "SCORE_BELOW_THRESHOLD",
+            "CONFIRMED_SETUP",
+            "DEDUPLICATED",
+        }
+
+        is_confirmed_signal = (state == CONFIRMED_STATE and result.direction.value in ("BUY", "SELL"))
+        effective_gate = "CONFIRMED_SETUP" if is_confirmed_signal else (
+            gate if gate else (
+                "NO_SWEEP" if not is_breached else (
+                    "TREND_CONFLICT" if meta.get("trend_conflict") else (
+                        "SCORE_BELOW_THRESHOLD" if (state == "POTENTIAL_SETUP" and not meta.get("gatekeeper_passed", False)) else "OTHER_WAIT"
+                    )
+                )
+            )
+        )
+
+        # Diagnostic finalist dump
+        if finalists_file and (effective_gate in FINALIST_GATES or is_confirmed_signal):
+            direction_str = (
+                result.direction.value
+                if result.direction.value in ("BUY", "SELL")
+                else ("BUY" if crt_analysis.get("positive_direction") else "SELL")
+            )
+            c_price = round(float(result.entry_price or (c15[-1].close if c15 else 0.0)), 5)
+            i_entry = round(float(meta.get("ideal_entry") or meta.get("entry_price") or result.entry_price or c_price), 5)
+            e_mode = str(meta.get("entry_mode") or "limit_zone")
+            ez = meta.get("entry_zone") or [0.0, 0.0]
+            z_low = round(float(ez[0]), 5)
+            z_high = round(float(ez[1]), 5)
+            sl_val = round(float(meta.get("stop_loss") or result.stop_loss or 0.0), 5)
+            tp1_val = round(float(meta.get("take_profit_1") or result.take_profit_1 or 0.0), 5)
+            r_dist = round(float(meta.get("risk_distance") or abs(i_entry - sl_val)), 5)
+            eff_atr = round(float(meta.get("effective_atr") or 0.0), 5)
+            d_size = round(float(meta.get("displacement_size") or 0.0), 5)
+            d_ext = round(float(meta.get("displacement_extreme") or 0.0), 5)
+            m_idx = int(crt_analysis.get("manipulation_candle_index") or 0)
+            b_ts = crt_analysis.get("breach_timestamp")
+            b_ts_str = str(b_ts) if b_ts is not None else None
+            score_val = round(float(result.score or 0.0), 2)
+            sub_cond = str(meta.get("sub_condition") or "")
+            if not sub_cond and effective_gate == "INVALID_ENTRY_ZONE":
+                if direction_str == "BUY":
+                    sub_cond = f"BUY: stop_loss ({sl_val:.5f}) > zone_low ({z_low:.5f})"
+                else:
+                    sub_cond = f"SELL: stop_loss ({sl_val:.5f}) < zone_high ({z_high:.5f})"
+
+            finalist_rec = {
+                "timestamp": decision_time.isoformat(),
+                "direction": direction_str,
+                "gate": effective_gate,
+                "current_price": c_price,
+                "ideal_entry": i_entry,
+                "entry_mode": e_mode,
+                "zone_low": z_low,
+                "zone_high": z_high,
+                "stop_loss": sl_val,
+                "take_profit_1": tp1_val,
+                "risk_distance": r_dist,
+                "effective_atr": eff_atr,
+                "displacement_size": d_size,
+                "displacement_extreme": d_ext,
+                "manipulation_candle_index": m_idx,
+                "breach_timestamp": b_ts_str,
+                "score": score_val,
+                "sub_condition": sub_cond,
+            }
+            finalists_file.write(json.dumps(finalist_rec) + "\n")
+            finalists_file.flush()
+
+        if is_confirmed_signal:
             sweep_key = str(meta.get("sweep_event_key") or "")
             entry = float(meta.get("entry_price") or 0.0)
             sl = float(meta.get("stop_loss") or 0.0)
@@ -286,6 +375,9 @@ def run_bar_by_bar_replay(
             funnel["SCORE_BELOW_THRESHOLD"] += 1
         else:
             funnel["OTHER_WAIT"] += 1
+
+    if finalists_file:
+        finalists_file.close()
 
     total_eval_time = time.time() - t_start
     print(f"[*] Replay finished in {total_eval_time:.1f}s. Evaluated: {stats.evaluated:,} bars. Emitted signals: {len(raw_signals):,}")
@@ -791,6 +883,23 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--min-sep-hours", type=float, default=1.0, help="Min entry separation in hours (default: 1.0)")
     p.add_argument("--report-path", default=str(REPO_ROOT / "reports" / "crt_backtest_recent.md"), help="Markdown report path")
     p.add_argument("--csv-path", default=str(REPO_ROOT / "equity_curve_recent.csv"), help="CSV equity curve export path")
+    p.add_argument(
+        "--dump-finalists",
+        action="store_true",
+        default=True,
+        help="Dump finalist candidates to JSONL (default: True)",
+    )
+    p.add_argument(
+        "--no-dump-finalists",
+        dest="dump_finalists",
+        action="store_false",
+        help="Disable dumping finalist candidates to JSONL",
+    )
+    p.add_argument(
+        "--finalists-path",
+        default=str(REPO_ROOT / "reports" / "crt_finalists_recent.jsonl"),
+        help="Path to finalists JSONL dump (default: reports/crt_finalists_recent.jsonl)",
+    )
     return p.parse_args(argv)
 
 
@@ -837,6 +946,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         expiry_bars=args.expiry_bars,
         max_hold_bars=args.max_hold_bars,
         warmup_bars=args.warmup_bars,
+        dump_finalists=args.dump_finalists,
+        finalists_path=Path(args.finalists_path),
     )
 
     # 5. Apply Portfolio Rules
