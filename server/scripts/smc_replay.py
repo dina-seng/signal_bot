@@ -34,7 +34,8 @@ Design notes / deliberate deviations from ``crt_replay.py``
 - Friction: a single round-trip cost in price units is charged per completed
   trade by the shared ``simulate_outcome``.
 
-No strategy threshold, weight, evaluator floor or RiskManager default is changed.
+Live parameters are read directly from ``smc_strategy.py`` and ``evaluators.py``
+(DEFAULT_MIN_SCORE, LTF_UNCONFIRMED_PENALTY, DIRECTIONAL_CONFLICT_PENALTY).
 
 Usage
 -----
@@ -67,8 +68,13 @@ if str(SCRIPTS_ROOT) not in sys.path:
 from app.schemas.candle import CandleCreate  # noqa: E402
 from app.schemas.signal import SignalDirection  # noqa: E402
 from app.services.signals.confluence_engine import ConfluenceEngine  # noqa: E402
+from app.services.signals.evaluators import DIRECTIONAL_CONFLICT_PENALTY  # noqa: E402
 from app.services.signals.risk_manager import RiskManager  # noqa: E402
-from app.services.strategies.smc_strategy import SMCStrategy  # noqa: E402
+from app.services.strategies.smc_strategy import (  # noqa: E402
+    DEFAULT_MIN_SCORE,
+    LTF_UNCONFIRMED_PENALTY,
+    SMCStrategy,
+)
 
 # Reuse the proven CRT harness primitives. Importing does not modify the module.
 from crt_replay import (  # noqa: E402
@@ -229,7 +235,7 @@ def _classify_smc(
     ``SMCStrategy`` does not emit a gate. The pipeline (``evaluators.py``) is:
         fatal conflict -> PA floor -> confluence floor -> score floor -> LTF penalty
     ``ScoreBreakdown.is_qualified`` is computed by ``ConsensusFilter.synthesize``
-    BEFORE the LTF 70% penalty, so it exactly identifies the LTF-only failures.
+    BEFORE the LTF penalty (-5 pts), so it exactly identifies the LTF-only failures.
     """
     buy_final = float(meta.get("buy_score") or 0.0)
     sell_final = float(meta.get("sell_score") or 0.0)
@@ -651,7 +657,7 @@ def build_report(
         return "  n<30" if n < 30 else ""
 
     lines: List[str] = []
-    lines.append("# SMC Replay — Full-Range Rejection Funnel & Counterfactual (No Thresholds Changed)")
+    lines.append("# SMC Replay — Full-Range Rejection Funnel & Counterfactual")
     lines.append("")
     lines.append(
         "Production path: `resample_ohlc` → `ConfluenceEngine._prepare_market_data` → "
@@ -678,8 +684,30 @@ def build_report(
     lines.append("")
     lines.append(
         "Split windows: calibration = earliest 60% (observation only), validation = next 20%, "
-        "test = last 20% (untouched). No threshold or weight was tuned on any split."
+        "test = last 20%. NOTE: Validation and test splits were previously observed during earlier "
+        "exploratory runs (commits 4424a64, 5b88873, 2db6eb1) and are no longer clean out-of-sample data."
     )
+    lines.append("")
+    lines.append("### Live SMC parameters")
+    lines.append("")
+    lines.append("| Parameter | Value | Location in code |")
+    lines.append("| :--- | :--- | :--- |")
+    lines.append(f"| `DEFAULT_MIN_SCORE` | {DEFAULT_MIN_SCORE:.1f} | `server/app/services/strategies/smc_strategy.py:30` |")
+    lines.append(f"| `LTF_UNCONFIRMED_PENALTY` | {LTF_UNCONFIRMED_PENALTY:.1f} pts | `server/app/services/strategies/smc_strategy.py:34` |")
+    lines.append(f"| `DIRECTIONAL_CONFLICT_PENALTY` | {DIRECTIONAL_CONFLICT_PENALTY:.1f} pts | `server/app/services/signals/evaluators.py:31` |")
+    lines.append(f"| `PA_FLOOR` | {PA_FLOOR:.1f} pts | `server/app/services/signals/evaluators.py:526` |")
+    lines.append(f"| `CONFLUENCE_FLOOR` | {CONFLUENCE_FLOOR:.1f} pts | `server/app/services/signals/evaluators.py:544` |")
+    lines.append("")
+    lines.append("### Parameter history")
+    lines.append("")
+    lines.append("| Change | Commit | Date | Split basis cited | Evidence / Citation |")
+    lines.append("| :--- | :--- | :--- | :--- | :--- |")
+    lines.append("| Initial 3-pillar SMC migration from ConfluenceEngine (`MIN_SETUP_SCORE=75`, BUY LTF `* 0.9`, SELL LTF `* 0.3`, 2+ conflict hard veto) | `19d283b` | 2026-11-17 | UNVERIFIED | Commit message: `feat: add SMC strategy implementation migrated from ConfluenceEngine` |")
+    lines.append("| BUY LTF multiplier updated: `* 0.9` -> `* 0.5` | `4424a64` | 2026-11-17 | UNVERIFIED | Commit message: `feat: add smc strategy replay reports and checkpoints` |")
+    lines.append("| SELL LTF multiplier updated: `* 0.3` -> `* 0.5` | `5b88873` | 2026-11-17 | UNVERIFIED | Commit message: `feat: add smc replay extended reports and update smc strategy` |")
+    lines.append("| Directional conflict hard veto replaced by flat -15 deduction (`DIRECTIONAL_CONFLICT_PENALTY = 15.0`) | `2db6eb1` | 2026-11-17 | Calibration | Code comment `server/app/services/signals/evaluators.py:560-569`: Counterfactual replay on calibration split (+0.15R expectancy over 3,496 opps) |")
+    lines.append("| LTF unconfirmed penalty replaced 0.5x slash with flat deduction (`LTF_UNCONFIRMED_PENALTY = 5.0`) | `2db6eb1` | 2026-11-17 | UNVERIFIED | Code comment `server/app/services/strategies/smc_strategy.py:32-34`: replaces 0.5x slash; no split cited |")
+    lines.append("| Minimum qualification score lowered from 75 to 60 (`DEFAULT_MIN_SCORE = 60.0`) | `2db6eb1` | 2026-11-17 | UNVERIFIED | Code comment `server/app/services/strategies/smc_strategy.py:28-30`: widens band to B-tier; no split cited |")
     lines.append("")
 
     lines.append("## 2. Rejection funnel — bars, opportunities and direction")
@@ -727,7 +755,7 @@ def build_report(
     )
     lines.append("")
 
-    lines.append("## 4. LTF 70% penalty")
+    lines.append(f"## 4. LTF penalty (flat -{LTF_UNCONFIRMED_PENALTY:.1f} pts)")
     lines.append("")
     lines.append("| Split | Bars with LTF penalty applied | Bars that passed all pre-LTF gates |")
     lines.append("| :--- | ---: | ---: |")
@@ -739,8 +767,12 @@ def build_report(
     lines.append("---")
     lines.append("")
     lines.append(
-        "No strategy threshold, scoring weight, evaluator floor or RiskManager default was "
-        "modified; all SMC parameters are production defaults."
+        f"Live SMC parameters: `DEFAULT_MIN_SCORE={DEFAULT_MIN_SCORE:.1f}`, "
+        f"`LTF_UNCONFIRMED_PENALTY={LTF_UNCONFIRMED_PENALTY:.1f}`, "
+        f"`DIRECTIONAL_CONFLICT_PENALTY={DIRECTIONAL_CONFLICT_PENALTY:.1f}`. "
+        "As documented in the Parameter history table, these parameters were introduced in "
+        "commit 2db6eb1. Prior runs observed validation and test sets; validation and test "
+        "are no longer clean out-of-sample data."
     )
     return "\n".join(lines), funnel_rows, cf_rows
 
@@ -793,6 +825,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     c1h, c1h_close, c4h, c4h_close = build_timeframe_series(bars)
     print(f"[*] Resampled 1h={len(c1h):,}, 4h={len(c4h):,} (complete buckets)")
+    print(
+        f"[*] Live SMC parameters: DEFAULT_MIN_SCORE={DEFAULT_MIN_SCORE:.1f}, "
+        f"LTF_UNCONFIRMED_PENALTY={LTF_UNCONFIRMED_PENALTY:.1f}, "
+        f"DIRECTIONAL_CONFLICT_PENALTY={DIRECTIONAL_CONFLICT_PENALTY:.1f}"
+    )
 
     bounds = walk_forward_bounds(bars)
     months = month_keys(bars)

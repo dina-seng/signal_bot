@@ -1,4 +1,4 @@
-# SMC Replay — Full-Range Rejection Funnel & Counterfactual (No Thresholds Changed)
+# SMC Replay — Full-Range Rejection Funnel & Counterfactual
 
 Production path: `resample_ohlc` → `ConfluenceEngine._prepare_market_data` → `SMCStrategy.analyze` → `RiskManager.calculate_trade_risk` (market geometry) → shared `simulate_outcome` fill/TP1/TP2 friction model. `SMCStrategy` emits no gate or price levels; gates are derived from `ScoreBreakdown` + `metadata` in `_classify_smc()`.
 
@@ -11,13 +11,34 @@ Production path: `resample_ohlc` → `ConfluenceEngine._prepare_market_data` →
 | Full range | 2023-03-01 00:00 → 2026-11-15 15:00 UTC |
 | Open-market bars available | 87,418 |
 | Bar records captured | 87,318 |
-| Warmup / insufficient-data skips | 100 / 0 |
+| Warmup / insufficient-data skips | 0 / 0 |
 | Evaluation errors | 0 |
 | Calibration boundary (60%) | 2025-05-21 08:15 UTC |
 | Validation boundary (80%) | 2026-02-16 03:00 UTC |
 | Round-trip friction | \$0.40 per completed trade |
 
-Split windows: calibration = earliest 60% (observation only), validation = next 20%, test = last 20% (untouched). No threshold or weight was tuned on any split.
+Split windows: calibration = earliest 60% (observation only), validation = next 20%, test = last 20%. NOTE: Validation and test splits were previously observed during earlier exploratory runs (commits 4424a64, 5b88873, 2db6eb1) and are no longer clean out-of-sample data.
+
+### Live SMC parameters
+
+| Parameter | Value | Location in code |
+| :--- | :--- | :--- |
+| `DEFAULT_MIN_SCORE` | 60.0 | `server/app/services/strategies/smc_strategy.py:30` |
+| `LTF_UNCONFIRMED_PENALTY` | 5.0 pts | `server/app/services/strategies/smc_strategy.py:34` |
+| `DIRECTIONAL_CONFLICT_PENALTY` | 15.0 pts | `server/app/services/signals/evaluators.py:31` |
+| `PA_FLOOR` | 10.0 pts | `server/app/services/signals/evaluators.py:526` |
+| `CONFLUENCE_FLOOR` | 20.0 pts | `server/app/services/signals/evaluators.py:544` |
+
+### Parameter history
+
+| Change | Commit | Date | Split basis cited | Evidence / Citation |
+| :--- | :--- | :--- | :--- | :--- |
+| Initial 3-pillar SMC migration from ConfluenceEngine (`MIN_SETUP_SCORE=75`, BUY LTF `* 0.9`, SELL LTF `* 0.3`, 2+ conflict hard veto) | `19d283b` | 2026-11-17 | UNVERIFIED | Commit message: `feat: add SMC strategy implementation migrated from ConfluenceEngine` |
+| BUY LTF multiplier updated: `* 0.9` -> `* 0.5` | `4424a64` | 2026-11-17 | UNVERIFIED | Commit message: `feat: add smc strategy replay reports and checkpoints` |
+| SELL LTF multiplier updated: `* 0.3` -> `* 0.5` | `5b88873` | 2026-11-17 | UNVERIFIED | Commit message: `feat: add smc replay extended reports and update smc strategy` |
+| Directional conflict hard veto replaced by flat -15 deduction (`DIRECTIONAL_CONFLICT_PENALTY = 15.0`) | `2db6eb1` | 2026-11-17 | Calibration | Code comment `server/app/services/signals/evaluators.py:560-569`: Counterfactual replay on calibration split (+0.15R expectancy over 3,496 opps) |
+| LTF unconfirmed penalty replaced 0.5x slash with flat deduction (`LTF_UNCONFIRMED_PENALTY = 5.0`) | `2db6eb1` | 2026-11-17 | UNVERIFIED | Code comment `server/app/services/strategies/smc_strategy.py:32-34`: replaces 0.5x slash; no split cited |
+| Minimum qualification score lowered from 75 to 60 (`DEFAULT_MIN_SCORE = 60.0`) | `2db6eb1` | 2026-11-17 | UNVERIFIED | Code comment `server/app/services/strategies/smc_strategy.py:28-30`: widens band to B-tier; no split cited |
 
 ## 2. Rejection funnel — bars, opportunities and direction
 
@@ -62,7 +83,7 @@ For near-miss rejections the trade is re-priced as if the gate had passed, using
 
 > 0 of 12 groups have fewer than 30 filled trades (flagged above). Treat every metric in those groups as descriptive only.
 
-## 4. LTF 70% penalty
+## 4. LTF penalty (flat -5.0 pts)
 
 | Split | Bars with LTF penalty applied | Bars that passed all pre-LTF gates |
 | :--- | ---: | ---: |
@@ -72,4 +93,4 @@ For near-miss rejections the trade is re-priced as if the gate had passed, using
 
 ---
 
-No strategy threshold, scoring weight, evaluator floor or RiskManager default was modified; all SMC parameters are production defaults.
+Live SMC parameters: `DEFAULT_MIN_SCORE=60.0`, `LTF_UNCONFIRMED_PENALTY=5.0`, `DIRECTIONAL_CONFLICT_PENALTY=15.0`. As documented in the Parameter history table, these parameters were introduced in commit 2db6eb1. Prior runs observed validation and test sets; validation and test are no longer clean out-of-sample data.
