@@ -30,7 +30,8 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_api_usage_date'), 'api_usage', ['date'], unique=True)
     op.create_index(op.f('ix_api_usage_id'), 'api_usage', ['id'], unique=False)
-    op.drop_table('playing_with_neon')
+    # Auto-generated Neon playground artifact removed: it is unused by the app
+    # and its presence is not guaranteed on fresh/non-Neon databases.
     op.create_index(op.f('ix_candles_source'), 'candles', ['source'], unique=False)
     op.create_unique_constraint('uq_liquidity_symbol_tf_type_ts', 'liquidity_events', ['symbol', 'timeframe', 'event_type', 'timestamp'])
     op.create_unique_constraint('uq_news_currency_name_time', 'news_events', ['currency', 'event_name', 'scheduled_time'])
@@ -59,12 +60,6 @@ def downgrade() -> None:
     op.drop_constraint('uq_news_currency_name_time', 'news_events', type_='unique')
     op.drop_constraint('uq_liquidity_symbol_tf_type_ts', 'liquidity_events', type_='unique')
     op.drop_index(op.f('ix_candles_source'), table_name='candles')
-    op.create_table('playing_with_neon',
-    sa.Column('id', sa.INTEGER(), autoincrement=True, nullable=False),
-    sa.Column('name', sa.TEXT(), autoincrement=False, nullable=False),
-    sa.Column('value', sa.REAL(), autoincrement=False, nullable=True),
-    sa.PrimaryKeyConstraint('id', name=op.f('playing_with_neon_pkey'))
-    )
     op.drop_index(op.f('ix_api_usage_id'), table_name='api_usage')
     op.drop_index(op.f('ix_api_usage_date'), table_name='api_usage')
     op.drop_table('api_usage')

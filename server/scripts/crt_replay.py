@@ -39,11 +39,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import sqlite3
 import sys
 from bisect import bisect_right
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -54,9 +56,15 @@ if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
 from app.schemas.candle import CandleCreate  # noqa: E402
+from app.schemas.liquidity import LiquidityEventType  # noqa: E402
+from app.schemas.signal import SignalDirection  # noqa: E402
+from app.schemas.structure import CRTAnalysis  # noqa: E402
 from app.services.market_data.calendar import filter_open_market_candles  # noqa: E402
 from app.services.market_data.resample import resample_ohlc  # noqa: E402
 from app.services.signals.confluence_engine import ConfluenceEngine  # noqa: E402
+from app.services.strategies.crt.confirmation import verify_ltf_confirmation  # noqa: E402
+from app.services.strategies.crt.entry import calculate_retracement_entry  # noqa: E402
+from app.services.strategies.crt.targets import calculate_crt_targets  # noqa: E402
 from app.services.strategies.crt_strategy import CRTStrategy  # noqa: E402
 from app.services.strategies.strategy_manager import StrategyManager  # noqa: E402
 
@@ -836,11 +844,23 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--warmup-bars", type=int, default=100, help="15m bars skipped before the first decision")
     p.add_argument("--out-dir", default=str(REPO_ROOT / "reports" / "crt_replay"),
                    help="Directory for the markdown report and CSV")
+    # --- Full-range, chunked, resumable measurement mode (Part 3) ---
+    p.add_argument("--full-range", action="store_true",
+                   help="Process the entire DB range in monthly chunks (ignores --months cap)")
+    p.add_argument("--checkpoint-dir", default=None,
+                   help="Directory for per-month resumable checkpoints (default: <out-dir>/checkpoints)")
+    p.add_argument("--no-resume", action="store_true",
+                   help="Ignore existing monthly checkpoints and recompute every month")
+    p.add_argument("--max-chunks", type=int, default=None,
+                   help="Debug only: stop after this many monthly chunks")
     return p.parse_args(argv)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.full_range:
+        return main_full_range(args)
 
     if args.months > 3.0:
         raise SystemExit("--months is capped at 3 by policy for this diagnostic.")
@@ -889,6 +909,584 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"[!] SAMPLE TOO SMALL: {metrics.n_filled} filled trades (<30). "
               "No edge claim can be made from this replay.")
 
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Part 3 — Full-range, monthly-chunked, resumable measurement.
+#
+# Everything below is additive: it reuses the production strategy path and the
+# existing simulate_outcome() logic. No strategy threshold is modified.
+#
+# Design notes (documented, not tuned):
+# - The whole 15m series is read once (read-only SQLite) and resampled once;
+#   evaluation then walks the series in calendar-month chunks. Each chunk keeps
+#   the full lookback history available (no artificial window truncation), so
+#   chunk boundaries do not change the production inputs.
+# - Each finished month is checkpointed to JSON. Re-running skips finished
+#   months unless --no-resume is given.
+# - "Rejected candidate" = an evaluated bar whose CRTAnalysis has is_breached
+#   True but which was not emitted. For each such bar the counterfactual uses
+#   the SAME sub-functions the strategy uses (verify_ltf_confirmation,
+#   calculate_retracement_entry, calculate_crt_targets) and the SAME
+#   simulate_outcome() fill/TP1/TP2 logic, with the gate simply ignored.
+# - Direction on rejected bars is derived from analysis.positive_direction
+#   (the strategy returns WAIT); sweep_key mirrors crt_strategy.py:1003.
+# ---------------------------------------------------------------------------
+
+CALIBRATION = "calibration"   # earliest 60% — observation only
+VALIDATION = "validation"     # next 20%
+TEST = "test"                 # last 20% — untouched
+SPLITS = (CALIBRATION, VALIDATION, TEST)
+
+
+@dataclass
+class BarRecord:
+    decision_time: str
+    month: str
+    split: str
+    index: int
+    gate: str
+    direction: str
+    sweep_key: str
+    is_breached: bool
+    accepted: bool
+    confirmation_detail: str = ""
+    accepted_trade: Optional[Dict[str, Any]] = None
+    counterfactual_trade: Optional[Dict[str, Any]] = None
+    cf_error: str = ""
+
+
+def _signal_to_dict(s: SignalRecord) -> Dict[str, Any]:
+    return {
+        "signal_time": s.signal_time.isoformat(),
+        "direction": s.direction,
+        "entry_mode": s.entry_mode,
+        "crt_entry": s.crt_entry,
+        "stop_loss": s.stop_loss,
+        "take_profit_1": s.take_profit_1,
+        "take_profit_2": s.take_profit_2,
+        "risk_price": s.risk_price,
+        "rr_planned": s.rr_planned,
+        "filled": s.filled,
+        "fill_time": s.fill_time.isoformat() if s.fill_time else None,
+        "exit_reason": s.exit_reason,
+        "exit_time": s.exit_time.isoformat() if s.exit_time else None,
+        "r_multiple": s.r_multiple,
+        "bars_held": s.bars_held,
+        "spread_paid": s.spread_paid,
+        "sweep_key": s.sweep_key,
+    }
+
+
+def load_full_15m_candles(
+    db_path: Path, symbol: str, source: str
+) -> Tuple[List[CandleCreate], Dict[str, Any]]:
+    """Read the entire deduplicated, open-market 15m series (read-only)."""
+    if not db_path.exists():
+        raise SystemExit(f"Database not found: {db_path}")
+    uri = f"file:{db_path.as_posix()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """SELECT timestamp, open, high, low, close, volume, source
+               FROM candles
+               WHERE symbol = ? AND timeframe = '15m' AND source = ?
+               ORDER BY timestamp""",
+            (symbol, source),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        raise SystemExit(f"No {symbol} 15m rows with source='{source}' in {db_path}")
+
+    seen: set[datetime] = set()
+    deduped: List[CandleCreate] = []
+    duplicates = 0
+    for r in rows:
+        ts = _parse_ts(r["timestamp"])
+        if ts in seen:
+            duplicates += 1
+            continue
+        seen.add(ts)
+        deduped.append(
+            CandleCreate(
+                symbol=symbol, timeframe="15m", timestamp=ts,
+                open=float(r["open"]), high=float(r["high"]),
+                low=float(r["low"]), close=float(r["close"]),
+                volume=float(r["volume"] or 0.0), source=r["source"],
+            )
+        )
+    open_market = filter_open_market_candles(deduped)
+    meta = {
+        "db_path": str(db_path),
+        "raw_rows": len(rows),
+        "duplicates_dropped": duplicates,
+        "raw_first": deduped[0].timestamp,
+        "raw_last": deduped[-1].timestamp,
+        "bars_in_window": len(deduped),
+        "open_market_bars": len(open_market),
+        "closed_market_dropped": len(deduped) - len(open_market),
+    }
+    return open_market, meta
+
+
+def walk_forward_bounds(bars: Sequence[CandleCreate]) -> Tuple[datetime, datetime]:
+    """Earliest 60% / next 20% / last 20% by elapsed time across the series."""
+    start, end = bars[0].timestamp, bars[-1].timestamp
+    span = end - start
+    return start + span * 0.60, start + span * 0.80
+
+
+def split_of(ts: datetime, bounds: Tuple[datetime, datetime]) -> str:
+    b1, b2 = bounds
+    if ts < b1:
+        return CALIBRATION
+    if ts < b2:
+        return VALIDATION
+    return TEST
+
+
+def month_keys(bars: Sequence[CandleCreate]) -> List[Tuple[str, datetime, datetime]]:
+    keys = sorted({(b.timestamp.year, b.timestamp.month) for b in bars})
+    out: List[Tuple[str, datetime, datetime]] = []
+    for (y, m) in keys:
+        start = datetime(y, m, 1, tzinfo=timezone.utc)
+        end = datetime(y + (m == 12), (m % 12) + 1, 1, tzinfo=timezone.utc)
+        out.append((f"{y:04d}-{m:02d}", start, end))
+    return out
+
+
+def _direction_of(meta: Dict[str, Any]) -> str:
+    ca = meta.get("crt_analysis") or {}
+    return "BUY" if bool(ca.get("positive_direction")) else "SELL"
+
+
+def _sweep_key_of(meta: Dict[str, Any], symbol: str, timeframe: str = "1h") -> str:
+    ca = meta.get("crt_analysis") or {}
+    direction = "BUY" if ca.get("positive_direction") else "SELL"
+    rot = str(ca.get("range_open_timestamp") or "0")
+    bt = str(ca.get("breach_timestamp") or "0")
+    return f"{symbol}_{timeframe}_{direction}_{rot}_{bt}"
+
+
+def _classify_gate(result: Any, meta: Dict[str, Any]) -> Tuple[str, bool, bool]:
+    ca = meta.get("crt_analysis") or {}
+    is_breached = bool(ca.get("is_breached"))
+    state = meta.get("setup_state")
+    if state == CONFIRMED_STATE and result is not None and result.direction.value in ("BUY", "SELL"):
+        return CONFIRMED_STATE, is_breached, True
+    gate = meta.get("rejection_gate")
+    if gate:
+        return str(gate), is_breached, False
+    if not is_breached:
+        return "NO_SWEEP", is_breached, False
+    if meta.get("trend_conflict"):
+        return "TREND_CONFLICT", is_breached, False
+    if state == "POTENTIAL_SETUP" and not meta.get("gatekeeper_passed", False):
+        return "SCORE_BELOW_THRESHOLD", is_breached, False
+    return "OTHER_WAIT", is_breached, False
+
+
+def _build_trade_from_meta(
+    meta: Dict[str, Any], direction: str, decision_time: datetime,
+    sweep_key: str, i: int, bars: Sequence[CandleCreate], spread: float,
+    expiry_bars: int, max_hold_bars: int,
+) -> Optional[SignalRecord]:
+    entry = float(meta.get("entry_price") or 0.0)
+    sl = float(meta.get("stop_loss") or 0.0)
+    tp1 = float(meta.get("take_profit_1") or 0.0)
+    tp2 = float(meta.get("take_profit_2") or 0.0)
+    if entry <= 0 or sl <= 0 or tp1 <= 0 or tp2 <= 0:
+        return None
+    rec = SignalRecord(
+        signal_time=decision_time, direction=direction, tier=meta.get("quality_tier"),
+        session=meta.get("session_name"), entry_mode=meta.get("entry_mode"),
+        crt_entry=entry, stop_loss=sl, take_profit_1=tp1, take_profit_2=tp2,
+        risk_price=abs(entry - sl), rr_planned=meta.get("risk_reward_tp1"),
+        score=float(meta.get("score") or 0.0), sweep_key=sweep_key,
+    )
+    simulate_outcome(rec, bars=bars, signal_index=i, spread=spread,
+                     expiry_bars=expiry_bars, max_hold_bars=max_hold_bars)
+    return rec
+
+
+def build_counterfactual(
+    meta: Dict[str, Any], current_price: float, effective_atr: float,
+    c15: Sequence[CandleCreate], structure: Any, indicators: Any, crt: CRTStrategy,
+    decision_time: datetime, i: int, bars: Sequence[CandleCreate], spread: float,
+    expiry_bars: int, max_hold_bars: int, direction: str, sweep_key: str,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Recompute the CRT trade a rejected sweep WOULD have produced, then simulate it."""
+    ca = meta.get("crt_analysis")
+    if not ca:
+        return None, "NO_ANALYSIS"
+    try:
+        analysis = CRTAnalysis(**ca)
+    except Exception as exc:
+        return None, f"ANALYSIS_PARSE:{type(exc).__name__}"
+    if analysis.breach_point is None:
+        return None, "NO_BREACH_POINT"
+
+    sd = SignalDirection.BUY if direction == "BUY" else SignalDirection.SELL
+    try:
+        conf = verify_ltf_confirmation(
+            direction=sd, range_high=analysis.range_high, range_low=analysis.range_low,
+            candles_15m=c15, breach_point=analysis.breach_point,
+            manip_candle_index=analysis.manipulation_candle_index,
+            breach_timestamp=analysis.breach_timestamp, atr=effective_atr,
+            min_disp_atr_mult=crt.min_disp_atr_mult, structure=structure,
+        )
+        entry_res = calculate_retracement_entry(
+            direction=sd, sweep_extreme=analysis.breach_point,
+            displacement_extreme=conf.displacement_extreme, candles_15m=c15,
+            current_price=current_price,
+            target_tp1=(analysis.range_high + analysis.range_low) / 2.0,
+            atr=effective_atr, spread=crt.spread, expiry_bars=crt.entry_expiry_bars,
+        )
+        eff_entry = entry_res.ideal_entry if entry_res.entry_mode == "limit_zone" else current_price
+
+        sl_buffer = max(crt.spread, 0.10 * effective_atr) if (crt.spread > 0 or effective_atr > 0) else 0.0
+        raw_sl = entry_res.stop_loss
+        for pool in (getattr(structure, "liquidity_pools", None) or []):
+            plevel = float(getattr(pool, "price_level", 0.0) or 0.0)
+            ptype = str(getattr(pool, "pool_type", ""))
+            near = abs(plevel - analysis.breach_point) <= 1.0 * (effective_atr or 5.0)
+            if direction == "BUY" and "EQUAL_LOW" in ptype and plevel < current_price and near:
+                raw_sl = min(raw_sl, plevel - sl_buffer)
+            if direction == "SELL" and "EQUAL_HIGH" in ptype and plevel > current_price and near:
+                raw_sl = max(raw_sl, plevel + sl_buffer)
+        stop_loss = round(raw_sl, 5)
+        if (direction == "BUY" and stop_loss >= eff_entry) or (direction == "SELL" and stop_loss <= eff_entry):
+            return None, "INVALID_RISK_GEOMETRY"
+        risk_distance = abs(eff_entry - stop_loss)
+        if effective_atr > 0 and risk_distance > crt.max_risk_atr_mult * effective_atr:
+            return None, "EXCESSIVE_RISK_DISTANCE"
+
+        plan = calculate_crt_targets(
+            direction=sd, entry_price=eff_entry, stop_loss=stop_loss,
+            range_high=analysis.range_high, range_low=analysis.range_low,
+            atr=effective_atr, min_rr=crt.min_rr_tp1,
+            structure=structure, indicators=indicators,
+        )
+        if not plan.is_valid:
+            return None, str(plan.rejection_gate or "TARGET_INVALID")
+
+        rec = SignalRecord(
+            signal_time=decision_time, direction=direction, tier=None, session=None,
+            entry_mode=entry_res.entry_mode, crt_entry=eff_entry, stop_loss=stop_loss,
+            take_profit_1=plan.take_profit_1, take_profit_2=plan.take_profit_2,
+            risk_price=risk_distance, rr_planned=plan.risk_reward_tp1, score=0.0,
+            sweep_key=sweep_key,
+        )
+        simulate_outcome(rec, bars=bars, signal_index=i, spread=spread,
+                         expiry_bars=expiry_bars, max_hold_bars=max_hold_bars)
+        return _signal_to_dict(rec), ""
+    except Exception as exc:
+        return None, f"CF_ERROR:{type(exc).__name__}:{exc}"
+
+
+def replay_chunk(
+    bars: Sequence[CandleCreate], c1h: Sequence[CandleCreate],
+    c1h_close: Sequence[datetime], c4h: Sequence[CandleCreate],
+    c4h_close: Sequence[datetime], indices: Sequence[int], symbol: str,
+    spread: float, expiry_bars: int, max_hold_bars: int, warmup_bars: int,
+    bounds: Tuple[datetime, datetime], month: str,
+) -> List[BarRecord]:
+    """Evaluate only ``indices`` but with the full precomputed series as lookback."""
+    crt = CRTStrategy(enable_dedup=False)
+    engine = ConfluenceEngine(strategy_manager=StrategyManager([crt]))
+    bar_close = [b.timestamp + TF_15M for b in bars]
+    records: List[BarRecord] = []
+
+    for i in indices:
+        if i < warmup_bars:
+            continue
+        decision_time = bar_close[i]
+        n15 = bisect_right(bar_close, decision_time)
+        n1h = bisect_right(c1h_close, decision_time)
+        n4h = bisect_right(c4h_close, decision_time)
+        c15 = list(bars[max(0, n15 - 200):n15])
+        primary = list(c1h[max(0, n1h - 200):n1h])
+        ht_c4h = list(c4h[max(0, n4h - 100):n4h])
+        if len(primary) < 20 or len(c15) < 50:
+            continue
+        try:
+            structure, indicators, mtf = engine._prepare_market_data(
+                symbol=symbol, timeframe="1h", c_prim=primary,
+                c_4h=ht_c4h, c_15m=c15,
+            )
+            results = engine.strategy_manager.run_all_strategies(
+                symbol=symbol, timeframe="1h", candles=primary,
+                indicators=indicators, structure=structure, mtf=mtf,
+                candles_15m=c15,
+            )
+        except Exception:
+            continue
+
+        result = results[0] if results else None
+        meta = (result.metadata or {}) if result is not None else {}
+        gate, is_breached, accepted = _classify_gate(result, meta)
+        direction = _direction_of(meta)
+        sweep_key = _sweep_key_of(meta, symbol) if is_breached else ""
+        atr = float(getattr(getattr(indicators, "atr", None), "atr_value", 0.0) or 0.0)
+        current_price = float(meta.get("entry_price") or 0.0) or (
+            c15[-1].close if c15 else 0.0
+        )
+
+        rec = BarRecord(
+            decision_time=decision_time.isoformat(), month=month,
+            split=split_of(decision_time, bounds), index=i, gate=gate,
+            direction=direction, sweep_key=sweep_key, is_breached=is_breached,
+            accepted=accepted,
+            confirmation_detail=str(meta.get("confirmation_detail") or ""),
+        )
+        if accepted:
+            acc = _build_trade_from_meta(
+                meta, direction, decision_time, sweep_key, i, bars,
+                spread, expiry_bars, max_hold_bars,
+            )
+            if acc is not None:
+                rec.accepted_trade = _signal_to_dict(acc)
+        elif is_breached:
+            cf, err = build_counterfactual(
+                meta, current_price, atr, c15, structure, indicators, crt,
+                decision_time, i, bars, spread, expiry_bars, max_hold_bars,
+                direction, sweep_key,
+            )
+            rec.counterfactual_trade = cf
+            rec.cf_error = err
+        records.append(rec)
+    return records
+
+
+def _ckpt_path(ckpt_dir: Path, month: str) -> Path:
+    return ckpt_dir / f"{month}.json"
+
+
+def save_checkpoint(ckpt_dir: Path, month: str, records: Sequence[BarRecord]) -> None:
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    path = _ckpt_path(ckpt_dir, month)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps({"month": month, "records": [asdict(r) for r in records]}),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def load_checkpoint(ckpt_dir: Path, month: str) -> List[BarRecord]:
+    data = json.loads(_ckpt_path(ckpt_dir, month).read_text(encoding="utf-8"))
+    return [BarRecord(**d) for d in data["records"]]
+
+
+def trade_metrics(trades: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    filled = [t for t in trades if t.get("filled") and t.get("r_multiple") is not None]
+    rs = [float(t["r_multiple"]) for t in filled]
+    wins = [r for r in rs if r > 0]
+    return {
+        "n_candidates": len(trades),
+        "n_filled": len(filled),
+        "n_no_fill": len(trades) - len(filled),
+        "win_rate": (len(wins) / len(rs) * 100.0) if rs else None,
+        "avg_r": (sum(rs) / len(rs)) if rs else None,
+        "expectancy": (sum(rs) / len(rs)) if rs else None,
+    }
+
+
+def build_extended_report(
+    meta: Dict[str, Any], records: Sequence[BarRecord],
+    bounds: Tuple[datetime, datetime], args: argparse.Namespace,
+) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Return (markdown, funnel rows, counterfactual rows)."""
+    funnel: Dict[Tuple[str, str], Dict[str, Any]] = defaultdict(
+        lambda: {"bars": 0, "BUY": 0, "SELL": 0, "sweeps": set()}
+    )
+    cf_trades: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    cf_candidates: Dict[Tuple[str, str], int] = defaultdict(int)
+    accepted: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+    for r in records:
+        key = (r.split, r.gate)
+        funnel[key]["bars"] += 1
+        if r.direction in ("BUY", "SELL"):
+            funnel[key][r.direction] += 1
+        if r.sweep_key:
+            funnel[key]["sweeps"].add(r.sweep_key)
+        if r.accepted and r.accepted_trade:
+            accepted[r.split].append(r.accepted_trade)
+        elif not r.accepted and r.is_breached:
+            cf_candidates[key] += 1
+            if r.counterfactual_trade:
+                cf_trades[key].append(r.counterfactual_trade)
+
+    funnel_rows: List[Dict[str, Any]] = []
+    for (split, gate), d in sorted(funnel.items()):
+        funnel_rows.append({
+            "split": split, "gate": gate, "bars": d["bars"],
+            "distinct_sweeps": len(d["sweeps"]),
+            "buy_bars": d["BUY"], "sell_bars": d["SELL"],
+        })
+
+    cf_rows: List[Dict[str, Any]] = []
+    for (split, gate), n_cand in sorted(cf_candidates.items()):
+        trades = cf_trades.get((split, gate), [])
+        m = trade_metrics(trades)
+        m.update({
+            "split": split, "rejection_reason": gate,
+            "candidates": n_cand,
+            "flagged_lt30": m["n_filled"] < 30,
+        })
+        cf_rows.append(m)
+    for split, trades in sorted(accepted.items()):
+        m = trade_metrics(trades)
+        m.update({
+            "split": split, "rejection_reason": "ACCEPTED (CONFIRMED_SETUP)",
+            "candidates": len(trades), "flagged_lt30": m["n_filled"] < 30,
+        })
+        cf_rows.append(m)
+
+    def fmt(v: Any, digits: int = 4) -> str:
+        if v is None:
+            return "n/a"
+        if isinstance(v, float):
+            return f"{v:.{digits}f}"
+        return str(v)
+
+    def warning(n: int) -> str:
+        return "  ⚠️ n<30" if n < 30 else ""
+
+    lines: List[str] = []
+    lines.append("# CRT Replay — Full-Range Rejection Funnel & Counterfactual (No Thresholds Changed)")
+    lines.append("")
+    lines.append("Production path: `resample_ohlc` → `ConfluenceEngine._prepare_market_data` → "
+                 "`StrategyManager.run_all_strategies` → `CRTStrategy` (dedup disabled). "
+                 "Every rejected sweep is counterfactually re-priced through the same "
+                 "`verify_ltf_confirmation` → `calculate_retracement_entry` → "
+                 "`calculate_crt_targets` → `simulate_outcome` logic with its gate ignored.")
+    lines.append("")
+    lines.append("## 1. Data and walk-forward split")
+    lines.append("")
+    lines.append("| Item | Value |")
+    lines.append("| :--- | :--- |")
+    lines.append(f"| Database | `{meta['db_path']}` |")
+    lines.append(f"| Raw rows / duplicates dropped | {meta['raw_rows']:,} / {meta['duplicates_dropped']:,} |")
+    lines.append(f"| Full range | {meta['raw_first']:%Y-%m-%d %H:%M} → {meta['raw_last']:%Y-%m-%d %H:%M} UTC |")
+    lines.append(f"| Open-market bars replayed | {meta['open_market_bars']:,} |")
+    lines.append(f"| Bar records captured | {len(records):,} |")
+    lines.append(f"| Calibration boundary (60%) | {bounds[0]:%Y-%m-%d %H:%M} UTC |")
+    lines.append(f"| Validation boundary (80%) | {bounds[1]:%Y-%m-%d %H:%M} UTC |")
+    lines.append("")
+    lines.append("Split windows: calibration = earliest 60% (observation only), validation = next 20%, "
+                 "test = last 20% (untouched). No threshold was tuned on any split.")
+    lines.append("")
+
+    lines.append("## 2. Rejection funnel — bars and distinct sweeps by gate and direction")
+    lines.append("")
+    lines.append("Counts are bar-evaluations (first-failure-wins). A single sweep that survives many bars "
+                 "is counted on every bar; `distinct_sweeps` de-duplicates by the production `sweep_event_key`.")
+    lines.append("")
+    lines.append("| Split | Gate | Bars | BUY bars | SELL bars | Distinct sweeps |")
+    lines.append("| :--- | :--- | ---: | ---: | ---: | ---: |")
+    for row in funnel_rows:
+        lines.append(
+            f"| {row['split']} | `{row['gate']}` | {row['bars']:,} | "
+            f"{row['buy_bars']:,} | {row['sell_bars']:,} | {row['distinct_sweeps']:,} |"
+        )
+    lines.append("")
+
+    lines.append("## 3. Counterfactual vs accepted trades")
+    lines.append("")
+    lines.append("For every rejected candidate with a validated sweep, the trade is re-priced as if the gate "
+                 "had passed (same SL/TP/limit-zone logic, same spread). `n` counts trades with valid geometry; "
+                 "`candidates` includes those that could not be re-priced. Expectancy = average R per filled trade.")
+    lines.append("")
+    lines.append("| Split | Rejection reason | Candidates | n | Filled | No fill | Win rate | Avg R | Expectancy | Flag |")
+    lines.append("| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- |")
+    for row in cf_rows:
+        lines.append(
+            f"| {row['split']} | `{row['rejection_reason']}` | {row['candidates']:,} | "
+            f"{row['n_candidates']:,} | {row['n_filled']:,} | {row['n_no_fill']:,} | "
+            f"{fmt(row['win_rate'], 2)}% | {fmt(row['avg_r'])} | {fmt(row['expectancy'])} | "
+            f"{warning(row['n_filled'])} |"
+        )
+    lines.append("")
+    small = sum(1 for row in cf_rows if row["flagged_lt30"])
+    lines.append(f"> {small} of {len(cf_rows)} groups have fewer than 30 filled trades (⚠️ flagged above). "
+                 "Treat every metric in those groups as descriptive only.")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("No strategy threshold was modified; all CRT parameters are production defaults.")
+    return "\n".join(lines), funnel_rows, cf_rows
+
+
+def _write_csv(path: Path, rows: Sequence[Dict[str, Any]], columns: Sequence[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(columns))
+        w.writeheader()
+        for row in rows:
+            w.writerow({k: row.get(k, "") for k in columns})
+
+
+def main_full_range(args: argparse.Namespace) -> int:
+    db_path = Path(args.db_path)
+    print(f"[*] FULL-RANGE mode — loading {args.symbol} 15m candles from {db_path} ...")
+    bars, meta = load_full_15m_candles(db_path, args.symbol, args.source)
+    print(f"[*] {len(bars):,} open-market 15m bars "
+          f"({meta['raw_first']} → {meta['raw_last']})")
+    c1h, c1h_close, c4h, c4h_close = build_timeframe_series(bars)
+    print(f"[*] Resampled 1h={len(c1h):,}, 4h={len(c4h):,} (complete buckets)")
+
+    bounds = walk_forward_bounds(bars)
+    months = month_keys(bars)
+    ckpt_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else (Path(args.out_dir) / "checkpoints")
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[*] {len(months)} monthly chunks; checkpoints in {ckpt_dir}")
+
+    all_records: List[BarRecord] = []
+    for idx, (month, m_start, m_end) in enumerate(months):
+        path = _ckpt_path(ckpt_dir, month)
+        if path.exists() and not args.no_resume:
+            recs = load_checkpoint(ckpt_dir, month)
+            print(f"[=] {month}: {len(recs):,} records (cached)")
+        else:
+            indices = [
+                i for i, b in enumerate(bars)
+                if m_start <= b.timestamp < m_end
+            ]
+            recs = replay_chunk(
+                bars=bars, c1h=c1h, c1h_close=c1h_close, c4h=c4h,
+                c4h_close=c4h_close, indices=indices, symbol=args.symbol,
+                spread=args.spread, expiry_bars=args.expiry_bars,
+                max_hold_bars=args.max_hold_bars, warmup_bars=args.warmup_bars,
+                bounds=bounds, month=month,
+            )
+            save_checkpoint(ckpt_dir, month, recs)
+            print(f"[+] {month}: {len(recs):,} records (computed)")
+        all_records.extend(recs)
+        if args.max_chunks is not None and idx + 1 >= args.max_chunks:
+            print(f"[*] --max-chunks={args.max_chunks} reached; stopping early.")
+            break
+
+    report, funnel_rows, cf_rows = build_extended_report(meta, all_records, bounds, args)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md_path = out_dir / "crt_replay_extended_report.md"
+    md_path.write_text(report + "\n", encoding="utf-8")
+    funnel_csv = out_dir / "crt_replay_funnel.csv"
+    cf_csv = out_dir / "crt_replay_counterfactual.csv"
+    _write_csv(funnel_csv, funnel_rows,
+               ("split", "gate", "bars", "buy_bars", "sell_bars", "distinct_sweeps"))
+    _write_csv(cf_csv, cf_rows,
+               ("split", "rejection_reason", "candidates", "n_candidates", "n_filled",
+                "n_no_fill", "win_rate", "avg_r", "expectancy", "flagged_lt30"))
+    print(f"[*] Markdown report : {md_path}")
+    print(f"[*] Funnel CSV      : {funnel_csv}")
+    print(f"[*] Counterfactual CSV: {cf_csv}")
+    print(f"[*] Total bar records: {len(all_records):,}")
     return 0
 
 

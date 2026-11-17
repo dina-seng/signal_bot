@@ -401,6 +401,7 @@ All settings are centralized in `server/app/core/config.py` in the `Settings` cl
 - **Backend Deployment (`server/render.yaml`)**:
   - Service type: `web`, name: `trade-api`, runtime: `python` [L2-L4].
   - Python version: `3.11.8` [L12].
+  - **Environment parity note (2026-11-17):** Render pins Python `3.11.8` (`server/render.yaml:12`) while the local venv is Python `3.14.5` (`RAYU.md:11`). Recommendation: pin the local development interpreter to `3.11.8` (e.g. `.python-version` / `pyenv`) so local pytest results match production; at minimum re-run the full test suite under 3.11.8 before each deploy, since 3.14 can surface different stdlib/asyncio/pydantic behaviour. Do not change the Render pin without re-validating dependencies.
   - Build command:
     ```bash
     pip install -r requirements.txt && alembic upgrade head
