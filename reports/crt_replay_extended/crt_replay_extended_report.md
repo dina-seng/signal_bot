@@ -23,36 +23,33 @@ Counts are bar-evaluations (first-failure-wins). A single sweep that survives ma
 | Split | Gate | Bars | BUY bars | SELL bars | Distinct sweeps |
 | :--- | :--- | ---: | ---: | ---: | ---: |
 | calibration | `CONFIRMATION_PENDING` | 1,705 | 962 | 743 | 1,316 |
-| calibration | `CONFIRMED_SETUP` | 8 | 6 | 2 | 8 |
 | calibration | `EXCESSIVE_MANIPULATION` | 409 | 222 | 187 | 334 |
 | calibration | `EXCESSIVE_RANGE` | 5 | 5 | 0 | 5 |
-| calibration | `EXCESSIVE_RISK_DISTANCE` | 1 | 0 | 1 | 0 |
+| calibration | `EXCESSIVE_RISK_DISTANCE` | 2 | 0 | 2 | 0 |
+| calibration | `INVALID_ENTRY_ZONE` | 22 | 11 | 11 | 20 |
 | calibration | `MICRO_RANGE` | 365 | 183 | 182 | 245 |
 | calibration | `MICRO_SWEEP` | 1,556 | 899 | 657 | 1,066 |
-| calibration | `MISSED_SETUP` | 7 | 3 | 4 | 7 |
+| calibration | `MISSED_SETUP` | 4 | 2 | 2 | 3 |
 | calibration | `NO_SWEEP` | 44,605 | 23,295 | 21,310 | 0 |
-| calibration | `PATH_BLOCKED` | 13 | 0 | 13 | 0 |
-| calibration | `SCORE_BELOW_THRESHOLD` | 2 | 2 | 0 | 1 |
+| calibration | `PATH_BLOCKED` | 3 | 0 | 3 | 0 |
 | calibration | `TREND_CONFLICT` | 3,258 | 1,216 | 2,042 | 2,357 |
 | test | `CONFIRMATION_PENDING` | 611 | 295 | 316 | 463 |
-| test | `CONFIRMED_SETUP` | 1 | 0 | 1 | 1 |
 | test | `EXCESSIVE_MANIPULATION` | 126 | 71 | 55 | 102 |
+| test | `INVALID_ENTRY_ZONE` | 6 | 0 | 6 | 5 |
 | test | `MICRO_RANGE` | 138 | 103 | 35 | 84 |
 | test | `MICRO_SWEEP` | 451 | 202 | 249 | 310 |
-| test | `MISSED_SETUP` | 1 | 0 | 1 | 1 |
 | test | `NO_SWEEP` | 15,270 | 7,507 | 7,763 | 0 |
-| test | `PATH_BLOCKED` | 4 | 0 | 4 | 0 |
 | test | `TREND_CONFLICT` | 1,068 | 507 | 561 | 776 |
 | validation | `CONFIRMATION_PENDING` | 687 | 420 | 267 | 501 |
-| validation | `CONFIRMED_SETUP` | 5 | 4 | 1 | 4 |
+| validation | `CONFIRMED_SETUP` | 1 | 1 | 0 | 1 |
 | validation | `EXCESSIVE_MANIPULATION` | 182 | 119 | 63 | 125 |
-| validation | `INVALID_RISK_GEOMETRY` | 1 | 1 | 0 | 1 |
+| validation | `EXCESSIVE_RISK_DISTANCE` | 2 | 0 | 2 | 0 |
+| validation | `INVALID_ENTRY_ZONE` | 11 | 10 | 1 | 9 |
 | validation | `MICRO_RANGE` | 55 | 30 | 25 | 40 |
 | validation | `MICRO_SWEEP` | 492 | 315 | 177 | 334 |
-| validation | `MISSED_SETUP` | 5 | 2 | 3 | 4 |
 | validation | `NO_SWEEP` | 15,099 | 8,042 | 7,057 | 0 |
-| validation | `PATH_BLOCKED` | 5 | 0 | 5 | 0 |
-| validation | `SCORE_BELOW_THRESHOLD` | 1 | 1 | 0 | 1 |
+| validation | `PATH_BLOCKED` | 1 | 0 | 1 | 0 |
+| validation | `SCORE_BELOW_THRESHOLD` | 2 | 0 | 2 | 1 |
 | validation | `TREND_CONFLICT` | 1,182 | 400 | 782 | 824 |
 
 ## 3. Counterfactual vs accepted trades
@@ -61,33 +58,30 @@ For every rejected candidate with a validated sweep, the trade is re-priced as i
 
 | Split | Rejection reason | Candidates | n | Filled | No fill | Win rate | Avg R | Expectancy | Flag |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
-| calibration | `CONFIRMATION_PENDING` | 1,705 | 737 | 504 | 233 | 38.89% | -0.1620 | -0.1620 |  |
-| calibration | `EXCESSIVE_MANIPULATION` | 409 | 98 | 71 | 27 | 39.44% | -0.2456 | -0.2456 |  |
+| calibration | `CONFIRMATION_PENDING` | 1,705 | 113 | 48 | 65 | 33.33% | -0.3191 | -0.3191 |  |
+| calibration | `EXCESSIVE_MANIPULATION` | 409 | 50 | 26 | 24 | 42.31% | -0.0435 | -0.0435 |   ⚠️ n<30 |
 | calibration | `EXCESSIVE_RANGE` | 5 | 0 | 0 | 0 | n/a% | n/a | n/a |   ⚠️ n<30 |
-| calibration | `MICRO_RANGE` | 365 | 186 | 145 | 41 | 37.93% | -0.2585 | -0.2585 |  |
-| calibration | `MICRO_SWEEP` | 1,556 | 774 | 509 | 265 | 42.44% | 0.0132 | 0.0132 |  |
-| calibration | `MISSED_SETUP` | 7 | 2 | 2 | 0 | 100.00% | 1.8303 | 1.8303 |   ⚠️ n<30 |
-| calibration | `SCORE_BELOW_THRESHOLD` | 2 | 2 | 2 | 0 | 100.00% | 0.4413 | 0.4413 |   ⚠️ n<30 |
-| calibration | `TREND_CONFLICT` | 3,258 | 1,337 | 941 | 396 | 38.58% | -0.1915 | -0.1915 |  |
-| test | `CONFIRMATION_PENDING` | 611 | 244 | 188 | 56 | 33.51% | -0.2498 | -0.2498 |  |
-| test | `EXCESSIVE_MANIPULATION` | 126 | 28 | 23 | 5 | 26.09% | -0.2593 | -0.2593 |   ⚠️ n<30 |
-| test | `MICRO_RANGE` | 138 | 56 | 33 | 23 | 45.45% | 0.1127 | 0.1127 |  |
-| test | `MICRO_SWEEP` | 451 | 204 | 137 | 67 | 35.04% | -0.1701 | -0.1701 |  |
-| test | `MISSED_SETUP` | 1 | 0 | 0 | 0 | n/a% | n/a | n/a |   ⚠️ n<30 |
-| test | `TREND_CONFLICT` | 1,068 | 381 | 259 | 122 | 39.38% | -0.0344 | -0.0344 |  |
-| validation | `CONFIRMATION_PENDING` | 687 | 301 | 219 | 82 | 44.75% | 0.0857 | 0.0857 |  |
-| validation | `EXCESSIVE_MANIPULATION` | 182 | 43 | 35 | 8 | 25.71% | -0.2928 | -0.2928 |  |
-| validation | `INVALID_RISK_GEOMETRY` | 1 | 0 | 0 | 0 | n/a% | n/a | n/a |   ⚠️ n<30 |
-| validation | `MICRO_RANGE` | 55 | 16 | 14 | 2 | 21.43% | -0.5089 | -0.5089 |   ⚠️ n<30 |
-| validation | `MICRO_SWEEP` | 492 | 241 | 175 | 66 | 44.00% | -0.0308 | -0.0308 |  |
-| validation | `MISSED_SETUP` | 5 | 4 | 2 | 2 | 50.00% | -0.2286 | -0.2286 |   ⚠️ n<30 |
-| validation | `SCORE_BELOW_THRESHOLD` | 1 | 1 | 1 | 0 | 100.00% | 0.5665 | 0.5665 |   ⚠️ n<30 |
-| validation | `TREND_CONFLICT` | 1,182 | 478 | 333 | 145 | 36.94% | -0.1058 | -0.1058 |  |
-| calibration | `ACCEPTED (CONFIRMED_SETUP)` | 8 | 8 | 3 | 5 | 0.00% | -3.2010 | -3.2010 |   ⚠️ n<30 |
-| test | `ACCEPTED (CONFIRMED_SETUP)` | 1 | 1 | 1 | 0 | 100.00% | 1.9670 | 1.9670 |   ⚠️ n<30 |
-| validation | `ACCEPTED (CONFIRMED_SETUP)` | 5 | 5 | 4 | 1 | 0.00% | -1.0284 | -1.0284 |   ⚠️ n<30 |
+| calibration | `INVALID_ENTRY_ZONE` | 22 | 0 | 0 | 0 | n/a% | n/a | n/a |   ⚠️ n<30 |
+| calibration | `MICRO_RANGE` | 365 | 29 | 19 | 10 | 15.79% | -0.8210 | -0.8210 |   ⚠️ n<30 |
+| calibration | `MICRO_SWEEP` | 1,556 | 96 | 63 | 33 | 31.75% | -0.3456 | -0.3456 |  |
+| calibration | `MISSED_SETUP` | 4 | 1 | 0 | 1 | n/a% | n/a | n/a |   ⚠️ n<30 |
+| calibration | `TREND_CONFLICT` | 3,258 | 228 | 149 | 79 | 35.57% | -0.1545 | -0.1545 |  |
+| test | `CONFIRMATION_PENDING` | 611 | 20 | 13 | 7 | 30.77% | -0.3073 | -0.3073 |   ⚠️ n<30 |
+| test | `EXCESSIVE_MANIPULATION` | 126 | 24 | 12 | 12 | 0.00% | -1.0206 | -1.0206 |   ⚠️ n<30 |
+| test | `INVALID_ENTRY_ZONE` | 6 | 1 | 0 | 1 | n/a% | n/a | n/a |   ⚠️ n<30 |
+| test | `MICRO_RANGE` | 138 | 7 | 4 | 3 | 0.00% | -1.0388 | -1.0388 |   ⚠️ n<30 |
+| test | `MICRO_SWEEP` | 451 | 25 | 15 | 10 | 33.33% | -0.2492 | -0.2492 |   ⚠️ n<30 |
+| test | `TREND_CONFLICT` | 1,068 | 91 | 61 | 30 | 27.87% | -0.3886 | -0.3886 |  |
+| validation | `CONFIRMATION_PENDING` | 687 | 74 | 48 | 26 | 47.92% | 0.0916 | 0.0916 |  |
+| validation | `EXCESSIVE_MANIPULATION` | 182 | 18 | 9 | 9 | 0.00% | -1.0285 | -1.0285 |   ⚠️ n<30 |
+| validation | `INVALID_ENTRY_ZONE` | 11 | 2 | 2 | 0 | 100.00% | 0.5362 | 0.5362 |   ⚠️ n<30 |
+| validation | `MICRO_RANGE` | 55 | 10 | 5 | 5 | 0.00% | -1.3733 | -1.3733 |   ⚠️ n<30 |
+| validation | `MICRO_SWEEP` | 492 | 38 | 19 | 19 | 36.84% | -0.1881 | -0.1881 |   ⚠️ n<30 |
+| validation | `SCORE_BELOW_THRESHOLD` | 2 | 2 | 2 | 0 | 0.00% | -1.0213 | -1.0213 |   ⚠️ n<30 |
+| validation | `TREND_CONFLICT` | 1,182 | 86 | 47 | 39 | 42.55% | -0.1356 | -0.1356 |  |
+| validation | `ACCEPTED (CONFIRMED_SETUP)` | 1 | 1 | 1 | 0 | 100.00% | 0.6568 | 0.6568 |   ⚠️ n<30 |
 
-> 12 of 25 groups have fewer than 30 filled trades (⚠️ flagged above). Treat every metric in those groups as descriptive only.
+> 16 of 22 groups have fewer than 30 filled trades (⚠️ flagged above). Treat every metric in those groups as descriptive only.
 
 ---
 
