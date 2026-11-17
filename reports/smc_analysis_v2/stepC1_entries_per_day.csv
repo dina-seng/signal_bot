@@ -1,0 +1,9 @@
+split,model,total_entries,trading_days,entries_per_day_mean,entries_per_day_median,pct_days_0,pct_days_1,pct_days_2plus,skipped_concurrency_cap,skipped_separation_rule,skipped_daily_loss_stop
+calibration,PORTFOLIO_RULES,333,689,0.4833,0.00,70.97,16.11,12.92,590,4,5
+calibration,PRODUCTION_SCANNER,126,689,0.1829,0.00,82.44,16.84,0.73,806,0,0
+validation,PORTFOLIO_RULES,102,233,0.4378,0.00,74.68,13.30,12.02,160,0,4
+validation,PRODUCTION_SCANNER,39,233,0.1674,0.00,83.69,15.88,0.43,227,0,0
+test,PORTFOLIO_RULES,103,231,0.4459,0.00,73.16,15.58,11.26,178,1,11
+test,PRODUCTION_SCANNER,43,231,0.1861,0.00,81.82,17.75,0.43,250,0,0
+pooled,PORTFOLIO_RULES,538,1151,0.4674,0.00,72.11,15.46,12.42,928,5,20
+pooled,PRODUCTION_SCANNER,208,1151,0.1807,0.00,82.54,16.85,0.61,1283,0,0
