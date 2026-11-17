@@ -25,24 +25,24 @@ Counts are bar-evaluations (first-failure-wins). All 15m bars inside the same cl
 
 | Split | Gate | Bars | BUY bars | SELL bars | Distinct opportunities |
 | :--- | :--- | ---: | ---: | ---: | ---: |
-| calibration | `CONFIRMED_SETUP` | 104 | 66 | 38 | 29 |
-| calibration | `CONFLUENCE_FLOOR` | 2,118 | 1,192 | 926 | 559 |
-| calibration | `FATAL_CONFLICT` | 13,411 | 7,144 | 6,267 | 3,461 |
-| calibration | `LTF_PENALTY` | 631 | 434 | 197 | 169 |
-| calibration | `PA_FLOOR` | 992 | 547 | 445 | 250 |
-| calibration | `SCORE_BELOW_THRESHOLD` | 34,678 | 20,648 | 14,030 | 8,725 |
-| test | `CONFIRMED_SETUP` | 10 | 10 | 0 | 4 |
-| test | `CONFLUENCE_FLOOR` | 862 | 524 | 338 | 221 |
-| test | `FATAL_CONFLICT` | 4,602 | 2,365 | 2,237 | 1,186 |
-| test | `LTF_PENALTY` | 199 | 118 | 81 | 59 |
-| test | `PA_FLOOR` | 344 | 192 | 152 | 86 |
-| test | `SCORE_BELOW_THRESHOLD` | 11,653 | 6,439 | 5,214 | 2,934 |
-| validation | `CONFIRMED_SETUP` | 20 | 10 | 10 | 6 |
-| validation | `CONFLUENCE_FLOOR` | 601 | 319 | 282 | 158 |
-| validation | `FATAL_CONFLICT` | 4,957 | 2,714 | 2,243 | 1,272 |
-| validation | `LTF_PENALTY` | 178 | 102 | 76 | 50 |
-| validation | `PA_FLOOR` | 280 | 196 | 84 | 71 |
-| validation | `SCORE_BELOW_THRESHOLD` | 11,678 | 7,291 | 4,387 | 2,942 |
+| calibration | `CONFIRMED_SETUP` | 149 | 111 | 38 | 44 |
+| calibration | `CONFLUENCE_FLOOR` | 2,342 | 1,841 | 501 | 607 |
+| calibration | `FATAL_CONFLICT` | 15,110 | 13,046 | 2,064 | 3,849 |
+| calibration | `LTF_PENALTY` | 586 | 389 | 197 | 159 |
+| calibration | `PA_FLOOR` | 1,041 | 691 | 350 | 261 |
+| calibration | `SCORE_BELOW_THRESHOLD` | 32,706 | 21,809 | 10,897 | 8,237 |
+| test | `CONFIRMED_SETUP` | 23 | 23 | 0 | 8 |
+| test | `CONFLUENCE_FLOOR` | 987 | 814 | 173 | 252 |
+| test | `FATAL_CONFLICT` | 5,068 | 4,388 | 680 | 1,292 |
+| test | `LTF_PENALTY` | 186 | 105 | 81 | 56 |
+| test | `PA_FLOOR` | 379 | 255 | 124 | 97 |
+| test | `SCORE_BELOW_THRESHOLD` | 11,027 | 6,810 | 4,217 | 2,783 |
+| validation | `CONFIRMED_SETUP` | 38 | 28 | 10 | 11 |
+| validation | `CONFLUENCE_FLOOR` | 630 | 465 | 165 | 166 |
+| validation | `FATAL_CONFLICT` | 5,680 | 5,141 | 539 | 1,447 |
+| validation | `LTF_PENALTY` | 160 | 84 | 76 | 46 |
+| validation | `PA_FLOOR` | 281 | 233 | 48 | 71 |
+| validation | `SCORE_BELOW_THRESHOLD` | 10,925 | 7,521 | 3,404 | 2,755 |
 
 ## 3. Counterfactual vs accepted trades
 
@@ -50,31 +50,31 @@ For near-miss rejections the trade is re-priced as if the gate had passed, using
 
 | Split | Rejection reason | Candidate bars | Opportunities | n | Filled | No fill | Win rate | Avg R | Expectancy | Flag |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
-| calibration | `ACCEPTED (CONFIRMED_SETUP)` | 104 | 29 | 29 | 29 | 0 | 34.48% | -0.0423 | -0.0423 |   n<30 |
-| calibration | `CONFLUENCE_FLOOR` | 785 | 219 | 219 | 219 | 0 | 39.73% | -0.0125 | -0.0125 |  |
-| calibration | `FATAL_CONFLICT` | 13,411 | 3,461 | 3,461 | 3,461 | 0 | 40.08% | 0.0342 | 0.0342 |  |
-| calibration | `LTF_PENALTY` | 631 | 169 | 169 | 169 | 0 | 42.60% | 0.0411 | 0.0411 |  |
+| calibration | `ACCEPTED (CONFIRMED_SETUP)` | 149 | 44 | 44 | 44 | 0 | 31.82% | -0.1231 | -0.1231 |  |
+| calibration | `CONFLUENCE_FLOOR` | 806 | 223 | 223 | 223 | 0 | 43.95% | 0.1403 | 0.1403 |  |
+| calibration | `FATAL_CONFLICT` | 15,110 | 3,849 | 3,849 | 3,849 | 0 | 46.25% | 0.2187 | 0.2187 |  |
+| calibration | `LTF_PENALTY` | 586 | 159 | 159 | 159 | 0 | 44.03% | 0.0751 | 0.0751 |  |
 | calibration | `SCORE_BELOW_THRESHOLD` | 1,046 | 286 | 286 | 286 | 0 | 39.86% | -0.0252 | -0.0252 |  |
-| test | `ACCEPTED (CONFIRMED_SETUP)` | 10 | 4 | 4 | 4 | 0 | 75.00% | 0.5967 | 0.5967 |   n<30 |
-| test | `CONFLUENCE_FLOOR` | 178 | 47 | 47 | 47 | 0 | 29.79% | -0.1714 | -0.1714 |  |
-| test | `FATAL_CONFLICT` | 4,602 | 1,186 | 1,186 | 1,186 | 0 | 39.12% | 0.0420 | 0.0420 |  |
-| test | `LTF_PENALTY` | 199 | 59 | 59 | 59 | 0 | 54.24% | 0.4169 | 0.4169 |  |
+| test | `ACCEPTED (CONFIRMED_SETUP)` | 23 | 8 | 8 | 8 | 0 | 87.50% | 1.4947 | 1.4947 |   n<30 |
+| test | `CONFLUENCE_FLOOR` | 147 | 39 | 39 | 39 | 0 | 35.90% | 0.0023 | 0.0023 |  |
+| test | `FATAL_CONFLICT` | 5,068 | 1,292 | 1,292 | 1,292 | 0 | 33.82% | -0.1089 | -0.1089 |  |
+| test | `LTF_PENALTY` | 186 | 56 | 56 | 56 | 0 | 51.79% | 0.3129 | 0.3129 |  |
 | test | `SCORE_BELOW_THRESHOLD` | 282 | 85 | 85 | 85 | 0 | 38.82% | -0.1063 | -0.1063 |  |
-| validation | `ACCEPTED (CONFIRMED_SETUP)` | 20 | 6 | 6 | 6 | 0 | 16.67% | -0.7888 | -0.7888 |   n<30 |
-| validation | `CONFLUENCE_FLOOR` | 182 | 52 | 52 | 52 | 0 | 26.92% | -0.2847 | -0.2847 |  |
-| validation | `FATAL_CONFLICT` | 4,957 | 1,272 | 1,272 | 1,272 | 0 | 36.95% | 0.0399 | 0.0399 |  |
-| validation | `LTF_PENALTY` | 178 | 50 | 50 | 50 | 0 | 46.00% | 0.0958 | 0.0958 |  |
+| validation | `ACCEPTED (CONFIRMED_SETUP)` | 38 | 11 | 11 | 11 | 0 | 54.55% | 0.4699 | 0.4699 |   n<30 |
+| validation | `CONFLUENCE_FLOOR` | 169 | 50 | 50 | 50 | 0 | 38.00% | 0.0151 | 0.0151 |  |
+| validation | `FATAL_CONFLICT` | 5,680 | 1,447 | 1,447 | 1,447 | 0 | 44.99% | 0.2805 | 0.2805 |  |
+| validation | `LTF_PENALTY` | 160 | 46 | 46 | 46 | 0 | 41.30% | -0.0570 | -0.0570 |  |
 | validation | `SCORE_BELOW_THRESHOLD` | 293 | 81 | 81 | 81 | 0 | 43.21% | 0.1673 | 0.1673 |  |
 
-> 3 of 15 groups have fewer than 30 filled trades (flagged above). Treat every metric in those groups as descriptive only.
+> 2 of 15 groups have fewer than 30 filled trades (flagged above). Treat every metric in those groups as descriptive only.
 
 ## 4. LTF 70% penalty
 
 | Split | Bars with LTF penalty applied | Bars that passed all pre-LTF gates |
 | :--- | ---: | ---: |
-| calibration | 42,216 | 631 |
-| validation | 14,290 | 178 |
-| test | 14,284 | 199 |
+| calibration | 43,209 | 631 |
+| validation | 14,692 | 178 |
+| test | 14,744 | 199 |
 
 ---
 
