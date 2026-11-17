@@ -103,5 +103,7 @@ $$N = \frac{\left(Z_{\alpha/2} + Z_\beta\right)^2 \cdot \sigma^2}{\Delta^2}$$
 1. **Confidence Interval Precision**: $N \approx \mathbf{2,615 \text{ trades}}$
 2. **Hypothesis Testing ($80\%$ Power, Two-Sided)**: $N \approx \mathbf{5,343 \text{ trades}}$
 
-> **Implication for Forward Testing**:
-> At the strategy's current frequency of ~0.094 independent signals per day (~24 independent trades per year), gathering 2,375 independent trades would require approximately **98 years of trading**. Even reaching the 150-trade forward-holdout minimum will require approximately **6.2 years** of continuous data collection under current architecture.
+> **Implication for Forward Testing (OBSOLETE ESTIMATE)**:
+> *(Note: The 98-year estimate below is OBSOLETE as of Phase C, because it was derived from the retired single-position connected cluster metric that measured holding time rather than setup entries. Under the Phase C portfolio framework with up to 3 concurrent positions targeting ~2 entries/day, collecting 150 forward entries requires approximately 75 trading days (~3.5 months). See Phase C plan.)*
+> 
+> *Historical Reference*: At the strategy's previous frequency of ~0.094 independent signals per day (~24 independent trades per year), gathering 2,375 serial non-overlapping trades would have required approximately 98 years of trading. Under the new Phase C portfolio rules, frequency is re-evaluated using entry capacity.

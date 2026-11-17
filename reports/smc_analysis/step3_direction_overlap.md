@@ -73,7 +73,7 @@ Standard OLS standard errors assume i.i.d. observations. When multiple trades ex
 > - Calibration: $t = +0.44, p = 0.6599$ (95% CI: `[-0.1179, +0.1863]`)
 > - Validation: $t = +1.83, p = 0.0667$ (95% CI: `[-0.0208, +0.6206]`)
 > - Test: $t = +0.47, p = 0.6416$ (95% CI: `[-0.2299, +0.3731]`)
-> - Pooled: $t = +1.28, p = 0.2003$ (95% CI: `[-0.0471, +0.2251]`)
+> - Pooled: $t = +1.38, p = 0.1667$ (95% CI: `[-0.0371, +0.2150]`). The draft text mentioning $t=+1.28 / p=0.2003$ was an uncorrected draft typo and is corrected here to match Table 4.
 > Intra-day clustering approximately doubles standard errors, demonstrating that the apparent consistency of SMC is an artifact of correlated multi-bar clustering.
 
 ---

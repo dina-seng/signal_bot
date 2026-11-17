@@ -746,7 +746,7 @@ def run_step6() -> None:
     md_lines.append("> ")
     md_lines.append(r"> Every candidate strictly failed the pre-registered Step 5 acceptance criterion:")
     md_lines.append(r"> - $C1, C3, C4, C5$ failed the frequency requirement ($\text{signals/day} < 2.0$).")
-    md_lines.append(r"> - $C2$ achieved higher raw frequency but produced negative expectancy ($-0.0712\text{R}$) and negative control percentile rank.")
+    md_lines.append(r"> - $C2$ achieved 89 signals (0.129 signals/day, failing frequency $\ge 2.0$), and had a low control percentile rank of 12.3% with 81.3% of profit concentrated in a single month.")
     md_lines.append("> - In accordance with Non-Negotiable Rule 1 and Step 7 protocol, **no candidate qualifies to advance to Validation or Test**.")
     md_lines.append("")
 

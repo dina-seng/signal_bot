@@ -69,7 +69,7 @@ $\text{Expectancy / Day} = (\text{Independent Signals / Day}) \times (\text{Mean
 > - On **Calibration**, daily expectancy of independent signals is **negative** (-0.00328 R/day).
 > - On **Validation**, daily expectancy is +0.00894 R/day ($t = +0.38$, not statistically significant).
 > - On **Test**, daily expectancy is +0.01281 R/day ($t = +0.49$, not statistically significant).
-> - Across the entire 1,153-day history, the strategy yields an insignificant +0.00241 R/day ($t = +0.28$).
+> - Across the **1,151 unique trading days** (sum of split days is 1,153 due to 2 boundary days counted in adjacent splits), the strategy yields an insignificant **+0.00242 R/day** ($t = +0.22$, 95% CI: `[-0.01934, +0.02417]`). The draft text mentioning $t=+0.28$ was an errant draft typo and is corrected here to match Table 3.
 
 ---
 
