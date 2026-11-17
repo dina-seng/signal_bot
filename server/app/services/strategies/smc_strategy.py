@@ -4,13 +4,13 @@ Wraps the existing 4-pillar evaluation pipeline (Structure, Liquidity/SMC,
 Momentum Indicators, Price Action) and the LTF confirmation filter into the
 pluggable BaseStrategy interface.
 
-All original math is preserved exactly; the evaluators in ``evaluators.py``
-are reused by composition.
+Pillar math and weights are unchanged; the evaluators in ``evaluators.py`` are
+reused by composition. Rejection gates were relaxed from hard vetoes to score
+penalties so the strategy can emit B-tier setups.
 """
 
 from typing import Any, Dict, List, Optional, Sequence
 
-from app.core.config import settings
 from app.core.logging import logger
 from app.schemas.indicators import IndicatorAnalysisResponse
 from app.schemas.liquidity import AdvancedStructureAnalysisResponse
@@ -25,6 +25,14 @@ from app.services.signals.evaluators import (
 from app.services.structure.ltf_confirmation import LTFConfirmationEngine
 from app.services.strategies.base import BaseStrategy, StrategyResult
 
+# Qualification floor for SMC setups (was the global 75.0 default). The lower
+# floor widens the accepted band to B-tier setups; risk floors still apply.
+DEFAULT_MIN_SCORE: float = 60.0
+
+# Flat deduction when the 15m LTF structure does not confirm. Replaces the
+# former 0.5x score slash, which was a de-facto hard veto.
+LTF_UNCONFIRMED_PENALTY: float = 5.0
+
 
 class SMCStrategy(BaseStrategy):
     """Smart Money Concepts 3-pillar pure SMC confluence strategy.
@@ -34,12 +42,15 @@ class SMCStrategy(BaseStrategy):
         - Liquidity & SMC (Sweeps, S/R, FVGs): 40 pts
         - Price Action Confirmation: 25 pts
 
-    Directional conflict penalties and LTF confirmation are applied
-    identically to the original ``ConfluenceEngine`` logic.
+    Directional conflict is a fixed point penalty (never a veto), and a failed
+    15m LTF confirmation deducts a flat ``LTF_UNCONFIRMED_PENALTY`` rather than
+    slashing the score multiplicatively.
     """
 
     def __init__(self, min_score_threshold: Optional[float] = None) -> None:
-        self._min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
+        self._min_score_threshold = (
+            min_score_threshold if min_score_threshold is not None else DEFAULT_MIN_SCORE
+        )
         self.structure_evaluator = StructureConsensusEvaluator()
         self.liquidity_evaluator = LiquiditySMCConsensusEvaluator()
         self.price_action_evaluator = PriceActionConsensusEvaluator()
@@ -108,8 +119,11 @@ class SMCStrategy(BaseStrategy):
                 max_bars_ago=5,
             )
             if not is_buy_confirmed:
-                final_buy_score = buy_score * 0.5  # 70% penalty
-                buy_reasons.append(f"⚠️ LTF Confirmation Missing (BUY): {buy_ltf_reason}")
+                final_buy_score = max(0.0, buy_score - LTF_UNCONFIRMED_PENALTY)
+                buy_reasons.append(
+                    f"⚠️ LTF Confirmation Missing (BUY): {buy_ltf_reason} "
+                    f"(Penalty: -{LTF_UNCONFIRMED_PENALTY:.1f} pts)"
+                )
                 logger.info(f"LTF confirmation failed for BUY {symbol} [{timeframe}]: {buy_ltf_reason}")
 
             # SELL LTF check
@@ -121,17 +135,20 @@ class SMCStrategy(BaseStrategy):
                 max_bars_ago=5,
             )
             if not is_sell_confirmed:
-                final_sell_score = sell_score * 0.5  # 70% penalty
-                sell_reasons.append(f"⚠️ LTF Confirmation Missing (SELL): {sell_ltf_reason}")
+                final_sell_score = max(0.0, sell_score - LTF_UNCONFIRMED_PENALTY)
+                sell_reasons.append(
+                    f"⚠️ LTF Confirmation Missing (SELL): {sell_ltf_reason} "
+                    f"(Penalty: -{LTF_UNCONFIRMED_PENALTY:.1f} pts)"
+                )
                 logger.info(f"LTF confirmation failed for SELL {symbol} [{timeframe}]: {sell_ltf_reason}")
 
         # ----- Direction Selection -----
-        if final_buy_score >= final_sell_score and final_buy_score >= self._min_score_threshold and not buy_fatal:
+        if final_buy_score >= final_sell_score and final_buy_score >= self._min_score_threshold:
             direction = SignalDirection.BUY
             total_score = final_buy_score
             breakdown = buy_breakdown
             reasons = buy_reasons
-        elif final_sell_score > final_buy_score and final_sell_score >= self._min_score_threshold and not sell_fatal:
+        elif final_sell_score > final_buy_score and final_sell_score >= self._min_score_threshold:
             direction = SignalDirection.SELL
             total_score = final_sell_score
             breakdown = sell_breakdown
@@ -141,12 +158,8 @@ class SMCStrategy(BaseStrategy):
             total_score = max(final_buy_score, final_sell_score)
             breakdown = buy_breakdown if final_buy_score >= final_sell_score else sell_breakdown
 
-            conflict_note = ""
-            if buy_fatal or sell_fatal:
-                conflict_note = "Directional contradiction between pillars detected. "
-
             reasons = [
-                f"MARKET BIAS: NEUTRAL / WAIT ({conflict_note}Score: {total_score:.1f}/100, Min required: {self._min_score_threshold:.1f}).",
+                f"MARKET BIAS: NEUTRAL / WAIT (Score: {total_score:.1f}/100, Min required: {self._min_score_threshold:.1f}).",
                 f"Market State: {structure.market_state}",
                 f"Technical Bias: {indicators.confluence_bias} (Score: {indicators.confluence_score:+.0f})",
             ]

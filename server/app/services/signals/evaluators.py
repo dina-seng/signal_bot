@@ -26,6 +26,11 @@ from app.schemas.structure import (
 )
 
 
+# Fixed point deduction applied when any pillar reports an opposing directional
+# signal. Replaces the former 2+ conflict hard veto (see ConsensusFilter).
+DIRECTIONAL_CONFLICT_PENALTY: float = 15.0
+
+
 @dataclass
 class PillarEvaluation:
     """Evaluation result for a single analytical pillar."""
@@ -497,7 +502,9 @@ class ConsensusFilter:
         """Synthesize pillar evaluations for a given direction into a composite score.
 
         Returns:
-            Tuple of (final_score, ScoreBreakdown, consolidated_catalysts, has_fatal_conflict)
+            Tuple of (final_score, ScoreBreakdown, consolidated_catalysts, has_fatal_conflict).
+            ``has_fatal_conflict`` is retained for interface compatibility and is
+            always ``False``: directional conflicts are penalised, not vetoed.
         """
         raw_struct = evaluations.get("structure", PillarEvaluation("Structure", SignalDirection.WAIT, 0, 35, 35, 0)).score
         raw_liq = evaluations.get("liquidity", PillarEvaluation("Liquidity", SignalDirection.WAIT, 0, 40, 40, 0)).score
@@ -552,25 +559,26 @@ class ConsensusFilter:
                 "is below the 20.0 floor — signal disqualified."
             )
 
-        # Calculate directional conflict penalty
+        # ------------------------------------------------------------------
+        # Directional Conflict Penalty (no hard veto)
+        # Counterfactual replay on the calibration split priced the
+        # previously-vetoed dual-conflict set at +0.15R expectancy over 3,496
+        # de-duplicated opportunities, so opposing pillars are now a fixed
+        # score penalty instead of a disqualification. The setup is still
+        # blocked when the penalised score falls below the threshold, the PA
+        # floor, or the confluence floor.
+        # ------------------------------------------------------------------
         penalty = 0.0
-        fatal_conflict = False
-
         if all_opposing:
-            if len(all_opposing) == 1:
-                penalty = 15.0
-                all_catalysts.append(f"\u26a0\ufe0f Directional Conflict Warning: {all_opposing[0]} (Penalty: -15.0 pts)")
-            else:
-                penalty = 30.0
-                fatal_conflict = True
-                all_catalysts.append(
-                    f"\u26d4 Severe Directional Conflict: {', '.join(all_opposing)} (Setup Invalidated)"
-                )
+            penalty = DIRECTIONAL_CONFLICT_PENALTY
+            all_catalysts.append(
+                f"\u26a0\ufe0f Directional Conflict Warning: {', '.join(all_opposing)} "
+                f"(Penalty: -{DIRECTIONAL_CONFLICT_PENALTY:.1f} pts)"
+            )
 
         penalized_total = max(0.0, round(raw_total - penalty, 1))
         is_qualified = (
             penalized_total >= self.min_score_threshold
-            and not fatal_conflict
             and not pa_floor_blocked
             and not confluence_blocked
         )
@@ -584,4 +592,7 @@ class ConsensusFilter:
             is_qualified=is_qualified,
         )
 
-        return penalized_total, breakdown, all_catalysts, fatal_conflict
+        # Fourth element retained for interface stability (``SMCStrategy`` exposes
+        # it as ``buy_fatal``/``sell_fatal`` metadata). It is now always False:
+        # directional conflict is a score penalty, never a veto.
+        return penalized_total, breakdown, all_catalysts, False

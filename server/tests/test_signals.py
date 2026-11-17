@@ -290,8 +290,8 @@ def test_confluence_engine_modular_weights_and_pillars():
     assert total_weight == 100.0
 
 
-def test_directional_conflict_penalty_and_invalidation():
-    """Test that opposing directional signals trigger penalty (-15 pts) or invalidation (-30 pts/WAIT)."""
+def test_directional_conflict_penalty_is_not_a_veto():
+    """Opposing pillars apply a flat -15 pts penalty; they never hard-veto a setup."""
     from app.services.signals.evaluators import ConsensusFilter, PillarEvaluation
 
     filter_engine = ConsensusFilter(min_score_threshold=75.0)
@@ -321,7 +321,8 @@ def test_directional_conflict_penalty_and_invalidation():
     assert breakdown.is_qualified is False
     assert any("Directional Conflict Warning" in c for c in catalysts)
 
-    # 3. Severe Dual Conflict (e.g. Bearish RSI Divergence + Bearish Engulfing Candlestick)
+    # 3. Multiple Opposing Signals (e.g. Bearish RSI Divergence + Bearish Engulfing)
+    # A multi-pillar conflict is penalised like a single conflict, not vetoed.
     dual_conflict_evals = {
         "structure": PillarEvaluation("Structure", SignalDirection.BUY, 25.0, 30.0, 30.0, 0.83, ["Bullish BOS"], []),
         "liquidity": PillarEvaluation("Liquidity", SignalDirection.BUY, 20.0, 25.0, 25.0, 0.80, ["Demand Zone"], []),
@@ -329,9 +330,24 @@ def test_directional_conflict_penalty_and_invalidation():
         "price_action": PillarEvaluation("Price Action", SignalDirection.BUY, 0.0, 20.0, 20.0, 0.0, [], ["Opposing Candlestick: BEARISH_ENGULFING"]),
     }
     score, breakdown, catalysts, fatal = filter_engine.synthesize(dual_conflict_evals, SignalDirection.BUY)
-    assert fatal is True
+    # Raw total = 60.0, fixed penalty = -15.0 -> Final = 45.0 (below the 75.0 floor)
+    assert score == 45.0
+    assert fatal is False
     assert breakdown.is_qualified is False
-    assert any("Severe Directional Conflict" in c for c in catalysts)
+    assert any("Directional Conflict Warning" in c for c in catalysts)
+
+    # 4. Multi-conflict setup that still clears the floor is not vetoed.
+    high_dual_conflict_evals = {
+        "structure": PillarEvaluation("Structure", SignalDirection.BUY, 35.0, 35.0, 35.0, 1.0, ["Bullish BOS"], []),
+        "liquidity": PillarEvaluation("Liquidity", SignalDirection.BUY, 40.0, 40.0, 40.0, 1.0, ["Demand Zone"], []),
+        "indicators": PillarEvaluation("Indicators", SignalDirection.BUY, 5.0, 25.0, 25.0, 0.20, [], ["Opposing Bearish RSI Divergence"]),
+        "price_action": PillarEvaluation("Price Action", SignalDirection.BUY, 15.0, 25.0, 25.0, 0.60, ["Bullish Pin Bar"], ["Opposing Candlestick: BEARISH_ENGULFING"]),
+    }
+    score, breakdown, _, fatal = filter_engine.synthesize(high_dual_conflict_evals, SignalDirection.BUY)
+    # Raw total = 95.0, fixed penalty = -15.0 -> Final = 80.0 (clears the 75.0 floor)
+    assert score == 80.0
+    assert fatal is False
+    assert breakdown.is_qualified is True
 
 
 def test_confluence_engine_evaluate_dict():
