@@ -53,22 +53,22 @@ The portfolio simulation enforces the four strict institutional gates:
 | `OFF_SESSION` | Pre-Sweep | 0 | |
 | `MISSING_TIMESTAMPS` | Pre-Sweep | 0 | |
 | `NO_SWEEP` | Pre-Sweep | 37,822 | |
-| `TREND_CONFLICT` | Post-Sweep | 2,796 | |
-| `MICRO_RANGE` | Pre-Sweep | 236 | |
+| `TREND_CONFLICT` | Post-Sweep | 2 | |
+| `MICRO_RANGE` | Pre-Sweep | 399 | |
 | `EXCESSIVE_RANGE` | Pre-Sweep | 0 | |
-| `MICRO_SWEEP` | Post-Sweep | 1,212 | |
-| `EXCESSIVE_MANIPULATION` | Post-Sweep | 386 | |
+| `MICRO_SWEEP` | Post-Sweep | 2,213 | |
+| `EXCESSIVE_MANIPULATION` | Post-Sweep | 699 | |
 | `SWEEP_EXTREME_BROKEN` | Post-Sweep | 0 | |
-| `CONFIRMATION_PENDING` | Post-Sweep | 1,602 | |
-| `MISSED_SETUP` | Post-Sweep | 1 | |
+| `CONFIRMATION_PENDING` | Post-Sweep | 2,880 | |
+| `MISSED_SETUP` | Post-Sweep | 4 | |
 | `INVALID_RISK_GEOMETRY` | Post-Sweep | 0 | |
-| `EXCESSIVE_RISK_DISTANCE` | Post-Sweep | 2 | |
+| `EXCESSIVE_RISK_DISTANCE` | Post-Sweep | 28 | |
 | `INSUFFICIENT_RR` | Post-Sweep | 0 | |
-| `PATH_BLOCKED` | Post-Sweep | 1 | |
+| `PATH_BLOCKED` | Post-Sweep | 6 | |
 | `SCORE_BELOW_THRESHOLD` | Post-Sweep | 2 | |
 | `DUPLICATE_SUPPRESSED` | Post-Sweep | 0 | |
 | `OTHER_WAIT` | Post-Sweep | 0 | |
-| `INVALID_ENTRY_ZONE` | Post-Sweep | 20 | |
+| `INVALID_ENTRY_ZONE` | Post-Sweep | 25 | |
 | `CONFIRMED_SETUP` | **Emitted** | **1** | Validated setup |
 
 ### Confirmation Engine Breakdown
@@ -77,10 +77,10 @@ Observations from `CONFIRMATION_PENDING` (verifying recent bug fix effectiveness
 
 | Reason | Frequency |
 | :--- | ---: |
-| Analyzer: no close back inside range yet | 1,029 |
-| Awaiting post-sweep confirmation candles. | 305 |
-| Awaiting valid displacement candle after range re-entry. | 159 |
-| Awaiting Market Structure Shift (MSS) after sweep. | 109 |
+| Analyzer: no close back inside range yet | 1,875 |
+| Awaiting post-sweep confirmation candles. | 525 |
+| Awaiting valid displacement candle after range re-entry. | 257 |
+| Awaiting Market Structure Shift (MSS) after sweep. | 223 |
 
 ## Trade Execution & Outcome Breakdown
 
