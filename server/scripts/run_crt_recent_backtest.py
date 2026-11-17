@@ -505,6 +505,10 @@ class InstitutionalMetrics:
     sharpe_daily_ann: float = 0.0
     sharpe_trade_ann: float = 0.0
     avg_holding_time_hours: float = 0.0
+    holding_time_median_hours: float = 0.0
+    holding_time_p75_hours: float = 0.0
+    holding_time_p90_hours: float = 0.0
+    holding_time_max_hours: float = 0.0
     avg_win_r: float = 0.0
     avg_loss_r: float = 0.0
     win_loss_ratio: float = 0.0
@@ -562,7 +566,18 @@ def calculate_institutional_metrics(
 
     # Holding times
     holding_hours = [float(t["bars_held"]) * 0.25 for t in trades]
-    m.avg_holding_time_hours = round(float(np.mean(holding_hours)), 2) if holding_hours else 0.0
+    if holding_hours:
+        m.avg_holding_time_hours = round(float(np.mean(holding_hours)), 2)
+        m.holding_time_median_hours = round(float(np.median(holding_hours)), 2)
+        m.holding_time_p75_hours = round(float(np.percentile(holding_hours, 75)), 2)
+        m.holding_time_p90_hours = round(float(np.percentile(holding_hours, 90)), 2)
+        m.holding_time_max_hours = round(float(np.max(holding_hours)), 2)
+    else:
+        m.avg_holding_time_hours = 0.0
+        m.holding_time_median_hours = 0.0
+        m.holding_time_p75_hours = 0.0
+        m.holding_time_p90_hours = 0.0
+        m.holding_time_max_hours = 0.0
 
     # Max Drawdown from timeline (R and %)
     # Standard institutional model: assume 1.0 R = 1.0% account equity, starting balance 100 R
@@ -634,11 +649,18 @@ def generate_markdown_report(
     lines.append(f"**Confirmation Engine**: Post-defect fix (Displacement prerequisite + Chronological MSS filtering)")  
     lines.append("")
 
+    if metrics.total_trades < 30:
+        lines.append("> [!WARNING]")
+        lines.append(f"> ### ⚠️ UNDERPOWERED — n < 30 (n = {metrics.total_trades})")
+        lines.append(f"> Total realized trades ({metrics.total_trades}) is strictly below the statistical power threshold (n ≥ 30).")
+        lines.append("> Any performance metrics must be interpreted with extreme caution due to small sample variance.")
+        lines.append("")
+
     lines.append("## Executive Summary")
     lines.append("")
     lines.append("| Metric | Value | Benchmark / Target | Status |")
     lines.append("| :--- | :--- | :--- | :--- |")
-    lines.append(f"| **Total Realized Trades** | **{metrics.total_trades}** | ≥ 30 for statistical power | {'PASS' if metrics.total_trades >= 30 else 'UNDERPOWERED'} |")
+    lines.append(f"| **Total Realized Trades** | **{metrics.total_trades}** | ≥ 30 for statistical power | {'PASS' if metrics.total_trades >= 30 else 'UNDERPOWERED — n < 30'} |")
     lines.append(f"| **Win Rate (%)** | **{metrics.win_rate:.2f}%** | > 40.0% | {'PASS' if metrics.win_rate >= 40.0 else 'DEFICIENT'} |")
     lines.append(f"| **Loss Rate (%)** | **{metrics.loss_rate:.2f}%** | - | - |")
     lines.append(f"| **Expectancy per Trade** | **{metrics.expectancy:+.4f} R** | > +0.2000 R | {'PASS' if metrics.expectancy >= 0.20 else ('NEUTRAL' if metrics.expectancy > 0 else 'NEGATIVE')} |")
@@ -649,6 +671,10 @@ def generate_markdown_report(
     lines.append(f"| **Max Drawdown (R)** | **{metrics.max_drawdown_r:.2f} R** | < 15.0 R | {'PASS' if metrics.max_drawdown_r <= 15.0 else 'WARN'} |")
     lines.append(f"| **Max Drawdown (%)** | **{metrics.max_drawdown_pct:.2f}%** | < 15.0% (1R=1%) | {'PASS' if metrics.max_drawdown_pct <= 15.0 else 'WARN'} |")
     lines.append(f"| **Sharpe Ratio (Daily Ann.)** | **{metrics.sharpe_daily_ann:.2f}** | > 1.00 | {'PASS' if metrics.sharpe_daily_ann >= 1.0 else 'SUB-OPTIMAL'} |")
+    lines.append(f"| **Holding Time (Median)** | **{metrics.holding_time_median_hours:.1f} hours** | - | - |")
+    lines.append(f"| **Holding Time (p75)** | **{metrics.holding_time_p75_hours:.1f} hours** | - | - |")
+    lines.append(f"| **Holding Time (p90)** | **{metrics.holding_time_p90_hours:.1f} hours** | - | - |")
+    lines.append(f"| **Holding Time (Max)** | **{metrics.holding_time_max_hours:.1f} hours** | - | - |")
     lines.append(f"| **Average Holding Time** | **{metrics.avg_holding_time_hours:.1f} hours** | < 48.0 hours | - |")
     lines.append(f"| **Trades per Trading Day** | **{metrics.trades_per_day:.3f}** | Target ~0.5 - 2.0 | - |")
     lines.append("")
@@ -837,6 +863,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print("\n" + "=" * 80)
     print("BACKTEST RESULTS SUMMARY (2025-01-01 to Present)")
     print("=" * 80)
+    if metrics.total_trades < 30:
+        print("********************************************************************************")
+        print(f"***                       UNDERPOWERED — n < 30 (n={metrics.total_trades:<2})                       ***")
+        print("********************************************************************************")
     print(f"Period                     : {meta['raw_first']:%Y-%m-%d} to {meta['raw_last']:%Y-%m-%d} ({metrics.total_trading_days} trading days)")
     print(f"Bars Evaluated             : {stats.evaluated:,}")
     print(f"Raw CRT Signals Emitted    : {len(raw_signals):,}")
@@ -856,7 +886,39 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Sharpe Ratio (Trade Ann.)  : {metrics.sharpe_trade_ann:.2f}")
     print(f"Average Holding Time       : {metrics.avg_holding_time_hours:.1f} hours")
     print(f"Trading Frequency          : {metrics.trades_per_day:.3f} trades / calendar day")
+    print("-" * 80)
+    print("HOLDING-TIME DISTRIBUTION:")
+    print(f"  Median                   : {metrics.holding_time_median_hours:.1f} hours")
+    print(f"  75th Percentile (p75)    : {metrics.holding_time_p75_hours:.1f} hours")
+    print(f"  90th Percentile (p90)    : {metrics.holding_time_p90_hours:.1f} hours")
+    print(f"  Max                      : {metrics.holding_time_max_hours:.1f} hours")
+    print(f"  Mean (Average)           : {metrics.avg_holding_time_hours:.1f} hours")
+    print("-" * 80)
+    print("EXIT-REASON MIX:")
+    if exec_result.entered_trades:
+        exit_reasons = defaultdict(int)
+        for t in exec_result.entered_trades:
+            exit_reasons[t["exit_reason"] or "UNKNOWN"] += 1
+        for reason, count in sorted(exit_reasons.items(), key=lambda x: -x[1]):
+            pct = (count / len(exec_result.entered_trades)) * 100.0
+            print(f"  {reason:<25}: {count:>5} ({pct:>5.1f}%)")
+    else:
+        print("  No trades entered portfolio.")
+    print("-" * 80)
+    print("PER-GATE REJECTION FUNNEL:")
+    for gate in GATE_ORDER:
+        cnt = funnel.get(gate, 0)
+        gtype = "Pre-Sweep" if gate in PRE_SWEEP_GATES else "Post-Sweep"
+        print(f"  {gate:<25} ({gtype:<10}): {cnt:>8,}")
+    for gate, cnt in sorted(funnel.items()):
+        if gate not in GATE_ORDER and cnt > 0:
+            print(f"  {gate:<25} (Post-Sweep): {cnt:>8,}")
+    print(f"  {'CONFIRMED_SETUP':<25} (Emitted   ): {len(raw_signals):>8,}")
     print("=" * 80)
+    if metrics.total_trades < 30:
+        print("********************************************************************************")
+        print(f"***                       UNDERPOWERED — n < 30 (n={metrics.total_trades:<2})                       ***")
+        print("********************************************************************************")
 
     # 8. Export CSV Equity Curve
     csv_path = Path(args.csv_path)

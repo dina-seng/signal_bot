@@ -2479,3 +2479,102 @@ class TestCRTAuditRemediations:
         assert result.score == 0.0
         assert result.metadata["trend_conflict"] is True
         assert result.metadata["rejection_gate"] == "TREND_CONFLICT"
+
+    def test_mss_present_displacement_absent_returns_waiting_for_confirmation(self):
+        """Defect 1 regression: When MSS is present but displacement is absent,
+        confirmation must return is_confirmed=False and WAITING_FOR_CONFIRMATION.
+        """
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        from types import SimpleNamespace
+        t0 = SESSION_ACTIVE_TS
+        breach_ts = t0 + timedelta(hours=1)
+        # Post-sweep MSS event is present and valid
+        valid_post_sweep_mss = SimpleNamespace(
+            event_type="BULLISH_CHOCH",
+            timestamp=breach_ts + timedelta(minutes=15),
+        )
+        mock_structure = SimpleNamespace(recent_events=[valid_post_sweep_mss])
+
+        # Sweep candle breaching 1950 down to 1930
+        c_sweep = _make_candle(1950.0, 1955.0, 1930.0, 1935.0, timestamp=breach_ts, timeframe="15m")
+        # Re-entry candle: close=1951 re-enters range (>1950), but body=1.0 < 0.20*atr (2.0) -> displacement absent
+        c_no_disp = _make_candle(1950.0, 1952.0, 1948.0, 1951.0, timestamp=breach_ts + timedelta(minutes=15), timeframe="15m")
+
+        res = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_no_disp],
+            breach_point=1930.0,
+            manip_candle_index=0,
+            breach_timestamp=breach_ts,
+            atr=10.0,
+            structure=mock_structure,
+        )
+
+        assert res.has_displacement is False
+        assert res.is_confirmed is False
+        assert res.state == "WAITING_FOR_CONFIRMATION"
+
+    def test_presweep_choch_fails_mss_check(self):
+        """Defect 2 regression: Structure CHOCH event occurring before or at the sweep
+        (ev.timestamp <= breach_ts) must not qualify as post-sweep MSS (has_mss=False).
+        """
+        from app.services.strategies.crt.confirmation import verify_ltf_confirmation
+        from types import SimpleNamespace
+        t0 = SESSION_ACTIVE_TS
+        breach_ts = t0 + timedelta(hours=1)
+
+        # Pre-sweep event (timestamp < breach_ts)
+        pre_event = SimpleNamespace(
+            event_type="BULLISH_CHOCH",
+            timestamp=breach_ts - timedelta(minutes=15),
+        )
+        mock_structure = SimpleNamespace(recent_events=[pre_event])
+
+        # Sweep candle
+        c_sweep = _make_candle(1950.0, 1970.0, 1930.0, 1935.0, timestamp=breach_ts, timeframe="15m")
+        # Displacement candle: open=1935, close=1955, body=20 >= 2.0 and body/range > 0.50 -> displacement present
+        # However, high=1956 does not break swing high (1970), so fallback candle-break MSS is not triggered
+        c_disp = _make_candle(1935.0, 1956.0, 1934.0, 1955.0, timestamp=breach_ts + timedelta(minutes=15), timeframe="15m")
+
+        res_pre = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_disp],
+            breach_point=1930.0,
+            manip_candle_index=0,
+            breach_timestamp=breach_ts,
+            atr=10.0,
+            structure=mock_structure,
+        )
+
+        assert res_pre.has_displacement is True
+        assert res_pre.has_mss is False
+        assert res_pre.is_confirmed is False
+        assert res_pre.state == "WAITING_FOR_CONFIRMATION"
+
+        # Also verify event exactly at sweep timestamp (timestamp == breach_ts)
+        at_sweep_event = SimpleNamespace(
+            event_type="BULLISH_CHOCH",
+            timestamp=breach_ts,
+        )
+        mock_structure_at = SimpleNamespace(recent_events=[at_sweep_event])
+
+        res_at = verify_ltf_confirmation(
+            direction=SignalDirection.BUY,
+            range_high=2050.0,
+            range_low=1950.0,
+            candles_15m=[c_sweep, c_disp],
+            breach_point=1930.0,
+            manip_candle_index=0,
+            breach_timestamp=breach_ts,
+            atr=10.0,
+            structure=mock_structure_at,
+        )
+
+        assert res_at.has_displacement is True
+        assert res_at.has_mss is False
+        assert res_at.is_confirmed is False
+        assert res_at.state == "WAITING_FOR_CONFIRMATION"

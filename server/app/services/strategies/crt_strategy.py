@@ -942,7 +942,7 @@ class CRTStrategy(BaseStrategy):
             raw_sl = entry_res.stop_loss
             if structure is not None and structure.liquidity_pools:
                 for pool in structure.liquidity_pools:
-                    if pool.pool_type == LiquidityEventType.EQUAL_LOWS and pool.price_level < current_price:
+                    if pool.pool_type == LiquidityEventType.EQUAL_LOWS and pool.price_level < effective_entry:
                         if abs(pool.price_level - analysis.breach_point) <= 1.0 * (effective_atr or 5.0):
                             raw_sl = min(raw_sl, pool.price_level - sl_buffer)
             stop_loss = round(raw_sl, 5)
@@ -982,7 +982,7 @@ class CRTStrategy(BaseStrategy):
             raw_sl = entry_res.stop_loss
             if structure is not None and structure.liquidity_pools:
                 for pool in structure.liquidity_pools:
-                    if pool.pool_type == LiquidityEventType.EQUAL_HIGHS and pool.price_level > current_price:
+                    if pool.pool_type == LiquidityEventType.EQUAL_HIGHS and pool.price_level > effective_entry:
                         if abs(pool.price_level - analysis.breach_point) <= 1.0 * (effective_atr or 5.0):
                             raw_sl = max(raw_sl, pool.price_level + sl_buffer)
             stop_loss = round(raw_sl, 5)
@@ -1551,7 +1551,7 @@ class CRTStrategy(BaseStrategy):
                         ev.cooldown_until = cd_until
                         ev.current_state = setup_state
                         ev.quality_tier = quality_tier_res.tier
-                        ev.entry_price = current_price
+                        ev.entry_price = effective_entry
                         ev.stop_loss = stop_loss
                         ev.take_profit_1 = take_profit_1
                         ev.take_profit_2 = take_profit_2
@@ -1568,7 +1568,7 @@ class CRTStrategy(BaseStrategy):
                             cooldown_until=cd_until,
                             current_state=setup_state,
                             quality_tier=quality_tier_res.tier,
-                            entry_price=current_price,
+                            entry_price=effective_entry,
                             stop_loss=stop_loss,
                             take_profit_1=take_profit_1,
                             take_profit_2=take_profit_2,
