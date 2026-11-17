@@ -108,7 +108,7 @@ class SMCStrategy(BaseStrategy):
                 max_bars_ago=5,
             )
             if not is_buy_confirmed:
-                final_buy_score = buy_score * 0.3  # 70% penalty
+                final_buy_score = buy_score * 0.9  # 70% penalty
                 buy_reasons.append(f"⚠️ LTF Confirmation Missing (BUY): {buy_ltf_reason}")
                 logger.info(f"LTF confirmation failed for BUY {symbol} [{timeframe}]: {buy_ltf_reason}")
 
