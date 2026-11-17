@@ -60,35 +60,35 @@ def verify_ltf_confirmation(
         )
 
     manip_idx = int(manip_candle_index) if manip_candle_index is not None else 0
-    if breach_timestamp is not None:
-        _bt = breach_timestamp if breach_timestamp.tzinfo is not None else breach_timestamp.replace(tzinfo=timezone.utc)
+
+    # Extract breach_ts (manipulation/sweep timestamp) from structure or function arguments
+    breach_ts = breach_timestamp or getattr(structure, "breach_ts", None)
+    if breach_ts is None and structure is not None:
+        breach_ts = getattr(structure, "breach_timestamp", None) or getattr(structure, "sweep_timestamp", None)
+    if breach_ts is None and 0 <= manip_idx < len(candles_15m):
+        _mc = candles_15m[manip_idx]
+        _raw_ts = _mc.get("timestamp") if isinstance(_mc, dict) else getattr(_mc, "timestamp", None)
+        if isinstance(_raw_ts, datetime):
+            breach_ts = _raw_ts
+
+    if breach_ts is not None and getattr(breach_ts, "tzinfo", None) is None:
+        breach_ts = breach_ts.replace(tzinfo=timezone.utc)
+
+    if breach_ts is not None:
         found_idx = None
         for _i, _c in enumerate(candles_15m):
             _ts = getattr(_c, "timestamp", None) if not isinstance(_c, dict) else _c.get("timestamp")
             if _ts is not None:
-                if _ts.tzinfo is None:
+                if getattr(_ts, "tzinfo", None) is None:
                     _ts = _ts.replace(tzinfo=timezone.utc)
-                if _ts == _bt:
+                if _ts == breach_ts:
                     found_idx = _i
                     break
-                elif _ts > _bt:
+                elif _ts > breach_ts:
                     found_idx = max(0, _i - 1)
                     break
         if found_idx is not None:
             manip_idx = found_idx
-
-    # Chronology anchor for structure events. When the caller does not supply an
-    # explicit breach timestamp, fall back to the manipulation candle's own
-    # timestamp so a pre-sweep CHoCH/BOS cannot confirm an unconfirmed sweep.
-    effective_bt = breach_timestamp
-    if effective_bt is None and 0 <= manip_idx < len(candles_15m):
-        _mc = candles_15m[manip_idx]
-        _raw_ts = _mc.get("timestamp") if isinstance(_mc, dict) else getattr(_mc, "timestamp", None)
-        if isinstance(_raw_ts, datetime):
-            effective_bt = (
-                _raw_ts if _raw_ts.tzinfo is not None
-                else _raw_ts.replace(tzinfo=timezone.utc)
-            )
 
     post_sweep_candles = candles_15m[manip_idx + 1:] if len(candles_15m) > (manip_idx + 1) else []
     if not post_sweep_candles:
@@ -151,6 +151,7 @@ def verify_ltf_confirmation(
                 has_displacement = True
                 disp_size = max(disp_size, body)
 
+    # Guard: Displacement is a strict prerequisite for confirmation
     if not has_displacement:
         return LTFConfirmationResult(
             is_confirmed=False,
@@ -160,7 +161,7 @@ def verify_ltf_confirmation(
             has_mss=False,
             displacement_extreme=disp_extreme,
             displacement_size=disp_size,
-            reason="Awaiting valid displacement candle (insufficient body size or range ratio).",
+            reason="Awaiting valid displacement candle after range re-entry.",
         )
 
     # 3. Market Structure Shift (MSS) after the sweep
@@ -168,36 +169,36 @@ def verify_ltf_confirmation(
 
     # Check structural CHoCH / BOS from structure analysis if available
     if structure is not None:
-        if hasattr(structure, "recent_events") and structure.recent_events:
-            for ev in structure.recent_events:
+        recent_events = getattr(structure, "recent_events", None)
+        if recent_events:
+            for ev in recent_events:
                 ev_type = str(getattr(ev, "event_type", ""))
                 ev_ts = getattr(ev, "timestamp", None)
-                if effective_bt is not None and ev_ts is not None:
-                    _ev_ts = ev_ts if ev_ts.tzinfo is not None else ev_ts.replace(tzinfo=timezone.utc)
-                    _bt = effective_bt if effective_bt.tzinfo is not None else effective_bt.replace(tzinfo=timezone.utc)
-                    if _ev_ts <= _bt:
+                if breach_ts is not None:
+                    if ev_ts is None:
                         continue
-                elif ev_ts is None:
-                    continue
+                    _ev_ts = ev_ts if getattr(ev_ts, "tzinfo", None) is not None else ev_ts.replace(tzinfo=timezone.utc)
+                    if _ev_ts <= breach_ts:
+                        continue
                 if direction == SignalDirection.BUY and ("BULLISH_CHOCH" in ev_type or "BULLISH_MSS" in ev_type or "BULLISH_BOS" in ev_type):
                     has_mss = True
                     break
                 elif direction == SignalDirection.SELL and ("BEARISH_CHOCH" in ev_type or "BEARISH_MSS" in ev_type or "BEARISH_BOS" in ev_type):
                     has_mss = True
                     break
-        elif hasattr(structure, "base_structure") and structure.base_structure:
-            bs = structure.base_structure
-            if hasattr(bs, "choch_events") and bs.choch_events:
-                for ev in bs.choch_events:
+        else:
+            bs = getattr(structure, "base_structure", None)
+            choch_events = getattr(bs, "choch_events", None) if bs else None
+            if choch_events:
+                for ev in choch_events:
                     ev_type = str(getattr(ev, "event_type", ""))
                     ev_ts = getattr(ev, "timestamp", None)
-                    if effective_bt is not None and ev_ts is not None:
-                        _ev_ts = ev_ts if ev_ts.tzinfo is not None else ev_ts.replace(tzinfo=timezone.utc)
-                        _bt = effective_bt if effective_bt.tzinfo is not None else effective_bt.replace(tzinfo=timezone.utc)
-                        if _ev_ts <= _bt:
+                    if breach_ts is not None:
+                        if ev_ts is None:
                             continue
-                    elif ev_ts is None:
-                        continue
+                        _ev_ts = ev_ts if getattr(ev_ts, "tzinfo", None) is not None else ev_ts.replace(tzinfo=timezone.utc)
+                        if _ev_ts <= breach_ts:
+                            continue
                     if direction == SignalDirection.BUY and "BULLISH" in ev_type:
                         has_mss = True
                         break
@@ -226,6 +227,19 @@ def verify_ltf_confirmation(
                     if _get_val(c, "close") < recent_swing_low:
                         has_mss = True
                         break
+
+    # Strict prerequisite: Displacement must be present
+    if not has_displacement:
+        return LTFConfirmationResult(
+            is_confirmed=False,
+            state="WAITING_FOR_CONFIRMATION",
+            has_reentered_range=True,
+            has_displacement=False,
+            has_mss=has_mss,
+            displacement_extreme=disp_extreme,
+            displacement_size=disp_size,
+            reason="Awaiting valid displacement candle after range re-entry.",
+        )
 
     if not has_mss:
         return LTFConfirmationResult(
