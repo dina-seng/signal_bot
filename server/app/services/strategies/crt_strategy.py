@@ -123,6 +123,8 @@ class CRTStrategy(BaseStrategy):
         spread: float = 0.0,
         cooldown_seconds: float = 7200.0,
         enable_dedup: bool = True,
+        allow_counter_trend_bypass: Optional[bool] = None,
+        counter_trend_min_disp_atr_mult: Optional[float] = None,
     ) -> None:
         self.min_manip_pct = min_manip_pct
         self.max_manip_pct = max_manip_pct
@@ -147,6 +149,16 @@ class CRTStrategy(BaseStrategy):
         self.spread = spread
         self.cooldown_seconds = cooldown_seconds
         self.enable_dedup = enable_dedup
+        self.allow_counter_trend_bypass = (
+            allow_counter_trend_bypass
+            if allow_counter_trend_bypass is not None
+            else getattr(settings, "CRT_ALLOW_COUNTER_TREND_BYPASS", getattr(settings, "ALLOW_COUNTER_TREND_BYPASS", False))
+        )
+        self.counter_trend_min_disp_atr_mult = (
+            counter_trend_min_disp_atr_mult
+            if counter_trend_min_disp_atr_mult is not None
+            else getattr(settings, "CRT_COUNTER_TREND_MIN_DISP_ATR_MULT", 0.30)
+        )
 
         # Deduplication cache for emitted sweep event keys: key -> emit_timestamp (in-memory fast path)
         self._emitted_sweep_events: Dict[str, datetime] = {}
@@ -344,6 +356,9 @@ class CRTStrategy(BaseStrategy):
         reasons: List[str] = []
         score_audit: List[Dict[str, Any]] = []
 
+        allow_bypass = kwargs.get("allow_counter_trend_bypass", self.allow_counter_trend_bypass)
+        ct_min_disp_mult = kwargs.get("counter_trend_min_disp_atr_mult", self.counter_trend_min_disp_atr_mult)
+
         # Check Session Gate
         enforce_session = kwargs.get("enforce_session", self.session_filter_enabled)
         is_session_open, session_name = is_in_trading_session(latest_ts)
@@ -440,51 +455,25 @@ class CRTStrategy(BaseStrategy):
                 breach_point=None,
             )
 
-        # HTF Trend Conflict Gate (Block counter-trend setups)
-        if resolved_htf_trend == "BEARISH" and direction == SignalDirection.BUY:
+        # HTF Trend Conflict Gate (Block counter-trend setups unless bypass enabled)
+        is_counter_trend = (
+            (resolved_htf_trend == "BEARISH" and direction == SignalDirection.BUY)
+            or (resolved_htf_trend == "BULLISH" and direction == SignalDirection.SELL)
+        )
+        if is_counter_trend and not allow_bypass:
+            opposing_type = "Bullish" if direction == SignalDirection.BUY else "Bearish"
             return StrategyResult(
                 strategy_name=self.name,
                 direction=SignalDirection.WAIT,
                 score=0.0,
                 reasons=[
-                    f"REJECTED (Trend Conflict): HTF Trend is BEARISH. Ignoring Bullish CRT setup."
+                    f"REJECTED (Trend Conflict): HTF Trend is {resolved_htf_trend}. Ignoring {opposing_type} CRT setup."
                 ],
                 metadata={
                     "setup_state": "NO_SETUP",
                     "gatekeeper_passed": False,
                     "trend_conflict": True,
-                    "htf_trend": resolved_htf_trend,
-                    "htf_trend_source": htf_trend_source,
-                    "crt_analysis": analysis.model_dump(),
-                },
-                score_breakdown=ScoreBreakdown(
-                    structure_score=0.0,
-                    liquidity_score=0.0,
-                    indicators_score=0.0,
-                    price_action_score=0.0,
-                    total_score=0.0,
-                    is_qualified=False,
-                ),
-                entry_price=round(current_price, 5),
-                stop_loss=0.0,
-                take_profit_1=0.0,
-                take_profit_2=0.0,
-                risk_reward=0.0,
-                breach_point=analysis.breach_point,
-            )
-
-        if resolved_htf_trend == "BULLISH" and direction == SignalDirection.SELL:
-            return StrategyResult(
-                strategy_name=self.name,
-                direction=SignalDirection.WAIT,
-                score=0.0,
-                reasons=[
-                    f"REJECTED (Trend Conflict): HTF Trend is BULLISH. Ignoring Bearish CRT setup."
-                ],
-                metadata={
-                    "setup_state": "NO_SETUP",
-                    "gatekeeper_passed": False,
-                    "trend_conflict": True,
+                    "rejection_gate": "TREND_CONFLICT",
                     "htf_trend": resolved_htf_trend,
                     "htf_trend_source": htf_trend_source,
                     "crt_analysis": analysis.model_dump(),
@@ -770,6 +759,55 @@ class CRTStrategy(BaseStrategy):
                 risk_reward=0.0,
                 breach_point=analysis.breach_point,
             )
+
+        # Counter-Trend Displacement Gate (When allow_bypass is True and setup opposes HTF trend)
+        counter_trend_bypassed = False
+        if is_counter_trend:
+            disp_size = confirmation_res.displacement_size or getattr(analysis, "confirmation_displacement", 0.0) or 0.0
+            min_disp_req = ct_min_disp_mult * effective_atr if effective_atr > 0 else 0.0
+            has_strong_disp = (disp_size >= min_disp_req) if min_disp_req > 0 else (disp_size > 0)
+
+            if allow_bypass and has_strong_disp:
+                counter_trend_bypassed = True
+                reasons.append(
+                    f"COUNTER-TREND BYPASS: Opposing HTF {resolved_htf_trend} overridden by strong LTF displacement "
+                    f"(${disp_size:.2f} >= ${min_disp_req:.2f} [{ct_min_disp_mult:.2f}x ATR])."
+                )
+            else:
+                opposing_type = "Bullish" if direction == SignalDirection.BUY else "Bearish"
+                reason_msg = f"REJECTED (Trend Conflict): HTF Trend is {resolved_htf_trend}. Ignoring {opposing_type} CRT setup."
+                if allow_bypass and not has_strong_disp:
+                    reason_msg += f" Insufficient LTF displacement (${disp_size:.2f} < ${min_disp_req:.2f} = {ct_min_disp_mult:.2f}x ATR) for counter-trend bypass."
+                return StrategyResult(
+                    strategy_name=self.name,
+                    direction=SignalDirection.WAIT,
+                    score=0.0,
+                    reasons=[reason_msg],
+                    metadata={
+                        "setup_state": "NO_SETUP",
+                        "gatekeeper_passed": False,
+                        "trend_conflict": True,
+                        "rejection_gate": "TREND_CONFLICT",
+                        "htf_trend": resolved_htf_trend,
+                        "htf_trend_source": htf_trend_source,
+                        "displacement_size": disp_size,
+                        "crt_analysis": analysis.model_dump(),
+                    },
+                    score_breakdown=ScoreBreakdown(
+                        structure_score=0.0,
+                        liquidity_score=0.0,
+                        indicators_score=0.0,
+                        price_action_score=0.0,
+                        total_score=0.0,
+                        is_qualified=False,
+                    ),
+                    entry_price=round(current_price, 5),
+                    stop_loss=0.0,
+                    take_profit_1=0.0,
+                    take_profit_2=0.0,
+                    risk_reward=0.0,
+                    breach_point=analysis.breach_point,
+                )
 
         # ------------------------------------------------------------------
         # 7. Retracement Entry Zone Calculation & Missed Setup Check
@@ -1147,6 +1185,9 @@ class CRTStrategy(BaseStrategy):
         elif trend_1h == "RANGING":
             structure_score += 8.0
             score_audit.append({"pillar": "Structure & MTF", "rule": "1H Alignment", "points": 8.0, "max": 12.0, "reason": "1H Trend is RANGING (Partial credit)"})
+        elif counter_trend_bypassed:
+            structure_score += 8.0
+            score_audit.append({"pillar": "Structure & MTF", "rule": "1H Alignment", "points": 8.0, "max": 12.0, "reason": f"1H Trend opposes ({trend_1h}), but Counter-Trend Bypass active (Strong LTF Momentum overrides penalty)"})
         else:
             score_audit.append({"pillar": "Structure & MTF", "rule": "1H Alignment", "points": 0.0, "max": 12.0, "reason": f"1H Trend opposes ({trend_1h})"})
 
@@ -1165,6 +1206,9 @@ class CRTStrategy(BaseStrategy):
         elif trend_4h == "RANGING":
             structure_score += 6.0
             score_audit.append({"pillar": "Structure & MTF", "rule": "4H Alignment", "points": 6.0, "max": 8.0, "reason": "4H Trend is RANGING (Partial credit)"})
+        elif counter_trend_bypassed:
+            structure_score += 6.0
+            score_audit.append({"pillar": "Structure & MTF", "rule": "4H Alignment", "points": 6.0, "max": 8.0, "reason": f"4H Trend opposes ({trend_4h}), but Counter-Trend Bypass active (Strong LTF Momentum overrides penalty)"})
         else:
             score_audit.append({"pillar": "Structure & MTF", "rule": "4H Alignment", "points": 0.0, "max": 8.0, "reason": f"4H Trend opposes ({trend_4h})"})
 
@@ -1441,6 +1485,8 @@ class CRTStrategy(BaseStrategy):
             "should_send_management_alert": lifecycle_res.should_send_management_alert,
             "daily_bias": daily_bias_res.bias,
             "premium_discount": daily_bias_res.premium_discount,
+            "counter_trend_bypassed": counter_trend_bypassed,
+            "trend_conflict": is_counter_trend and not counter_trend_bypassed,
         }
 
         # If not qualified, map direction to WAIT

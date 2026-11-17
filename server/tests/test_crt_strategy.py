@@ -489,6 +489,73 @@ class TestCRTStrategy:
         # Aligned score is strictly higher than ranging score (Enhancement B)
         assert res_aligned_buy.score > res_ranging_buy.score
 
+    def test_crt_counter_trend_bypass_with_strong_displacement(self):
+        """Verify opposing HTF trend setup is REJECTED when displacement is weak (< 0.30x ATR),
+        but ACCEPTED when displacement is >= 0.30x ATR with allow_counter_trend_bypass=True.
+        Also verify that with allow_counter_trend_bypass=False, even strong displacement is REJECTED.
+        """
+        now = SESSION_ACTIVE_TS
+        t0 = now
+        effective_atr = 50.0
+
+        # 1H benchmark range: [1950.0, 2100.0], size = 150.0 (3.0x ATR)
+        range_candle = _make_candle(2000.0, 2100.0, 1950.0, 2080.0, timestamp=t0, timeframe="1h")
+
+        # 15m manipulation: sweeps range low (1950.0) down to 1935.0, high at 1950.0
+        manip_candle = _make_candle(1948.0, 1950.0, 1935.0, 1942.0, timestamp=t0 + timedelta(hours=1), timeframe="15m")
+
+        # Weak displacement confirmation: open=1946.0, close=1958.0 (body = 12.0 = 0.24x ATR < 0.30x ATR)
+        confirm_weak = _make_candle(1946.0, 1960.0, 1942.0, 1958.0, timestamp=t0 + timedelta(hours=1, minutes=15), timeframe="15m")
+
+        # Strong displacement confirmation: open=1946.0, close=1964.0 (body = 18.0 = 0.36x ATR >= 0.30x ATR)
+        confirm_strong = _make_candle(1946.0, 1966.0, 1942.0, 1964.0, timestamp=t0 + timedelta(hours=1, minutes=15), timeframe="15m")
+
+        # --- Case 1: Bypass ENABLED, Weak Displacement (< 0.30x ATR) -> REJECTED ---
+        strategy_bypass = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False, allow_counter_trend_bypass=True)
+        res_weak = strategy_bypass.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_weak],
+            htf_trend="BEARISH",
+            atr_value=effective_atr,
+        )
+        assert res_weak.direction == SignalDirection.WAIT
+        assert res_weak.score == 0.0
+        assert res_weak.metadata["trend_conflict"] is True
+        assert res_weak.metadata["rejection_gate"] == "TREND_CONFLICT"
+        assert "Insufficient LTF displacement" in res_weak.reasons[0]
+
+        # --- Case 2: Bypass ENABLED, Strong Displacement (>= 0.30x ATR) -> ACCEPTED ---
+        res_strong = strategy_bypass.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_strong],
+            htf_trend="BEARISH",
+            atr_value=effective_atr,
+        )
+        assert res_strong.direction == SignalDirection.BUY
+        assert res_strong.score >= 75.0
+        assert res_strong.metadata["counter_trend_bypassed"] is True
+        assert res_strong.metadata["trend_conflict"] is False
+        assert any("COUNTER-TREND BYPASS" in r for r in res_strong.reasons)
+
+        # --- Case 3: Bypass DISABLED (Default), Strong Displacement -> REJECTED ---
+        strategy_default = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False, allow_counter_trend_bypass=False)
+        res_default = strategy_default.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_strong],
+            htf_trend="BEARISH",
+            atr_value=effective_atr,
+        )
+        assert res_default.direction == SignalDirection.WAIT
+        assert res_default.score == 0.0
+        assert res_default.metadata["trend_conflict"] is True
+        assert res_default.metadata["rejection_gate"] == "TREND_CONFLICT"
+
     def test_crt_infers_htf_trend_from_structure_or_mtf(self):
         """Verify CRT automatically infers HTF trend from structure or mtf objects when htf_trend is default."""
         now = SESSION_ACTIVE_TS
