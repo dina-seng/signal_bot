@@ -9,7 +9,9 @@ reused by composition. Rejection gates were relaxed from hard vetoes to score
 penalties so the strategy can emit B-tier setups.
 """
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from app.core.logging import logger
 from app.schemas.indicators import IndicatorAnalysisResponse
@@ -47,10 +49,17 @@ class SMCStrategy(BaseStrategy):
     slashing the score multiplicatively.
     """
 
-    def __init__(self, min_score_threshold: Optional[float] = None) -> None:
+    def __init__(
+        self,
+        min_score_threshold: Optional[float] = None,
+        session_filter_enabled: bool = False,
+        primary_timeframe: str = "1h",
+    ) -> None:
         self._min_score_threshold = (
             min_score_threshold if min_score_threshold is not None else DEFAULT_MIN_SCORE
         )
+        self.session_filter_enabled = session_filter_enabled
+        self.primary_timeframe = primary_timeframe
         self.structure_evaluator = StructureConsensusEvaluator()
         self.liquidity_evaluator = LiquiditySMCConsensusEvaluator()
         self.price_action_evaluator = PriceActionConsensusEvaluator()
@@ -77,6 +86,32 @@ class SMCStrategy(BaseStrategy):
         **kwargs: Any,
     ) -> StrategyResult:
         """Evaluate BUY and SELL setups using the pure 3-pillar SMC framework."""
+
+        # Optional session / killzone filter (pre-registered candidate override)
+        if self.session_filter_enabled:
+            last_candle = candles[-1] if candles else None
+            if last_candle is not None:
+                ts = getattr(last_candle, "timestamp", None)
+                if ts is not None:
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    ny_ts = ts.astimezone(ZoneInfo("America/New_York"))
+                    if not (3 <= ny_ts.hour < 16):
+                        return StrategyResult(
+                            strategy_name=self.name,
+                            direction=SignalDirection.WAIT,
+                            score=0.0,
+                            reasons=["OUT_OF_SESSION: Outside London/NY institutional killzones (03:00-16:00 America/New_York)"],
+                            metadata={"session_filtered": True},
+                            score_breakdown=ScoreBreakdown(
+                                structure_score=0.0,
+                                liquidity_score=0.0,
+                                indicators_score=0.0,
+                                price_action_score=0.0,
+                                total_score=0.0,
+                                is_qualified=False,
+                            ),
+                        )
 
         current_price = indicators.current_price
         active_fvgs = getattr(indicators, "active_fvgs", [])
