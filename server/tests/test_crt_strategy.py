@@ -2425,3 +2425,57 @@ class TestCRTAuditRemediations:
             assert res_tp1_repeat.should_send_management_alert is False
         finally:
             db.close()
+
+    def test_limit_zone_reported_rr_matches_ideal_entry_geometry(self):
+        """Defect 5: Verify limit_zone setup's reported R:R matches
+        (TP1 - ideal_entry) / (ideal_entry - SL), not the current_price version.
+        """
+        now = SESSION_ACTIVE_TS
+        range_c = _make_candle(2020.0, 2100.0, 2000.0, 2080.0, timestamp=now)
+        manip_c = _make_candle(2005.0, 2008.0, 1990.0, 1995.0, timestamp=now + timedelta(hours=1), timeframe="15m")
+        confirm_c = _make_candle(1995.0, 2020.0, 1992.0, 2015.0, timestamp=now + timedelta(hours=1, minutes=15), timeframe="15m")
+
+        strategy = CRTStrategy(entry_expiry_bars=8)
+        result = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="1h",
+            candles=[range_c],
+            candles_15m=[manip_c, confirm_c],
+        )
+
+        assert result.metadata["entry_mode"] == "limit_zone"
+        ideal_entry = result.metadata["ideal_entry"]
+        current_price = confirm_c.close
+        assert ideal_entry != current_price
+
+        expected_rr = (result.take_profit_1 - ideal_entry) / (ideal_entry - result.stop_loss)
+        current_price_rr = (result.take_profit_1 - current_price) / (current_price - result.stop_loss)
+
+        assert result.risk_reward == pytest.approx(expected_rr, 0.01)
+        assert result.metadata["risk_reward_tp1"] == pytest.approx(expected_rr, 0.01)
+        assert result.risk_reward != pytest.approx(current_price_rr, 0.01)
+
+    def test_counter_trend_bypass_rejects_outright_when_atr_invalid(self):
+        """Verify counter-trend setup is REJECTED outright when ATR is invalid (<= 0),
+        even when allow_counter_trend_bypass=True and displacement is positive.
+        """
+        now = SESSION_ACTIVE_TS
+        t0 = now
+        range_candle = _make_candle(2000.0, 2100.0, 1950.0, 2080.0, timestamp=t0, timeframe="1h")
+        manip_candle = _make_candle(1948.0, 1950.0, 1935.0, 1942.0, timestamp=t0 + timedelta(hours=1), timeframe="15m")
+        confirm_strong = _make_candle(1946.0, 1966.0, 1942.0, 1964.0, timestamp=t0 + timedelta(hours=1, minutes=15), timeframe="15m")
+
+        strategy = CRTStrategy(min_manip_pct=5.0, confirm_bars=1, enable_dedup=False, allow_counter_trend_bypass=True)
+        result = strategy.analyze(
+            symbol="XAU/USD",
+            timeframe="15m",
+            candles=[range_candle],
+            candles_15m=[manip_candle, confirm_strong],
+            htf_trend="BEARISH",
+            atr_value=0.0,
+        )
+
+        assert result.direction == SignalDirection.WAIT
+        assert result.score == 0.0
+        assert result.metadata["trend_conflict"] is True
+        assert result.metadata["rejection_gate"] == "TREND_CONFLICT"

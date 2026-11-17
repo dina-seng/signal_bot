@@ -356,7 +356,7 @@ class CRTStrategy(BaseStrategy):
         reasons: List[str] = []
         score_audit: List[Dict[str, Any]] = []
 
-        allow_bypass = kwargs.get("allow_counter_trend_bypass", self.allow_counter_trend_bypass)
+        allow_bypass = bool(kwargs.get("allow_counter_trend_bypass", self.allow_counter_trend_bypass) and (effective_atr > 0.0))
         ct_min_disp_mult = kwargs.get("counter_trend_min_disp_atr_mult", self.counter_trend_min_disp_atr_mult)
 
         # Check Session Gate
@@ -763,9 +763,43 @@ class CRTStrategy(BaseStrategy):
         # Counter-Trend Displacement Gate (When allow_bypass is True and setup opposes HTF trend)
         counter_trend_bypassed = False
         if is_counter_trend:
+            if effective_atr <= 0.0:
+                opposing_type = "Bullish" if direction == SignalDirection.BUY else "Bearish"
+                return StrategyResult(
+                    strategy_name=self.name,
+                    direction=SignalDirection.WAIT,
+                    score=0.0,
+                    reasons=[
+                        f"REJECTED (Trend Conflict): HTF Trend is {resolved_htf_trend}. Ignoring {opposing_type} CRT setup."
+                    ],
+                    metadata={
+                        "setup_state": "NO_SETUP",
+                        "gatekeeper_passed": False,
+                        "trend_conflict": True,
+                        "rejection_gate": "TREND_CONFLICT",
+                        "htf_trend": resolved_htf_trend,
+                        "htf_trend_source": htf_trend_source,
+                        "crt_analysis": analysis.model_dump(),
+                    },
+                    score_breakdown=ScoreBreakdown(
+                        structure_score=0.0,
+                        liquidity_score=0.0,
+                        indicators_score=0.0,
+                        price_action_score=0.0,
+                        total_score=0.0,
+                        is_qualified=False,
+                    ),
+                    entry_price=round(current_price, 5),
+                    stop_loss=0.0,
+                    take_profit_1=0.0,
+                    take_profit_2=0.0,
+                    risk_reward=0.0,
+                    breach_point=analysis.breach_point,
+                )
+
             disp_size = confirmation_res.displacement_size or getattr(analysis, "confirmation_displacement", 0.0) or 0.0
-            min_disp_req = ct_min_disp_mult * effective_atr if effective_atr > 0 else 0.0
-            has_strong_disp = (disp_size >= min_disp_req) if min_disp_req > 0 else (disp_size > 0)
+            min_disp_req = ct_min_disp_mult * effective_atr
+            has_strong_disp = (disp_size >= min_disp_req)
 
             if allow_bypass and has_strong_disp:
                 counter_trend_bypassed = True
@@ -827,8 +861,9 @@ class CRTStrategy(BaseStrategy):
             tick_size=self.pip_size / 10.0,
         )
 
-        # Task E: For limit-zone setups, use ideal_entry for geometry calculations
-        effective_entry = entry_res.ideal_entry if entry_res.entry_mode == "limit_zone" else current_price
+        # For limit-zone setups, use ideal_entry for geometry and target calculations
+        target_entry = entry_res.ideal_entry if entry_res.entry_mode == "limit_zone" else current_price
+        effective_entry = target_entry
 
         # An entry zone that straddles the stop is not executable. Reject it the
         # same way a missed setup is rejected, with a distinct gate code.
@@ -1017,9 +1052,10 @@ class CRTStrategy(BaseStrategy):
         # ------------------------------------------------------------------
         # 9. CRT-Native Targets & Path Validation via PathValidator
         # ------------------------------------------------------------------
+        target_entry = entry_res.ideal_entry if entry_res.entry_mode == "limit_zone" else current_price
         target_plan: CRTTargetPlan = calculate_crt_targets(
             direction=direction,
-            entry_price=effective_entry,
+            entry_price=target_entry,
             stop_loss=stop_loss,
             range_high=analysis.range_high,
             range_low=analysis.range_low,
