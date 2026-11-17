@@ -1144,6 +1144,7 @@ def build_counterfactual(
             current_price=current_price,
             target_tp1=(analysis.range_high + analysis.range_low) / 2.0,
             atr=effective_atr, spread=crt.spread, expiry_bars=crt.entry_expiry_bars,
+            manip_candle_index=analysis.manipulation_candle_index,
         )
         eff_entry = entry_res.ideal_entry if entry_res.entry_mode == "limit_zone" else current_price
 
