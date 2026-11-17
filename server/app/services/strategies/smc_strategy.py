@@ -121,7 +121,7 @@ class SMCStrategy(BaseStrategy):
                 max_bars_ago=5,
             )
             if not is_sell_confirmed:
-                final_sell_score = sell_score * 0.3  # 70% penalty
+                final_sell_score = sell_score * 0.5  # 70% penalty
                 sell_reasons.append(f"⚠️ LTF Confirmation Missing (SELL): {sell_ltf_reason}")
                 logger.info(f"LTF confirmation failed for SELL {symbol} [{timeframe}]: {sell_ltf_reason}")
 
