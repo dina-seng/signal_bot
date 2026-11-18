@@ -62,3 +62,35 @@ def test_regime_filter_rejection_logic():
         assert gate == exp_gate, f"Failed gate for {direction} with {ema_trend} (filter={regime_filter})"
         if not exp_accepted:
             assert "REGIME_FILTER_REJECT" in detail
+
+
+def test_smc_replay_cli_regime_filter_flag():
+    """Verify that --regime-filter CLI flag parses correctly."""
+    from smc_replay import parse_args
+
+    args_default = parse_args([])
+    assert args_default.regime_filter is False
+
+    args_enabled = parse_args(["--regime-filter"])
+    assert args_enabled.regime_filter is True
+
+
+def test_split_of_canonical_boundary():
+    """Verify that split_of respects the exact 08:15 calibration boundary."""
+    from smc_replay import split_of
+    from datetime import timedelta
+
+    b1 = datetime(2025, 5, 21, 8, 15, tzinfo=timezone.utc)
+    b2 = datetime(2026, 2, 16, 3, 0, tzinfo=timezone.utc)
+    bounds = (b1, b2)
+
+    # Strictly before boundary
+    assert split_of(b1 - timedelta(minutes=15), bounds) == "calibration"
+    # Exactly on boundary
+    assert split_of(b1, bounds) == "calibration"
+    # Strictly after calibration boundary
+    assert split_of(b1 + timedelta(seconds=1), bounds) == "validation"
+    assert split_of(b2 - timedelta(minutes=15), bounds) == "validation"
+    # Exactly on validation boundary
+    assert split_of(b2, bounds) == "test"
+

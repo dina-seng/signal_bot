@@ -53,7 +53,7 @@ import sys
 from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -88,10 +88,17 @@ from crt_replay import (  # noqa: E402
     load_full_15m_candles,
     month_keys,
     simulate_outcome,
-    split_of,
     trade_metrics,
     walk_forward_bounds,
 )
+
+def split_of(ts: datetime, bounds: Tuple[datetime, datetime]) -> str:
+    b1, b2 = bounds
+    if ts <= b1:
+        return "calibration"
+    if ts < b2:
+        return "validation"
+    return "test"
 
 TF_15M = timedelta(minutes=15)
 PRIMARY_TIMEFRAME = "1h"
@@ -851,6 +858,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args.out_dir = str(REPO_ROOT / "reports" / "smc_replay_regime_filter")
 
     db_path = Path(args.db_path)
+    if not db_path.exists() and (SERVER_ROOT / args.db_path).exists():
+        db_path = SERVER_ROOT / args.db_path
+    elif not db_path.exists() and (REPO_ROOT / args.db_path).exists():
+        db_path = REPO_ROOT / args.db_path
+
     print(f"[*] Loading {args.symbol} 15m candles from {db_path} ...")
     bars, meta = load_full_15m_candles(db_path, args.symbol, args.source)
     print(f"[*] {len(bars):,} open-market 15m bars "
@@ -877,7 +889,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if start_dt:
         print(f"[*] Filter --start-date={args.start_date} UTC (warm-up context: {warmup_bars_count:,} earlier 15m bars)")
 
-    bounds = walk_forward_bounds(bars)
+    CANONICAL_CALIBRATION_END = datetime(2025, 5, 21, 8, 15, tzinfo=timezone.utc)
+    CANONICAL_VALIDATION_END = datetime(2026, 2, 16, 3, 0, tzinfo=timezone.utc)
+    if bars[-1].timestamp <= CANONICAL_CALIBRATION_END + timedelta(days=2):
+        bounds = (CANONICAL_CALIBRATION_END, CANONICAL_VALIDATION_END)
+    else:
+        bounds = walk_forward_bounds(bars)
+
     if args.calibration_only:
         end_dt = bounds[0]
         print(f"[*] CALIBRATION-ONLY active: strictly evaluating before {end_dt.isoformat()} UTC (Zero contamination)")
@@ -929,7 +947,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     if start_dt and dt < start_dt:
                         continue
                     idx1h = bisect_right(c1h_close, dt) - 1
-                    trend = ema_trends_1h[idx1h] if 0 <= idx1h < len(ema_trends_1h) else "NEUTRAL"
+                    lookup_trend = ema_trends_1h[idx1h] if 0 <= idx1h < len(ema_trends_1h) else "NEUTRAL"
+                    trend = r.ema_trend if r.ema_trend else lookup_trend
                     r.ema_trend = trend
                     if r.accepted:
                         if r.direction == "BUY":

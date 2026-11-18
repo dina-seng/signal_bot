@@ -3,6 +3,8 @@
 **Author**: Senior Quantitative Engineer  
 **Repository**: `signal_bot`  
 **Date**: 2026-11-19  
+**Data Source**: Local SQLite database (`server/backtest.db`)  
+**Calibration Window**: 2025-01-01 to 2025-05-21 (Clean Calibration Split)  
 **Status**: 🔴 **FAILED PRE-SET PASS RULES — DO NOT PROCEED TO VALIDATION**
 
 ---
@@ -10,86 +12,70 @@
 ## 1. Executive Summary & Experiment Scope
 
 ### Goal & Hypothesis
-Live trading and Phase C2 controls identified significant directional asymmetry in SMC execution: BUY signals bled heavily during prolonged bearish periods (e.g., Test split), confirming that trading counter to the prevailing higher-timeframe regime degrades expectancy.
+Live trading observations and preliminary diagnostics identified directional drawdowns in SMC execution during counter-trend market states. 
 
 The **Regime Filter Hypothesis** states:
-> *Filtering out counter-trend setups (requiring 1H EMA `BULLISH_STACK` for BUY signals and `BEARISH_STACK` for SELL signals) will eliminate falling-knife entries, improve direction-neutral alpha, and enhance overall expectancy.*
+> *Filtering out counter-trend setups (rejecting BUY signals when the 1H EMA stack is bearish, and rejecting SELL signals when the 1H EMA stack is bullish) will improve direction-neutral alpha and overall expectancy.*
 
 ### Strict Calibration-Only Scope
 Per the quantitative research governance protocol defined in `docs/SMC_FREEZE_V2.md`:
-- **Data Window**: Strictly **CALIBRATION split only** (2023-03-01 00:00:00 UTC to 2025-05-21 08:15:00 UTC; 689 calendar trading days across 27 calendar months).
-- **Contamination Guard**: Validation (2025-05-21 to 2026-02-16) and Test (2026-02-16 to 2026-11-15) splits were **strictly NOT touched, queried, or observed**.
+- **Data Source**: Strictly the newly populated local SQLite database at `server/backtest.db`. No network requests to the live Neon database or Twelve Data API were performed.
+- **Data Window**: Strictly the **CALIBRATION window** (2025-01-01 23:00:00 UTC to 2025-05-21 08:15:00 UTC; 8,697 evaluated 15m bars across 5 calendar months).
+- **Contamination Guard**: Validation (bars on or after 2025-05-21 08:15:00 UTC) and Test splits were **strictly NOT touched, queried, or observed**.
 - **Frozen Engine Integrity**: Core SMC signal generation logic (BOS, CHOCH, FVG detection, scoring weights, and liquidity thresholds) remained 100% frozen and untouched.
-- **Decision Rule**: Pre-set pass rules are immutable. If any rule fails on calibration, the candidate is disqualified immediately.
+- **Pre-Set Pass Rules**: Candidate must satisfy all 5 quantitative gating rules on the calibration set to proceed to out-of-sample validation.
 
 ---
 
 ## 2. Replay Implementation (`--regime-filter`)
 
-The regime filter is implemented in `server/scripts/smc_replay.py` as an outer gate evaluated before signal emission:
+The regime filter was implemented in `server/scripts/smc_replay.py` as an outer gate evaluated before signal emission:
 - **CLI Flag**: `--regime-filter` (default: `False`).
-- **Gate Evaluation**:
-  - `BUY` signals require 1H EMA `ema_trend == 'BULLISH_STACK'` ($\text{Price} > \text{EMA}_{20} > \text{EMA}_{50} > \text{EMA}_{200}$).
-  - `SELL` signals require 1H EMA `ema_trend == 'BEARISH_STACK'` ($\text{Price} < \text{EMA}_{20} < \text{EMA}_{50} < \text{EMA}_{200}$).
-  - Setups failing the condition are suppressed with gate `REGIME_FILTER_REJECT`.
+- **Gate Logic**:
+  - Before a signal is emitted, inspect the primary 1H EMA trend (`indicators.ema.ema_trend`).
+  - If `direction == 'BUY'`, require `ema_trend == 'BULLISH_STACK'`.
+  - If `direction == 'SELL'`, require `ema_trend == 'BEARISH_STACK'`.
+  - If the requirement is not met, reject the signal with gate `REGIME_FILTER_REJECT`.
 - **Friction Model**: \$0.40 round-trip spread deduction per completed trade with conservative same-bar SL-first execution.
+- **De-duplication**: Trades are de-duplicated by `opportunity_key` (`symbol_timeframe_direction_bucket`) to remove multi-bar 15m repeats within the same 1H setup.
 
 ---
 
 ## 3. Side-by-Side Performance Comparison
 
-The table below contrasts the **Baseline SMC** (no filter) against the **Regime-Filtered SMC** candidate on the Calibration split. Metrics are reported across both the standalone opportunity generator (distinct primary opportunities) and the frozen portfolio benchmark rules (MAX_CONCURRENT=3, DAILY_LOSS_STOP=-3.0R, separation=1.0x ATR or 1h).
-
-### Primary Evaluation: Standalone Distinct Opportunities
+The table below contrasts the **Baseline SMC** (no filter) against the **Regime-Filtered SMC** candidate on the Calibration window (`server/backtest.db`):
 
 | Performance Metric | Baseline SMC (No Filter) | Regime-Filtered SMC (`--regime-filter`) | Delta ($\Delta$) | Pre-Set Target |
 | :--- | :---: | :---: | :---: | :---: |
-| **Evaluated Bars** | 51,934 | 51,934 | 0 | Calibration Window |
-| **Emitted Setup Bars** | 3,617 | 1,405 | -2,212 (-61.2%) | — |
-| **Distinct Opportunities (Trades)** | **932** | **372** | **-560 (-60.1%)** | Sample size |
-| &emsp;*Direction: BUY* | 630 (67.6%) | 267 (71.8%) | -363 (-57.6%) | — |
-| &emsp;*Direction: SELL* | 302 (32.4%) | 105 (28.2%) | -197 (-65.2%) | — |
-| **Win Rate** | **42.38%** (395 / 932) | **48.12%** (179 / 372) | **+5.74%** | Higher |
-| **Mean R per Trade ($\bar{R}$)** | **+0.0342 R** | **+0.1256 R** | **+0.0914 R** | $> 0.0000\text{ R}$ |
-| **Profit Factor (PF)** | **1.06** | **1.29** | **+0.23** | Higher |
-| **Total Realized R** | +31.87 R | +46.74 R | +14.87 R | Higher |
-| **Max Drawdown (R)** | **97.87 R** | **30.96 R** | **-66.91 R** | $\le 107.66\text{ R}$ ($\le +10\%$) |
-| **Direction-Neutral Alpha ($\bar{\alpha}$)** | **+0.0586 R** | **+0.1648 R** | **+0.1062 R** | $> 0.0000\text{ R}$ |
-| &emsp;*Cluster-robust $SE$* | $\pm 0.0664\text{ R}$ | $\pm 0.1008\text{ R}$ | — | Cluster = UTC Day |
-| &emsp;*Cluster $t$-stat ($p$-value)* | $t = +0.88$ ($p = 0.378$) | $t = +1.64$ ($p = 0.102$) | — | Not sig ($p \ge 0.05$) |
-| **Shuffle Control Percentile** | **55.8%** | **96.1%** | **+40.3%** | $\ge \mathbf{97.5\%}$ ($p_{97.5} = +0.1328\text{R}$) |
-| **Max Single-Month R Share** | **136.3%** (+43.44R in 2024-10) | **37.0%** (+17.30R in 2025-03) | -99.3% | $\le \mathbf{25.0\%}$ |
-
----
-
-### Secondary Evaluation: Benchmark Portfolio Specification (`docs/SMC_FREEZE_V2.md`)
-
-| Portfolio Metric (MC=3, Stop=-3R) | Baseline Portfolio | Regime-Filtered Portfolio | Delta ($\Delta$) | Pass Threshold |
-| :--- | :---: | :---: | :---: | :---: |
-| **Entered Trades ($n$)** | 333 | 175 | -158 (-47.4%) | — |
-| **Entries / Trading Day** | 0.483 / day | 0.254 / day | -0.229 / day | Operational pace |
-| **Win Rate** | 42.64% (142 / 333) | 45.14% (79 / 175) | +2.50% | — |
-| **Mean R ($\bar{R}$)** | **+0.0437 R** | **+0.0613 R** | **+0.0176 R** | $> 0.0000\text{ R}$ |
-| **Profit Factor (PF)** | 1.08 | 1.13 | +0.05 | — |
-| **Total Realized R** | +14.54 R | +10.72 R | -3.82 R | — |
-| **Max Drawdown (R)** | 31.74 R | 19.83 R | -11.91 R | $\le 34.91\text{ R}$ |
-| **Direction-Neutral Alpha ($\bar{\alpha}$)** | +0.0455 R ($p=0.577$) | +0.1139 R ($p=0.258$) | +0.0684 R | $> 0.0000\text{ R}$ |
-| **Shuffle Control Percentile** | **52.2%** | **79.9%** | **+27.7%** | $\ge \mathbf{97.5\%}$ ($p_{97.5} = +0.1477\text{R}$) |
-| **Max Single-Month R Share** | 134.3% (+19.52R in 2023-03) | **71.0%** (+7.61R in 2023-03) | -63.3% | $\le \mathbf{25.0\%}$ |
+| **Evaluated Bars** | 8,697 | 8,697 | 0 | Calibration Window |
+| **Emitted Setup Bars** | 510 | 272 | -238 (-46.7%) | — |
+| **Distinct Opportunities (Trades)** | **128** | **70** | **-58 (-45.3%)** | Sample size |
+| &emsp;*Direction: BUY* | 96 (75.0%) | 61 (87.1%) | -35 (-36.5%) | — |
+| &emsp;*Direction: SELL* | 32 (25.0%) | 9 (12.9%) | -23 (-71.9%) | — |
+| **Win Rate** | **47.66%** (61 / 128) | **54.29%** (38 / 70) | **+6.63%** | Higher |
+| **Mean R per Trade ($\bar{R}$)** | **+0.1703 R** | **+0.1925 R** | **+0.0222 R** | $> 0.0000\text{ R}$ |
+| **Profit Factor (PF)** | **1.36** | **1.53** | **+0.17** | Higher |
+| **Total Realized R** | **+21.80 R** | **+13.48 R** | **-8.32 R (-38.2%)** | Higher |
+| **Max Drawdown (R)** | **12.29 R** | **7.56 R** | **-4.73 R (-38.5%)** | $\le 13.52\text{ R}$ ($\le +10\%$) |
+| **Direction-Neutral Alpha ($\bar{\alpha}$)** | **+0.1409 R** | **+0.1858 R** | **+0.0449 R** | $> 0.0000\text{ R}$ |
+| &emsp;*Cluster-robust $SE$* | $\pm 0.6333\text{ R}$ | $\pm 0.9070\text{ R}$ | — | Cluster = UTC Day |
+| &emsp;*Cluster $t$-stat ($p$-value)* | $t = +0.22$ ($p = 0.824$) | $t = +0.20$ ($p = 0.838$) | — | Not sig ($p \ge 0.05$) |
+| **Ratio-Preserving Shuffle Percentile** | **78.2%** | **11.2%** | **-67.0%** | $\ge \mathbf{97.5\%}$ ($p_{97.5} = +0.4349\text{R}$) |
+| **Max Single-Month R Share** | **104.9%** (+22.87R in 2025-03) | **128.4%** (+17.30R in 2025-03) | +23.5% | $\le \mathbf{25.0\%}$ |
 
 ---
 
 ## 4. Evaluation Against Pre-Set Pass Rules
 
-To be approved as an edge-additive hypothesis, the candidate must satisfy **ALL FIVE** pre-set qualification criteria on the Calibration dataset:
+To be approved as an edge-additive hypothesis, the candidate must satisfy **ALL FIVE** pre-set qualification criteria on the calibration dataset:
 
-| # | Rule Specification | Standalone Result | Portfolio Result | Evaluation Verdict |
+| # | Rule Specification | Candidate Result | Threshold / Boundary | Evaluation Verdict |
 | :-: | :--- | :---: | :---: | :---: |
-| **1** | **Mean R > 0** | $+0.1256\text{ R} > 0$ | $+0.0613\text{ R} > 0$ | 🟢 **PASS** |
-| **2** | **Ratio-Preserving Shuffle Control Rank $\ge 97.5\%$**<br>*(1,000 randomized direction allocations)* | **96.1%**<br>($+0.1256\text{R} < p_{97.5} = +0.1328\text{R}$) | **79.9%**<br>($+0.0613\text{R} < p_{97.5} = +0.1477\text{R}$) | 🔴 **FAIL** |
-| **3** | **Direction-Neutral Alpha > 0**<br>*(or statistically significant improvement)* | $+0.1648\text{ R} > 0$<br>($t = +1.64, p = 0.102$) | $+0.1139\text{ R} > 0$<br>($t = +1.13, p = 0.258$) | 🟢 **PASS (Descriptive)**<br>*(Not sig at $p < 0.05$)* |
-| **4** | **No Single Month Contributes > 25% of Total R** | **37.0%** (2025-03: +17.30R)<br>*(4 months $> 25\%$)* | **71.0%** (2023-03: +7.61R) | 🔴 **FAIL** |
-| **5** | **Max Drawdown $\le$ Baseline Max DD + 10%** | $30.96\text{ R} \le 107.66\text{ R}$ | $19.83\text{ R} \le 34.91\text{ R}$ | 🟢 **PASS** |
+| **1** | **Mean R > 0** | $+0.1925\text{ R}$ | $> 0.0000\text{ R}$ | 🟢 **PASS** |
+| **2** | **Ratio-Preserving Shuffle Control $\ge 97.5\%$**<br>*(1,000 randomized direction allocations)* | **11.2%** | $\ge 97.5\%$<br>($p_{97.5} = +0.4349\text{R}$) | 🔴 **FAIL** |
+| **3** | **Direction-Neutral Alpha > 0**<br>*(or statistically significant improvement)* | $+0.1858\text{ R} > 0$<br>($\Delta\alpha = +0.0449\text{R}, t = +0.05, p = 0.96$) | $> 0.0000\text{ R}$ or $p < 0.05$ | 🟡 **PASS (Descriptive Only)**<br>*(No statistically significant edge)* |
+| **4** | **No Single Month Contributes > 25% of Total R** | **128.4%** (2025-03: +17.30 R)<br>**27.4%** (2025-04: +3.70 R) | $\le 25.0\%$ | 🔴 **FAIL** |
+| **5** | **Max Drawdown $\le$ Baseline Max DD + 10%** | $7.56\text{ R}$ | $\le 13.52\text{ R}$ ($12.29\text{ R} + 10\%$) | 🟢 **PASS** |
 
 ### **Overall Qualification Verdict**: 🔴 **FAIL**
 
@@ -100,78 +86,65 @@ To be approved as an edge-additive hypothesis, the candidate must satisfy **ALL 
 
 ## 5. Quantitative Diagnostics & Root Cause Analysis
 
-### 1. Failure on Ratio-Preserving Shuffle Control (Rule 2)
-The ratio-preserving shuffle randomizes direction assignments while preserving the exact split-level BUY/SELL count ratio (267 BUYs / 105 SELLs on standalone; 116 BUYs / 59 SELLs on portfolio).
-- On standalone replay, the real strategy mean of $+0.1256\text{R}$ achieves the **96.1th percentile** of the shuffle distribution, falling short of the $97.5\%$ significance boundary ($p_{97.5} = +0.1328\text{R}$). In 39 out of 1,000 seeds, random directional choices outperformed the strategy.
-- Under portfolio constraints, the percentile collapses to **79.9%** ($p_{97.5} = +0.1477\text{R}$), demonstrating that under realistic portfolio concurrency and separation limits, the candidate is indistinguishable from random direction assignment.
+### 1. Collapse of Ratio-Preserving Shuffle Control (Rule 2)
+The ratio-preserving shuffle control preserves the candidate's exact BUY/SELL ratio (61 BUYs / 9 SELLs) and evaluates 1,000 randomized directional assignments against counterfactual trades simulated at identical decision bars.
+- In the Regime-Filtered candidate, real mean R (+0.1925 R) ranks at only the **11.2th percentile** of the shuffle distribution. In **888 out of 1,000 random allocations**, random directional assignments outperformed the strategy.
+- The 97.5th percentile of the shuffle distribution is **+0.4349 R**.
+- **Root Cause**: During the persistent gold bull trend of early 2025, taking long positions at almost any random opportunity was overwhelmingly profitable due to macro beta. The regime filter merely forced an 87.1% long bias (61 BUYs vs 9 SELLs). When benchmarked against random direction assignments with that same long bias, the strategy's entry timing demonstrated **negative selection skill**.
 
-### 2. Failure on Monthly Return Concentration (Rule 4)
-The candidate fails Rule 4 by an extensive margin under both frameworks:
-- On standalone replay, month **2025-03** generates $+17.30\text{R}$ out of $+46.74\text{R}$ (**37.0%** of total PnL).
-- In addition, **2024-10** (+17.07R, 36.5%), **2024-03** (+15.73R, 33.7%), and **2023-06** (+12.42R, 26.6%) all individually exceed the 25% threshold.
-- Under portfolio execution, month **2023-03** accounts for $+7.61\text{R}$ of the $+10.72\text{R}$ total (**71.0%**).
-This confirms that the regime filter's apparent mean R improvement is an artifact of a few strong trending momentum months rather than robust, month-in-month-out edge.
+### 2. Extreme Monthly PnL Concentration (Rule 4)
+The candidate violates the monthly concentration limit by an extraordinary margin:
+- Month **2025-03** generates **+17.30 R** out of a total **+13.48 R** (**128.4%** of total PnL).
+- Month **2025-04** also exceeds the threshold at **+3.70 R** (**27.4%** of total PnL).
+- Without March 2025, the strategy's total return across the other 4 calibration months is **-3.83 R**.
+- In February 2025, the baseline SMC was profitable (+10.55 R across 27 trades), but the regime filter turned February into a **losing month (-2.79 R across 15 trades)**.
 
-### 3. Directional Breakdown & Asymmetry Persists
-Examining the performance by direction confirms why the filter fails to create true direction-neutral edge:
+### 3. Destruction of SELL Trade Expectancy
+Analyzing the directional breakdown reveals the critical structural failure of the 1H EMA stack filter:
 
-| Cohort | Baseline Mean R | Regime Mean R | Baseline Win Rate | Regime Win Rate | Baseline Alpha | Regime Alpha |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **BUY Setups** | $+0.0836\text{ R}$ ($n=630$) | $+0.1765\text{ R}$ ($n=267$) | 45.6% | 52.4% | $+0.1610\text{ R}$ | $+0.2367\text{ R}$ |
-| **SELL Setups** | $-0.0689\text{ R}$ ($n=302$) | **-0.0037 R** ($n=105$) | 35.8% | 37.1% | $-0.1550\text{ R}$ | **-0.0179 R** |
+| Cohort | Baseline SMC | Regime-Filtered SMC | Delta ($\Delta$) |
+| :--- | :---: | :---: | :---: |
+| **BUY Trades ($n$)** | 96 | 61 | -35 (-36.5%) |
+| &emsp;*Win Rate* | 51.04% | 59.02% | +7.98% |
+| &emsp;*Mean R ($\bar{R}$)* | +0.2258 R | +0.3044 R | +0.0786 R |
+| &emsp;*Total Realized R* | +21.68 R | +18.57 R | -3.11 R |
+| **SELL Trades ($n$)** | 32 | 9 | -23 (-71.9%) |
+| &emsp;*Win Rate* | 37.50% | 22.22% | -15.28% |
+| &emsp;*Mean R ($\bar{R}$)* | **+0.0038 R** | **-0.5658 R** | **-0.5696 R** |
+| &emsp;*Total Realized R* | **+0.12 R** | **-5.09 R** | **-5.21 R** |
 
-- **BUY setups** benefited from the macro gold bull market when 1H EMAs were stacked bullishly (+0.1765R).
-- **SELL setups** remained **unprofitable (-0.0037R)** even when strictly aligned with a 1H `BEARISH_STACK`. Shorting gold with SMC patterns remained negative expectancy throughout calibration.
-- Filtering counter-trend trades cut out losing counter-trend BUYs and SELLs, but did not solve the structural weakness of SMC SELL signals.
+- While BUY win rate and mean R improved, filtering eliminated 35 valid BUY trades, causing total realized BUY R to decline from +21.68 R to +18.57 R.
+- More importantly, **SELL performance collapsed catastrophically**. Under baseline, SMC SELL setups broke even (+0.0038 R, 37.5% WR). Under the regime filter, SELL trades plunged to a **22.22% win rate and -0.5658 R mean expectancy** (-5.09 R total loss across 9 trades).
+- **Mechanism**: In a strong secular trend, when the 1H EMA stack turns bearish, it represents a temporary counter-trend liquidity sweep or pullback. Shorting when the 1H EMA stack is bearish enters right at the exhaustion of the pullback before the dominant higher-timeframe trend aggressively resumes, triggering stops.
 
-### 4. Severe Opportunity Starvation
-- Standalone opportunity generation dropped from **932 to 372** (-60.1%), averaging only **0.54 opportunities per trading day**.
-- Portfolio-entered trades dropped to **175 trades across 689 days** = **0.254 trades/day** (one trade every 4 calendar trading days).
-- Such low frequency fails the operational requirements established in Phase C4 ($\ge 2.0\text{ trades/day}$) and would starve production capacity.
+### 4. Trade Opportunity Starvation
+- Distinct trade opportunities fell from **128 to 70** (-45.3%).
+- Across 98 active trading days in the calibration window, trade frequency fell to **0.71 trades/day** (from 1.31 trades/day), failing the strategy capacity standards.
 
 ---
 
 ## 6. Month-by-Month Calibration Audit
 
-The table below provides the full month-by-month breakdown across all 27 calibration months:
+Full breakdown across all calibration months (`server/backtest.db`):
 
-| Month | Baseline Trades | Baseline Total R | Regime Trades | Regime Total R | Regime % of Total | Dominant 1H Regime |
-| :--- | ---: | ---: | ---: | ---: | ---: | :--- |
-| **2023-03** | 24 | +30.73 R | 6 | +9.58 R | 20.5% | Bullish Stack (Strong) |
-| **2023-04** | 44 | -12.60 R | 18 | -11.02 R | -23.6% | Choppy / Mixed |
-| **2023-05** | 46 | -13.45 R | 11 | -3.73 R | -8.0% | Pullback |
-| **2023-06** | 54 | +1.57 R | 23 | +12.42 R | **26.6%** | Bearish Stack / Trend |
-| **2023-07** | 68 | -19.19 R | 25 | -2.18 R | -4.7% | Mean Reversion |
-| **2023-08** | 36 | -10.78 R | 23 | -1.02 R | -2.2% | Bearish Stack |
-| **2023-09** | 31 | -1.30 R | 10 | -4.83 R | -10.3% | Pullback |
-| **2023-10** | 23 | +0.12 R | 14 | +0.07 R | 0.2% | Bullish Breakout |
-| **2023-11** | 35 | +14.10 R | 14 | +11.43 R | 24.5% | Bullish Stack |
-| **2023-12** | 31 | -1.28 R | 17 | +10.67 R | 22.8% | Bullish Stack |
-| **2024-01** | 37 | -13.80 R | 9 | -6.47 R | -13.8% | Consolidation |
-| **2024-02** | 38 | +5.50 R | 9 | +7.75 R | 16.6% | Bullish Stack |
-| **2024-03** | 28 | +18.01 R | 12 | +15.73 R | **33.7%** | Extreme Bull Run |
-| **2024-04** | 24 | -7.99 R | 16 | +0.18 R | 0.4% | Volatile Consolidation |
-| **2024-05** | 20 | -10.37 R | 6 | -2.58 R | -5.5% | Range Bound |
-| **2024-06** | 25 | -17.50 R | 5 | -5.07 R | -10.8% | Choppy |
-| **2024-07** | 31 | +12.01 R | 16 | -0.29 R | -0.6% | Bullish Stack |
-| **2024-08** | 36 | -25.55 R | 10 | -9.52 R | -20.4% | Volatile Pullbacks |
-| **2024-09** | 36 | +4.65 R | 15 | -2.11 R | -4.5% | Bullish Stack |
-| **2024-10** | 46 | +43.44 R | 25 | +17.07 R | **36.5%** | Extreme Bull Run |
-| **2024-11** | 42 | +17.04 R | 13 | -1.02 R | -2.2% | Correction |
-| **2024-12** | 48 | -17.17 R | 10 | -6.85 R | -14.7% | Range Bound |
-| **2025-01** | 24 | +10.67 R | 14 | +6.34 R | 13.6% | Bullish Stack |
-| **2025-02** | 27 | +10.55 R | 15 | -2.79 R | -6.0% | Consolidation |
-| **2025-03** | 39 | +22.87 R | 18 | +17.30 R | **37.0%** | Massive Bull Trend |
-| **2025-04** | 29 | -2.95 R | 12 | +3.70 R | 7.9% | Range Bound |
-| **2025-05** | 10 | -5.45 R | 6 | -6.01 R | -12.9% | Pullback |
-| **Total** | **932** | **+31.87 R** | **372** | **+46.74 R** | **100.0%** | — |
+| Month | Baseline Trades | Baseline Total R | Filtered Trades | Filtered Total R | Filtered % of Total | Dominant Regime / Behavior |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **2025-01** | 23 | -2.80 R | 19 | +1.28 R | 9.5% | Mixed / Early Consolidation |
+| **2025-02** | 27 | +10.55 R | 15 | -2.79 R | -20.7% | Bullish Breakout (Filtered cut winning counter-trend setups) |
+| **2025-03** | 39 | +22.87 R | 18 | +17.30 R | **128.4%** | Strong Trend (Concentrated PnL driver) |
+| **2025-04** | 29 | -2.95 R | 12 | +3.70 R | **27.4%** | Pullback Consolidation |
+| **2025-05\*** | 10 | -5.86 R | 6 | -6.01 R | -44.6% | Pullback before Calibration Boundary (May 21 08:15 UTC) |
+| **Total** | **128** | **+21.80 R** | **70** | **+13.48 R** | **100.0%** | — |
+
+*\* 2025-05 evaluates strictly bars prior to 2025-05-21 08:15:00 UTC (exact calibration boundary).*
 
 ---
 
 ## 7. Final Governance Decision & Next Steps
 
-1. **Protocol Adherence**: Under the pre-registered scientific gating rules, candidate modifications that fail any calibration pass rule must be rejected without post-hoc rationalization or parameter tuning.
-2. **Validation and Test Protection**: Validation and Test splits **remain strictly untouched** and are not deployed for this candidate.
-3. **Production Scanner**: Production defaults in `server/app/services/strategies/smc_strategy.py` and `server/app/services/signals/evaluators.py` **remain untouched and frozen**.
-4. **Conclusion**:
+1. **Protocol Rejection**: Under the pre-registered scientific gating rules (`docs/SMC_FREEZE_V2.md`), candidates that fail any calibration pass rule must be rejected without post-hoc rationalization.
+2. **Definitive Finding**: The 1H EMA trend stack filter acts as a lagging indicator that cuts winning early entries, severely degrades short trade expectancy (-0.57R), and fails the shuffle control (11.2th percentile).
+3. **Protection of Out-of-Sample Sets**: Validation and Test splits **remain strictly untouched** and are not deployed for this candidate.
+4. **Production Code Freeze**: Production defaults in `server/app/services/strategies/smc_strategy.py` and `server/app/services/signals/evaluators.py` **remain untouched and frozen**.
+5. **Conclusion**:
    > **The regime filter does not add edge on calibration. Do not proceed to validation.**

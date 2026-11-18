@@ -6,11 +6,11 @@ Production path: `resample_ohlc` → `ConfluenceEngine._prepare_market_data` →
 
 | Item | Value |
 | :--- | :--- |
-| Database | `D:\trade\backtest.db` |
-| Raw rows / duplicates dropped | 100,408 / 96 |
-| Full range | 2023-03-01 00:00 → 2026-11-15 15:00 UTC |
-| Open-market bars available | 87,418 |
-| Bar records captured | 51,934 |
+| Database | `server\backtest.db` |
+| Raw rows / duplicates dropped | 9,259 / 0 |
+| Full range | 2025-01-01 23:00 → 2025-05-21 23:45 UTC |
+| Open-market bars available | 8,857 |
+| Bar records captured | 8,697 |
 | Warmup / insufficient-data skips | 0 / 0 |
 | Evaluation errors | 0 |
 | Calibration boundary (60%) | 2025-05-21 08:15 UTC |
@@ -46,11 +46,11 @@ Counts are bar-evaluations (first-failure-wins). All 15m bars inside the same cl
 
 | Split | Gate | Bars | BUY bars | SELL bars | Distinct opportunities |
 | :--- | :--- | ---: | ---: | ---: | ---: |
-| calibration | `CONFIRMED_SETUP` | 3,617 | 2,445 | 1,172 | 932 |
-| calibration | `CONFLUENCE_FLOOR` | 2,038 | 1,129 | 909 | 539 |
-| calibration | `LTF_PENALTY` | 1,728 | 1,059 | 669 | 490 |
-| calibration | `PA_FLOOR` | 1,105 | 588 | 517 | 285 |
-| calibration | `SCORE_BELOW_THRESHOLD` | 43,446 | 24,744 | 18,702 | 11,072 |
+| calibration | `CONFIRMED_SETUP` | 510 | 382 | 128 | 128 |
+| calibration | `CONFLUENCE_FLOOR` | 340 | 149 | 191 | 88 |
+| calibration | `LTF_PENALTY` | 202 | 143 | 59 | 58 |
+| calibration | `PA_FLOOR` | 160 | 92 | 68 | 40 |
+| calibration | `SCORE_BELOW_THRESHOLD` | 7,485 | 4,546 | 2,939 | 1,899 |
 
 ## 3. Counterfactual vs accepted trades
 
@@ -58,10 +58,10 @@ For near-miss rejections the trade is re-priced as if the gate had passed, using
 
 | Split | Rejection reason | Candidate bars | Opportunities | n | Filled | No fill | Win rate | Avg R | Expectancy | Flag |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
-| calibration | `ACCEPTED (CONFIRMED_SETUP)` | 3,617 | 932 | 932 | 932 | 0 | 42.38% | 0.0342 | 0.0342 |  |
-| calibration | `CONFLUENCE_FLOOR` | 740 | 209 | 209 | 209 | 0 | 35.89% | -0.0721 | -0.0721 |  |
-| calibration | `LTF_PENALTY` | 1,728 | 490 | 490 | 490 | 0 | 37.76% | -0.1083 | -0.1083 |  |
-| calibration | `SCORE_BELOW_THRESHOLD` | 2,817 | 797 | 797 | 797 | 0 | 47.05% | 0.1718 | 0.1718 |  |
+| calibration | `ACCEPTED (CONFIRMED_SETUP)` | 510 | 128 | 128 | 128 | 0 | 47.66% | 0.1703 | 0.1703 |  |
+| calibration | `CONFLUENCE_FLOOR` | 155 | 42 | 42 | 42 | 0 | 40.48% | 0.0191 | 0.0191 |  |
+| calibration | `LTF_PENALTY` | 202 | 58 | 58 | 58 | 0 | 24.14% | -0.3577 | -0.3577 |  |
+| calibration | `SCORE_BELOW_THRESHOLD` | 354 | 100 | 100 | 100 | 0 | 50.00% | 0.2429 | 0.2429 |  |
 
 > 0 of 4 groups have fewer than 30 filled trades (flagged above). Treat every metric in those groups as descriptive only.
 
@@ -69,7 +69,7 @@ For near-miss rejections the trade is re-priced as if the gate had passed, using
 
 | Split | Bars with LTF penalty applied | Bars that passed all pre-LTF gates |
 | :--- | ---: | ---: |
-| calibration | 43,964 | 4,545 |
+| calibration | 7,285 | 616 |
 | validation | 0 | 0 |
 | test | 0 | 0 |
 
