@@ -9,10 +9,11 @@ export interface PerformanceStats {
   profitFactorDelta: number;
   totalTrades: number; // e.g. 342
   totalTradesDelta: number;
-  maxDrawdown: number; // e.g. 4.8%
+  maxDrawdown: number | null; // e.g. 4.8%
   maxDrawdownDelta: number;
-  sharpeRatio: number;
-  expectancyPips: number;
+  sharpeRatio: number | null;
+  expectancyPips: number | null;
+  initialBalance?: number | null;
 }
 
 export interface EquityDataPoint {

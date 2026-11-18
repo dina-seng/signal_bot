@@ -31,10 +31,11 @@ export const initialPerformanceStats: PerformanceStats = {
   profitFactorDelta: 0,
   totalTrades: 0,
   totalTradesDelta: 0,
-  maxDrawdown: 0,
+  maxDrawdown: null,
   maxDrawdownDelta: 0,
-  sharpeRatio: 0,
-  expectancyPips: 0,
+  sharpeRatio: null,
+  expectancyPips: null,
+  initialBalance: null,
 };
 
 export const equityHistoryData: Record<'1W' | '1M' | '3M' | 'ALL', EquityDataPoint[]> = {

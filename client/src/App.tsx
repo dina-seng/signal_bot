@@ -205,9 +205,10 @@ export const App: React.FC = () => {
             winRate: bPerf.win_rate_pct ?? (bPerf.win_rate ? Number((bPerf.win_rate * 100).toFixed(1)) : prev.winRate),
             profitFactor: bPerf.profit_factor ?? prev.profitFactor,
             totalTrades: bPerf.total_trades ?? prev.totalTrades,
-            maxDrawdown: bPerf.max_drawdown_pct ?? bPerf.max_drawdown ?? prev.maxDrawdown,
-            sharpeRatio: bPerf.sharpe_ratio ?? prev.sharpeRatio,
-            expectancyPips: bPerf.expectancy_pips ?? prev.expectancyPips,
+            maxDrawdown: bPerf.max_drawdown_pct ?? bPerf.max_drawdown ?? null,
+            sharpeRatio: bPerf.sharpe_ratio ?? null,
+            expectancyPips: bPerf.expectancy_pips ?? null,
+            initialBalance: bPerf.initial_balance ?? null,
           }));
         }
       } catch {
@@ -950,6 +951,7 @@ export const App: React.FC = () => {
                 stats={stats}
                 account={account}
                 closedTrades={closedTrades}
+                appConfig={appConfig}
               />
 
               {/* Signal Matrix (Single Card: XAU/USD) */}
