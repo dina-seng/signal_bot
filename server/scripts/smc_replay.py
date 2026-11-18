@@ -80,6 +80,8 @@ from app.services.strategies.smc_strategy import (  # noqa: E402
 from crt_replay import (  # noqa: E402
     SignalRecord,
     _bootstrap_ci,
+    _parse_start_date,
+    _parse_ts,
     _signal_to_dict,
     _write_csv,
     build_timeframe_series,
@@ -674,6 +676,9 @@ def build_report(
     lines.append(f"| Database | `{meta['db_path']}` |")
     lines.append(f"| Raw rows / duplicates dropped | {meta['raw_rows']:,} / {meta['duplicates_dropped']:,} |")
     lines.append(f"| Full range | {meta['raw_first']:%Y-%m-%d %H:%M} → {meta['raw_last']:%Y-%m-%d %H:%M} UTC |")
+    if meta.get("start_date"):
+        lines.append(f"| Replay start date | {meta['start_date']} UTC |")
+        lines.append(f"| Warm-up bars available | {meta.get('warmup_bars_count', 0):,} |")
     lines.append(f"| Open-market bars available | {meta['open_market_bars']:,} |")
     lines.append(f"| Bar records captured | {len(records):,} |")
     lines.append(f"| Warmup / insufficient-data skips | {gap_stats.warmup_skipped:,} / {gap_stats.insufficient_data:,} |")
@@ -797,6 +802,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                    help="Informational for SMC (market entry); kept for harness parity")
     p.add_argument("--max-hold-bars", type=int, default=500)
     p.add_argument("--warmup-bars", type=int, default=100)
+    p.add_argument("--start-date", default=None,
+                   help="Optional start date (YYYY-MM-DD); chunks ending before this and bars before this are skipped")
     p.add_argument("--full-range", action="store_true",
                    help="Process the entire DB range in monthly chunks")
     p.add_argument("--checkpoint-dir", default=None,
@@ -831,8 +838,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         f"DIRECTIONAL_CONFLICT_PENALTY={DIRECTIONAL_CONFLICT_PENALTY:.1f}"
     )
 
+    start_dt = _parse_start_date(args.start_date)
+    warmup_bars_count = sum(1 for b in bars if b.timestamp < start_dt) if start_dt else 0
+    if start_dt:
+        print(f"[*] Filter --start-date={args.start_date} UTC (warm-up context: {warmup_bars_count:,} earlier 15m bars)")
+
     bounds = walk_forward_bounds(bars)
     months = month_keys(bars)
+    if start_dt:
+        months = [(m, s, e) for (m, s, e) in months if e > start_dt]
     ckpt_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else (Path(args.out_dir) / "checkpoints")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -843,9 +857,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         path = _ckpt_path(ckpt_dir, month)
         if path.exists() and not args.no_resume:
             recs = load_checkpoint(ckpt_dir, month)
+            if start_dt:
+                recs = [r for r in recs if _parse_ts(r.decision_time) >= start_dt]
             print(f"[=] {month}: {len(recs):,} records (cached)")
         else:
-            indices = [i for i, b in enumerate(bars) if m_start <= b.timestamp < m_end]
+            indices = [
+                i for i, b in enumerate(bars)
+                if m_start <= b.timestamp < m_end and (start_dt is None or b.timestamp >= start_dt)
+            ]
+            if not indices:
+                print(f"[-] {month}: 0 records (before start date)")
+                continue
             recs, stats = replay_chunk(
                 bars=bars, c1h=c1h, c1h_close=c1h_close, c4h=c4h,
                 c4h_close=c4h_close, indices=indices, symbol=args.symbol,
@@ -865,6 +887,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             break
 
     elapsed = (datetime.now() - started).total_seconds()
+    if start_dt:
+        meta["start_date"] = args.start_date
+        meta["warmup_bars_count"] = warmup_bars_count
     report, funnel_rows, cf_rows = build_report(
         meta, all_records, bounds, args, gap
     )
