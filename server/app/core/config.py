@@ -107,8 +107,17 @@ class Settings(BaseSettings):
         default="paper",
         validation_alias=AliasChoices("MODE", "APP_MODE"),
     )
-    QUOTE_POLL_SECONDS: int = 10
+    QUOTE_POLL_SECONDS: int = 15
+    # Deprecated: provider labels are minute-rounded, so this can never trip. Kept for
+    # config compatibility only; staleness is now derived from last_price_change_at.
     QUOTE_MAX_AGE_SECONDS: int = 120
+    # Provider granularity is ~1 minute, so a 60s cache costs zero freshness while
+    # cutting provider credits ~6x versus the old 3s cache.
+    QUOTE_CACHE_TTL_SECONDS: int = 60
+    # With no recent dashboard heartbeat, fall back to a slow lazy refresh cadence.
+    QUOTE_IDLE_CACHE_TTL_SECONDS: int = 300
+    # A dashboard heartbeat younger than this counts as an active viewer.
+    QUOTE_PRESENCE_TTL_SECONDS: int = 60
     QUOTE_MAX_DEVIATION_PCT: float = 0.05
     YAHOO_GOLD_SYMBOL: str = "XAUUSD=X"
     TWELVE_DATA_API_KEY: Optional[str] = Field(

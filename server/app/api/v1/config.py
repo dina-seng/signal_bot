@@ -21,6 +21,9 @@ class AppConfigResponse(BaseModel):
     mode: str
     provider_name: str
     quote_max_age_seconds: int
+    quote_cache_ttl_seconds: int
+    quote_idle_cache_ttl_seconds: int
+    quote_presence_ttl_seconds: int
     active_symbols: List[str]
 
 
@@ -39,5 +42,8 @@ def get_system_config():
         mode=settings.MODE,
         provider_name=settings.MARKET_DATA_PROVIDER,
         quote_max_age_seconds=settings.QUOTE_MAX_AGE_SECONDS,
+        quote_cache_ttl_seconds=settings.QUOTE_CACHE_TTL_SECONDS,
+        quote_idle_cache_ttl_seconds=settings.QUOTE_IDLE_CACHE_TTL_SECONDS,
+        quote_presence_ttl_seconds=settings.QUOTE_PRESENCE_TTL_SECONDS,
         active_symbols=list(ACTIVE_SYMBOLS),
     )

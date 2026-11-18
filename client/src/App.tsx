@@ -229,7 +229,8 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Real-Time Price Quote Poll (Every 10 seconds, zero Neon DB queries)
+  // Real-Time Price Quote Poll (Every 15s; provider is ~1-min granular and the
+  // backend caches for 60s, so this costs zero freshness and ~6x fewer credits).
   const fetchLiveQuotes = useCallback(async () => {
     if (isFetchingPricesRef.current) return;
     isFetchingPricesRef.current = true;
@@ -486,9 +487,13 @@ export const App: React.FC = () => {
     };
   }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
 
-  // Polling Interval: 10s for Quotes (0 DB load), 30s for Paper Trading, 60s for Signals & News, paused when page is hidden
+  // Polling Interval: 15s for Quotes (0 DB load), 30s for presence heartbeat and
+  // Paper Trading, 60s for Signals & News, paused when the page is hidden.
   useEffect(() => {
     let secondsCounter = 0;
+
+    // Register presence immediately so the backend keeps the 60s active TTL.
+    quantViewApi.sendPresenceHeartbeat();
 
     const timer = setInterval(() => {
       // Guard: Pause polling completely when browser tab is hidden to save Neon DB compute
@@ -501,13 +506,14 @@ export const App: React.FC = () => {
       // Update age of last fetch
       setLastUpdatedSecondsAgo(Math.floor((Date.now() - lastFetchTimestampRef.current) / 1000));
 
-      // 10-Second Poll: Real-Time Price Quote (Direct provider/memory quote, 0 DB queries)
-      if (secondsCounter % 10 === 0) {
+      // 15-Second Poll: Price Quote (backend caches for 60s, provider granularity ~1min)
+      if (secondsCounter % 15 === 0) {
         fetchLiveQuotes();
       }
 
-      // 30-Second Poll: Paper Trading Endpoints (Account, Positions, Trades, Performance)
+      // 30-Second Poll: presence heartbeat + Paper Trading endpoints
       if (secondsCounter % 30 === 0) {
+        quantViewApi.sendPresenceHeartbeat();
         fetchAccountAndPositions();
         setPollCountdown(30);
       } else {
@@ -523,6 +529,7 @@ export const App: React.FC = () => {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        quantViewApi.sendPresenceHeartbeat();
         fetchLiveQuotes();
         const elapsedSec = Math.floor((Date.now() - lastFetchTimestampRef.current) / 1000);
         if (elapsedSec >= 30) {
@@ -1109,7 +1116,7 @@ export const App: React.FC = () => {
                   isApiConnected ? 'bg-[#00e676] animate-pulse' : 'bg-amber-400'
                 }`}
               />
-              {isApiConnected ? 'LIVE DATA POLLING (3s/10s/60s)' : 'SIMULATION MODE'}
+              {isApiConnected ? 'LIVE DATA POLLING (15s/30s/60s)' : 'SIMULATION MODE'}
             </span>
             <span>•</span>
             <span>All times UTC</span>

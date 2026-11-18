@@ -49,7 +49,23 @@ def get_supported_symbols():
 
 
 _quote_cache: Dict[Tuple[str, str], Tuple[float, QuoteResponse]] = {}
-_QUOTE_CACHE_TTL_SECONDS = 3.0
+
+# Timestamp (time.time()) of the most recent dashboard heartbeat. Presence gating:
+# active viewers refresh on QUOTE_CACHE_TTL_SECONDS, idle deployments on the much
+# slower QUOTE_IDLE_CACHE_TTL_SECONDS. There is no background quote loop; refresh
+# is lazy and only happens when something requests the quote.
+_presence_last_beat: float = 0.0
+
+
+def _presence_is_active(now: Optional[float] = None) -> bool:
+    now = time.time() if now is None else now
+    return _presence_last_beat > 0.0 and (now - _presence_last_beat) < settings.QUOTE_PRESENCE_TTL_SECONDS
+
+
+def _effective_cache_ttl(now: Optional[float] = None) -> float:
+    if _presence_is_active(now):
+        return float(settings.QUOTE_CACHE_TTL_SECONDS)
+    return float(settings.QUOTE_IDLE_CACHE_TTL_SECONDS)
 
 
 async def _resolve_quote(
@@ -70,9 +86,10 @@ async def _resolve_quote(
     now = time.time()
     now_utc = datetime.now(timezone.utc)
 
-    # 1. In-memory 3s cache keyed by (provider, canonical_symbol)
+    # 1. In-memory cache keyed by (provider, canonical_symbol). TTL is presence-gated:
+    #    60s while a dashboard is watching, 300s when idle.
     cached = _quote_cache.get(cache_key)
-    if cached and (now - cached[0] < _QUOTE_CACHE_TTL_SECONDS):
+    if cached and (now - cached[0] < _effective_cache_ttl(now)):
         cache_age_ms = round((now - cached[0]) * 1000, 1)
         cached_quote = cached[1].model_copy()
         cached_quote.cached = True
@@ -138,6 +155,25 @@ async def _resolve_quote(
     quote.cache_age_ms = 0.0
     _quote_cache[cache_key] = (now, quote.model_copy())
     return quote
+
+
+@router.post("/presence")
+def record_dashboard_presence():
+    """Register a dashboard heartbeat so quote polling stays on the active cadence.
+
+    The frontend calls this every 30s while the tab is visible. Without a heartbeat
+    newer than QUOTE_PRESENCE_TTL_SECONDS the quote cache stretches to the idle TTL,
+    which protects the daily provider credit budget.
+    """
+    global _presence_last_beat
+    _presence_last_beat = time.time()
+    return {
+        "active": True,
+        "last_heartbeat_at": datetime.fromtimestamp(_presence_last_beat, tz=timezone.utc),
+        "presence_ttl_seconds": settings.QUOTE_PRESENCE_TTL_SECONDS,
+        "cache_ttl_seconds": settings.QUOTE_CACHE_TTL_SECONDS,
+        "idle_cache_ttl_seconds": settings.QUOTE_IDLE_CACHE_TTL_SECONDS,
+    }
 
 
 @router.get("/quote", response_model=QuoteResponse)

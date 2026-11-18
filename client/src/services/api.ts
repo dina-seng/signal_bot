@@ -41,6 +41,9 @@ export interface AppConfig {
   mode: string;
   provider_name: string;
   quote_max_age_seconds: number;
+  quote_cache_ttl_seconds?: number;
+  quote_idle_cache_ttl_seconds?: number;
+  quote_presence_ttl_seconds?: number;
   active_symbols: string[];
 }
 
@@ -532,6 +535,16 @@ export const quantViewApi = {
     const encodedSym = encodeURIComponent(symbol);
     console.log(`[API] GET /api/v1/market/${encodedSym}/quote`);
     return fetchWithTiming<BackendQuote>(`${API_BASE}/market/${encodedSym}/quote`);
+  },
+
+  // 17b. Dashboard presence heartbeat. Keeps quote polling on the active cadence;
+  // without it the backend stretches the quote cache to the idle TTL.
+  async sendPresenceHeartbeat(): Promise<void> {
+    try {
+      await fetch(`${API_BASE}/market/presence`, { method: 'POST' });
+    } catch {
+      // Presence is best-effort; never break the dashboard on a heartbeat failure.
+    }
   },
 
   // 18. Fetch latest market prices for active pairs (Real-time quote with candle fallback)
