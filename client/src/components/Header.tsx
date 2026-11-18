@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import {
   RefreshCw,
   Menu,
@@ -96,12 +97,18 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {/* Terminal Identifier */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono font-bold tracking-widest text-white uppercase">
+          <Link
+            to="/"
+            title="Return to QuantView Home"
+            className="group flex items-center gap-2 hover:opacity-90 transition-opacity"
+          >
+            <span className="text-xs font-mono font-bold tracking-widest text-white uppercase group-hover:text-purple-300 transition-colors">
               QUANT<span className="text-emerald-400">VIEW</span>
             </span>
-            <span className="text-[10px] font-mono text-zinc-500 uppercase">OS</span>
-          </div>
+            <span className="text-[10px] font-mono text-zinc-500 uppercase px-1 py-0.5 rounded bg-white/5 border border-white/10 group-hover:border-purple-500/30">
+              OS
+            </span>
+          </Link>
 
           {/* Unified System Status Dropdown Pill (Consolidates LIVE DATA, BROKER, RISK SAFE) */}
           <div className="relative" ref={dropdownRef}>
