@@ -1,36 +1,96 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
-  ResponsiveContainer,
-  ComposedChart,
-  Bar,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ReferenceArea,
-} from 'recharts';
+  createChart,
+  CandlestickSeries,
+  HistogramSeries,
+  LineSeries,
+  LineStyle,
+  CrosshairMode,
+  ColorType,
+  IChartApi,
+  ISeriesApi,
+  IPriceLine,
+  UTCTimestamp,
+} from 'lightweight-charts';
 import {
   Layers,
   Sparkles,
   RefreshCw,
   TrendingUp,
   Activity,
+  Maximize2,
+  Crosshair,
+  ShieldAlert,
 } from 'lucide-react';
-import { PairSymbol } from '../types';
-import { CandleData } from '../data/mockData';
+import { PairSymbol, TradeSignal } from '../types';
 import {
   quantViewApi,
   BackendFairValueGap,
   BackendIndicatorAnalysis,
   BackendLiquidityZones,
   BackendStructureAnalysis,
+  BackendQuote,
 } from '../services/api';
 import { formatPrice } from '../utils/formatters';
+
+export interface FormedCandle {
+  time: UTCTimestamp;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema20?: number;
+  ema50?: number;
+}
 
 interface TradingChartProps {
   selectedSymbol: PairSymbol;
   onSymbolChange: (symbol: PairSymbol) => void;
+  latestQuote?: BackendQuote | null;
+  signals?: TradeSignal[];
+  activeSignal?: TradeSignal | null;
+}
+
+// Parse string/number timestamp into Unix seconds (UTCTimestamp)
+function parseToUnixSeconds(ts: string | number | Date): UTCTimestamp {
+  if (typeof ts === 'number') {
+    return (ts > 1e11 ? Math.floor(ts / 1000) : Math.floor(ts)) as UTCTimestamp;
+  }
+  if (ts instanceof Date) {
+    return Math.floor(ts.getTime() / 1000) as UTCTimestamp;
+  }
+  let str = String(ts).trim();
+  if (!str.endsWith('Z') && !str.includes('+') && !str.includes('-')) {
+    str = str.replace(' ', 'T') + 'Z';
+  } else if (!str.includes('T')) {
+    str = str.replace(' ', 'T');
+  }
+  const parsed = new Date(str).getTime();
+  return (isNaN(parsed) ? Math.floor(Date.now() / 1000) : Math.floor(parsed / 1000)) as UTCTimestamp;
+}
+
+// Convert timeframe string to duration in seconds
+function getTimeframeDurationSeconds(tf: string): number {
+  switch (tf.toLowerCase()) {
+    case '1m':
+      return 60;
+    case '5m':
+      return 300;
+    case '15m':
+      return 900;
+    case '30m':
+      return 1800;
+    case '1h':
+      return 3600;
+    case '4h':
+      return 14400;
+    case '1d':
+    case '1day':
+      return 86400;
+    default:
+      return 60; // Default to 1-minute window
+  }
 }
 
 // Math helper for continuous Exponential Moving Average
@@ -46,126 +106,562 @@ function computeEMAArray(closes: number[], period: number, decimals: number): nu
   return result;
 }
 
+// Helper to remove duplicate candle timestamps and ensure strict ascending order
+function deduplicateAndSortCandles(candles: FormedCandle[]): FormedCandle[] {
+  const map = new Map<number, FormedCandle>();
+  for (const c of candles) {
+    map.set(c.time, c);
+  }
+  return Array.from(map.values()).sort((a, b) => a.time - b.time);
+}
+
 export const TradingChart: React.FC<TradingChartProps> = ({
   selectedSymbol,
   onSymbolChange,
+  latestQuote,
+  signals,
+  activeSignal,
 }) => {
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('15m');
   const [showEMA, setShowEMA] = useState<boolean>(true);
-  const [showFVG, setShowFVG] = useState<boolean>(true);
   const [showSR, setShowSR] = useState<boolean>(true);
-  const [candles, setCandles] = useState<CandleData[]>([]);
+  const [showFVG, setShowFVG] = useState<boolean>(true);
+  const [candles, setCandles] = useState<FormedCandle[]>([]);
   const [isRealData, setIsRealData] = useState<boolean>(false);
+  const [hoveredCandle, setHoveredCandle] = useState<{
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+    time?: string;
+  } | null>(null);
 
-  // Backend live indicator states
+  // Backend indicators & SMC structure
   const [indicatorData, setIndicatorData] = useState<BackendIndicatorAnalysis | null>(null);
   const [liquidityZones, setLiquidityZones] = useState<BackendLiquidityZones | null>(null);
   const [structureData, setStructureData] = useState<BackendStructureAnalysis | null>(null);
 
-  const isGold = selectedSymbol === 'XAU/USD';
   const priceDecimals = 2;
 
-  // Fetch real candles, indicators, SMC liquidity zones, and structure from backend
-  // Polling interval: 60s, paused when document is hidden, protected with in-flight guard
+  // Chart DOM container and series references
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const ema20SeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const ema50SeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const smcLinesRef = useRef<IPriceLine[]>([]);
+  const srLinesRef = useRef<IPriceLine[]>([]);
+
+  // 1. Initialize Lightweight Charts instance
   useEffect(() => {
-    let isCancelled = false;
-    let isFetching = false;
+    if (!chartContainerRef.current) return;
 
-    async function loadChartData() {
-      if (isFetching) return;
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      isFetching = true;
+    // Clean up if already exists
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
 
-      try {
-        const [candlesRes, indRes, liqRes, structRes] = await Promise.allSettled([
-          quantViewApi.getCandles(selectedSymbol, selectedTimeframe, 35),
-          quantViewApi.getIndicators(selectedSymbol, selectedTimeframe),
-          quantViewApi.getLiquidityZones(selectedSymbol, selectedTimeframe),
-          quantViewApi.getStructure(selectedSymbol, selectedTimeframe),
-        ]);
+    const container = chartContainerRef.current;
 
-        if (isCancelled) return;
+    const chart = createChart(container, {
+      layout: {
+        background: { type: ColorType.Solid, color: '#090a0f' },
+        textColor: '#94a3b8',
+        fontFamily: 'JetBrains Mono, Menlo, monospace',
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+        horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: {
+          color: 'rgba(0, 230, 118, 0.4)',
+          width: 1,
+          style: LineStyle.Dashed,
+          labelBackgroundColor: '#161922',
+        },
+        horzLine: {
+          color: 'rgba(0, 230, 118, 0.4)',
+          width: 1,
+          style: LineStyle.Dashed,
+          labelBackgroundColor: '#161922',
+        },
+      },
+      timeScale: {
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        scaleMargins: {
+          top: 0.08,
+          bottom: 0.22,
+        },
+      },
+      autoSize: true,
+    });
 
-        // 1. Process Candle Series
-        if (candlesRes.status === 'fulfilled' && candlesRes.value.data?.length > 0) {
-          const rawCandles = candlesRes.value.data;
-          const closePrices = rawCandles.map((c) => c.close);
-          const ema20Series = computeEMAArray(closePrices, 20, priceDecimals);
-          const ema50Series = computeEMAArray(closePrices, 50, priceDecimals);
-          const ema200Series = computeEMAArray(closePrices, 200, priceDecimals);
+    // 2. Add Candlestick Series with High-Tech Dark / Neon theme
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#00e676', // Neon Green
+      downColor: '#ff3366', // Neon Red/Pink
+      borderVisible: false,
+      wickUpColor: '#00e676',
+      wickDownColor: '#ff3366',
+      priceFormat: {
+        type: 'price',
+        precision: priceDecimals,
+        minMove: 0.01,
+      },
+    });
 
-          const mapped: CandleData[] = rawCandles.map((c, i) => {
-            const isGreen = c.close >= c.open;
-            return {
-              time: new Date(c.timestamp).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false,
-              }),
+    // 3. Add Volume Histogram Series as overlay pane at bottom 20%
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: {
+        type: 'volume',
+      },
+      priceScaleId: '', // Overlay pane
+    });
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: {
+        top: 0.8,
+        bottom: 0,
+      },
+    });
+
+    // 4. Add EMA 20 (Neon Purple) & EMA 50 (Neon Cyan)
+    const ema20Series = chart.addSeries(LineSeries, {
+      color: '#a855f7',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      title: 'EMA 20',
+    });
+
+    const ema50Series = chart.addSeries(LineSeries, {
+      color: '#00e5ff',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      title: 'EMA 50',
+    });
+
+    // 5. Crosshair Hover Subscription for Interactive Terminal Header
+    chart.subscribeCrosshairMove((param) => {
+      if (
+        param.point === undefined ||
+        !param.time ||
+        param.point.x < 0 ||
+        param.point.x > container.clientWidth ||
+        param.point.y < 0 ||
+        param.point.y > container.clientHeight
+      ) {
+        setHoveredCandle(null);
+      } else {
+        const cData = param.seriesData.get(candleSeries) as any;
+        if (cData) {
+          const vData = param.seriesData.get(volumeSeries) as any;
+          setHoveredCandle({
+            time: typeof param.time === 'number'
+              ? new Date(param.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : String(param.time),
+            open: cData.open,
+            high: cData.high,
+            low: cData.low,
+            close: cData.close,
+            volume: vData?.value ?? 0,
+          });
+        }
+      }
+    });
+
+    // Save refs
+    chartRef.current = chart;
+    candleSeriesRef.current = candleSeries;
+    volumeSeriesRef.current = volumeSeries;
+    ema20SeriesRef.current = ema20Series;
+    ema50SeriesRef.current = ema50Series;
+
+    // Handle container resize
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+      const { width, height } = entries[0].contentRect;
+      if (width > 0 && height > 0) {
+        chart.applyOptions({ width, height });
+      }
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      chart.remove();
+      chartRef.current = null;
+      candleSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      ema20SeriesRef.current = null;
+      ema50SeriesRef.current = null;
+    };
+  }, []);
+
+  // 2. Fetch Base Historical Candlesticks from FastAPI backend
+  const loadChartData = useCallback(async () => {
+    try {
+      const [candlesRes, indRes, liqRes, structRes] = await Promise.allSettled([
+        quantViewApi.getCandles(selectedSymbol, selectedTimeframe, 60),
+        quantViewApi.getIndicators(selectedSymbol, selectedTimeframe),
+        quantViewApi.getLiquidityZones(selectedSymbol, selectedTimeframe),
+        quantViewApi.getStructure(selectedSymbol, selectedTimeframe),
+      ]);
+
+      if (candlesRes.status === 'fulfilled' && candlesRes.value.data?.length > 0) {
+        const rawCandles = candlesRes.value.data;
+
+        const mapped: FormedCandle[] = rawCandles.map((c) => ({
+          time: parseToUnixSeconds(c.timestamp),
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume || 0,
+        }));
+
+        const cleanCandles = deduplicateAndSortCandles(mapped);
+
+        // Compute EMAs
+        const closes = cleanCandles.map((c) => c.close);
+        const ema20Arr = computeEMAArray(closes, 20, priceDecimals);
+        const ema50Arr = computeEMAArray(closes, 50, priceDecimals);
+        cleanCandles.forEach((c, i) => {
+          c.ema20 = ema20Arr[i];
+          c.ema50 = ema50Arr[i];
+        });
+
+        // Set to state
+        setCandles(cleanCandles);
+        setIsRealData(true);
+
+        // Feed TradingView Lightweight Charts
+        if (candleSeriesRef.current && volumeSeriesRef.current) {
+          candleSeriesRef.current.setData(
+            cleanCandles.map((c) => ({
+              time: c.time,
               open: c.open,
               high: c.high,
               low: c.low,
               close: c.close,
-              volume: c.volume || 0,
-              ema20: ema20Series[i] || c.close,
-              ema50: ema50Series[i] || c.close,
-              ema200: ema200Series[i] || c.close,
-              isGreen,
-            };
-          });
+            }))
+          );
 
-          setCandles(mapped);
-          setIsRealData(true);
-        } else {
-          setCandles([]);
-          setIsRealData(false);
-        }
+          volumeSeriesRef.current.setData(
+            cleanCandles.map((c) => ({
+              time: c.time,
+              value: c.volume,
+              color: c.close >= c.open ? 'rgba(0, 230, 118, 0.35)' : 'rgba(255, 51, 102, 0.35)',
+            }))
+          );
 
-        // 2. Process Technical Indicators (RSI, ATR, FVGs)
-        if (indRes.status === 'fulfilled' && indRes.value.data) {
-          setIndicatorData(indRes.value.data);
-        }
+          if (ema20SeriesRef.current && ema50SeriesRef.current) {
+            ema20SeriesRef.current.setData(
+              cleanCandles.map((c) => ({ time: c.time, value: c.ema20! }))
+            );
+            ema50SeriesRef.current.setData(
+              cleanCandles.map((c) => ({ time: c.time, value: c.ema50! }))
+            );
+          }
 
-        // 3. Process SMC Liquidity & S/R Zones
-        if (liqRes.status === 'fulfilled' && liqRes.value.data) {
-          setLiquidityZones(liqRes.value.data);
+          chartRef.current?.timeScale().fitContent();
         }
-
-        // 4. Process Market Structure & Trend
-        if (structRes.status === 'fulfilled' && structRes.value.data) {
-          setStructureData(structRes.value.data);
-        }
-      } catch {
-        if (!isCancelled) {
-          setCandles([]);
-          setIsRealData(false);
-        }
-      } finally {
-        isFetching = false;
+      } else {
+        setCandles([]);
+        setIsRealData(false);
       }
+
+      if (indRes.status === 'fulfilled' && indRes.value.data) {
+        setIndicatorData(indRes.value.data);
+      }
+      if (liqRes.status === 'fulfilled' && liqRes.value.data) {
+        setLiquidityZones(liqRes.value.data);
+      }
+      if (structRes.status === 'fulfilled' && structRes.value.data) {
+        setStructureData(structRes.value.data);
+      }
+    } catch (err) {
+      console.warn('[TradingChart] Error loading candle data:', err);
     }
-
-    loadChartData();
-    const interval = setInterval(loadChartData, 60000);
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        loadChartData();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      isCancelled = true;
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
   }, [selectedSymbol, selectedTimeframe, priceDecimals]);
 
+  // Periodic historical refresh every 60s
+  useEffect(() => {
+    loadChartData();
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      loadChartData();
+    }, 60000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') loadChartData();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [loadChartData]);
+
+  // 3. TASK 1: The "Forming Candle" Illusion with 15s Live Quotes
+  // Logic:
+  // - If the quote timestamp is within the current 1-minute window (or selected timeframe window),
+  //   update the `close`, `high`, and `low` of the last candle in the chart array.
+  // - Do not push a new candle until the minute actually rolls over.
+  // - This makes the chart "tick" in real-time without backend changes.
+  useEffect(() => {
+    if (!latestQuote || typeof latestQuote.price !== 'number' || latestQuote.price <= 0) return;
+    if (latestQuote.symbol && latestQuote.symbol !== selectedSymbol) return;
+
+    setCandles((prevCandles) => {
+      if (prevCandles.length === 0) return prevCandles;
+
+      const quotePrice = latestQuote.price;
+      const quoteTimeSec = parseToUnixSeconds(
+        latestQuote.timestamp || latestQuote.fetched_at || Date.now()
+      );
+
+      const windowSec = getTimeframeDurationSeconds(selectedTimeframe);
+      const lastIndex = prevCandles.length - 1;
+      const lastCandle = prevCandles[lastIndex];
+
+      // Check whether the quote timestamp is within the current window
+      // For 1m: Math.floor(quoteTimeSec / 60) <= Math.floor(lastCandle.time / 60)
+      const isWithinWindow =
+        windowSec === 60
+          ? Math.floor(quoteTimeSec / 60) <= Math.floor(lastCandle.time / 60)
+          : quoteTimeSec < lastCandle.time + windowSec;
+
+      if (isWithinWindow) {
+        // Update forming candle
+        const updatedHigh = Math.max(lastCandle.high, quotePrice);
+        const updatedLow = Math.min(lastCandle.low, quotePrice);
+        const updatedClose = quotePrice;
+
+        const updatedCandle: FormedCandle = {
+          ...lastCandle,
+          high: updatedHigh,
+          low: updatedLow,
+          close: updatedClose,
+        };
+
+        // Real-time tick into TradingView Candlestick series
+        candleSeriesRef.current?.update({
+          time: updatedCandle.time,
+          open: updatedCandle.open,
+          high: updatedHigh,
+          low: updatedLow,
+          close: updatedClose,
+        });
+
+        // Fast update EMA on forming candle
+        if (showEMA && lastCandle.ema20 && lastCandle.ema50) {
+          const k20 = 2 / 21;
+          const k50 = 2 / 51;
+          const newEma20 = Number((updatedClose * k20 + lastCandle.ema20 * (1 - k20)).toFixed(2));
+          const newEma50 = Number((updatedClose * k50 + lastCandle.ema50 * (1 - k50)).toFixed(2));
+          updatedCandle.ema20 = newEma20;
+          updatedCandle.ema50 = newEma50;
+          ema20SeriesRef.current?.update({ time: updatedCandle.time, value: newEma20 });
+          ema50SeriesRef.current?.update({ time: updatedCandle.time, value: newEma50 });
+        }
+
+        const next = [...prevCandles];
+        next[lastIndex] = updatedCandle;
+        return next;
+      } else {
+        // Minute / Window has rolled over!
+        const newCandleTime = (Math.floor(quoteTimeSec / windowSec) * windowSec) as UTCTimestamp;
+
+        // Ensure strictly ascending timestamp
+        if (newCandleTime <= lastCandle.time) {
+          return prevCandles;
+        }
+
+        const newCandle: FormedCandle = {
+          time: newCandleTime,
+          open: quotePrice,
+          high: quotePrice,
+          low: quotePrice,
+          close: quotePrice,
+          volume: 0,
+          ema20: lastCandle.ema20 ?? quotePrice,
+          ema50: lastCandle.ema50 ?? quotePrice,
+        };
+
+        // Push new candle bar to TradingView chart
+        candleSeriesRef.current?.update({
+          time: newCandle.time,
+          open: newCandle.open,
+          high: newCandle.high,
+          low: newCandle.low,
+          close: newCandle.close,
+        });
+
+        volumeSeriesRef.current?.update({
+          time: newCandle.time,
+          value: 0,
+          color: 'rgba(0, 230, 118, 0.35)',
+        });
+
+        if (showEMA && newCandle.ema20 && newCandle.ema50) {
+          ema20SeriesRef.current?.update({ time: newCandle.time, value: newCandle.ema20 });
+          ema50SeriesRef.current?.update({ time: newCandle.time, value: newCandle.ema50 });
+        }
+
+        return [...prevCandles, newCandle];
+      }
+    });
+  }, [latestQuote, selectedSymbol, selectedTimeframe, showEMA]);
+
+  // 4. TASK 4: SMC Setup Overlays (Visual Only)
+  // Horizontal dashed lines on TradingView chart for entry_price, stop_loss, take_profit_1
+  useEffect(() => {
+    if (!candleSeriesRef.current) return;
+    const series = candleSeriesRef.current;
+
+    // Clear previous SMC overlay lines
+    smcLinesRef.current.forEach((line) => {
+      try {
+        series.removePriceLine(line);
+      } catch {}
+    });
+    smcLinesRef.current = [];
+
+    // Identify active signal for current symbol
+    const signal =
+      activeSignal ||
+      signals?.find(
+        (s) =>
+          s.symbol === selectedSymbol &&
+          s.hasActiveSignal &&
+          (s.status === 'ACTIVE' || s.direction === 'BUY' || s.direction === 'SELL')
+      );
+
+    if (signal && signal.hasActiveSignal) {
+      const entry = signal.entryPrice ?? (signal as any).entry_price;
+      const sl = signal.stopLoss ?? (signal as any).stop_loss;
+      const tp1 = signal.takeProfit1 ?? (signal as any).take_profit_1;
+      const tp2 = signal.takeProfit2 ?? (signal as any).take_profit_2;
+
+      // 1. Entry Price Line (Cyan dashed)
+      if (typeof entry === 'number' && entry > 0) {
+        const entryLine = series.createPriceLine({
+          price: entry,
+          color: '#00e5ff',
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: `ENTRY: ${formatPrice(selectedSymbol, entry)}`,
+        });
+        smcLinesRef.current.push(entryLine);
+      }
+
+      // 2. Stop Loss Line (Neon Red dashed)
+      if (typeof sl === 'number' && sl > 0) {
+        const slLine = series.createPriceLine({
+          price: sl,
+          color: '#ff3366',
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: `SL: ${formatPrice(selectedSymbol, sl)}`,
+        });
+        smcLinesRef.current.push(slLine);
+      }
+
+      // 3. Take Profit 1 Line (Neon Green dashed)
+      if (typeof tp1 === 'number' && tp1 > 0) {
+        const tp1Line = series.createPriceLine({
+          price: tp1,
+          color: '#00e676',
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: `TP1: ${formatPrice(selectedSymbol, tp1)}`,
+        });
+        smcLinesRef.current.push(tp1Line);
+      }
+
+      // Optional: Take Profit 2 Line (Emerald Dotted)
+      if (typeof tp2 === 'number' && tp2 > 0) {
+        const tp2Line = series.createPriceLine({
+          price: tp2,
+          color: '#00b0ff',
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: `TP2: ${formatPrice(selectedSymbol, tp2)}`,
+        });
+        smcLinesRef.current.push(tp2Line);
+      }
+    }
+  }, [signals, activeSignal, selectedSymbol, candles]);
+
+  // 5. Support / Resistance Levels on Chart
+  useEffect(() => {
+    if (!candleSeriesRef.current) return;
+    const series = candleSeriesRef.current;
+
+    srLinesRef.current.forEach((line) => {
+      try {
+        series.removePriceLine(line);
+      } catch {}
+    });
+    srLinesRef.current = [];
+
+    if (showSR && liquidityZones?.sr_zones) {
+      liquidityZones.sr_zones.slice(0, 4).forEach((zone) => {
+        const isSupport = zone.zone_type === 'SUPPORT';
+        const avgPrice = (zone.price_low + zone.price_high) / 2;
+        const srLine = series.createPriceLine({
+          price: avgPrice,
+          color: isSupport ? '#00d2ff' : '#e040fb',
+          lineWidth: 1,
+          lineStyle: LineStyle.SparseDotted,
+          axisLabelVisible: true,
+          title: `${isSupport ? 'SUPP' : 'RES'} (${zone.strength?.toFixed(0) || 'SMC'}%)`,
+        });
+        srLinesRef.current.push(srLine);
+      });
+    }
+  }, [showSR, liquidityZones, candles]);
+
+  // 6. Toggle EMA Visibility
+  useEffect(() => {
+    ema20SeriesRef.current?.applyOptions({ visible: showEMA });
+    ema50SeriesRef.current?.applyOptions({ visible: showEMA });
+  }, [showEMA]);
+
+  // Current active display candle (either hovered or last forming candle)
   const lastCandle = candles.length > 0 ? candles[candles.length - 1] : null;
+  const displayCandle = hoveredCandle || lastCandle;
+  const isDisplayGreen = displayCandle ? displayCandle.close >= displayCandle.open : true;
+
+  // Active signal for badge
+  const currentSignal =
+    activeSignal ||
+    signals?.find(
+      (s) =>
+        s.symbol === selectedSymbol &&
+        s.hasActiveSignal &&
+        (s.status === 'ACTIVE' || s.direction === 'BUY' || s.direction === 'SELL')
+    );
 
   return (
-    <div className="relative min-w-0 w-full overflow-hidden rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-4 sm:p-5 space-y-3 font-mono shadow-2xl">
+    <div className="relative min-w-0 w-full overflow-hidden rounded-2xl bg-zinc-900/60 backdrop-blur-md border border-white/10 p-3.5 sm:p-5 space-y-3 font-mono shadow-2xl">
       {/* Chart Top Header & Toolbar */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-2.5 border-b border-[#1d2230]">
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -186,9 +682,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             ))}
           </div>
 
-          {/* Timeframe Select */}
+          {/* Timeframe Select (Supports 1m, 5m, 15m, 1h, 4h, 1D) */}
           <div className="flex items-center p-0.5 rounded bg-[#0a0b10] border border-[#1d2230]">
-            {['15m', '1h', '4h', '1D'].map((tf) => (
+            {['1m', '5m', '15m', '1h', '4h', '1D'].map((tf) => (
               <button
                 key={tf}
                 onClick={() => setSelectedTimeframe(tf)}
@@ -202,18 +698,32 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               </button>
             ))}
           </div>
+
+          {/* Active SMC Signal Banner Pill if present */}
+          {currentSignal && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-950 border border-cyan-500/30 text-[10px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+              <span className="text-cyan-300 font-bold">
+                {currentSignal.direction} OVERLAY ACTIVE
+              </span>
+              <span className="text-zinc-500">
+                (TP1: {currentSignal.takeProfit1 ? formatPrice(selectedSymbol, currentSignal.takeProfit1) : '--'})
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Indicators Overlay Toggle & Data Source Badge */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <span
-            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+            className={`px-2 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 ${
               isRealData
                 ? 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30'
                 : 'bg-zinc-800 text-zinc-400 border-zinc-700'
             }`}
           >
-            {isRealData ? 'LIVE DB CANDLES' : 'AWAITING DATA'}
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
+            {isRealData ? 'LIGHTWEIGHT CHARTS (TV)' : 'AWAITING DATA'}
           </span>
 
           <button
@@ -229,18 +739,6 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           </button>
 
           <button
-            onClick={() => setShowFVG(!showFVG)}
-            className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors flex items-center gap-1 cursor-pointer ${
-              showFVG
-                ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                : 'bg-[#0a0b10] text-slate-500 border-[#1d2230]'
-            }`}
-          >
-            <Sparkles className="w-3 h-3" />
-            <span>FVG {indicatorData?.active_fvgs?.length ? `(${indicatorData.active_fvgs.length})` : ''}</span>
-          </button>
-
-          <button
             onClick={() => setShowSR(!showSR)}
             className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors flex items-center gap-1 cursor-pointer ${
               showSR
@@ -250,6 +748,14 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           >
             <Layers className="w-3 h-3" />
             <span>S/R {liquidityZones?.sr_zones?.length ? `(${liquidityZones.sr_zones.length})` : ''}</span>
+          </button>
+
+          <button
+            onClick={loadChartData}
+            title="Reload Chart Data"
+            className="p-1 rounded bg-[#0a0b10] hover:bg-zinc-800 text-slate-400 hover:text-white border border-[#1d2230] transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -304,7 +810,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               </span>
             </div>
 
-            {/* Key Support & Resistance from Structure/Liquidity */}
+            {/* Key Support & Resistance */}
             {structureData && (
               <div className="hidden lg:flex items-center gap-3 text-slate-400">
                 {structureData.key_support && (
@@ -333,224 +839,59 @@ export const TradingChart: React.FC<TradingChartProps> = ({
                   : 'bg-slate-800 text-slate-300 border-slate-700'
               }`}
             >
-              {indicatorData.confluence_bias} ({indicatorData.confluence_score > 0 ? '+' : ''}{indicatorData.confluence_score.toFixed(0)})
+              {indicatorData.confluence_bias} ({indicatorData.confluence_score > 0 ? '+' : ''}
+              {indicatorData.confluence_score.toFixed(0)})
             </span>
           </div>
         </div>
       )}
 
-      {/* OHLCV Bar */}
+      {/* OHLCV Bar: Real-time Forming Candle Feed */}
       <div className="flex items-center justify-between gap-3 text-[11px] px-2.5 py-1.5 rounded bg-[#0a0b10] border border-[#1d2230] overflow-x-auto">
         <div className="flex items-center gap-3.5 text-slate-400">
           <span>
-            O: <strong className="text-slate-200">{lastCandle ? formatPrice(selectedSymbol, lastCandle.open) : '--'}</strong>
+            O: <strong className="text-slate-200">{displayCandle ? formatPrice(selectedSymbol, displayCandle.open) : '--'}</strong>
           </span>
           <span>
-            H: <strong className="text-[#00e676]">{lastCandle ? formatPrice(selectedSymbol, lastCandle.high) : '--'}</strong>
+            H: <strong className="text-[#00e676]">{displayCandle ? formatPrice(selectedSymbol, displayCandle.high) : '--'}</strong>
           </span>
           <span>
-            L: <strong className="text-[#ff3366]">{lastCandle ? formatPrice(selectedSymbol, lastCandle.low) : '--'}</strong>
+            L: <strong className="text-[#ff3366]">{displayCandle ? formatPrice(selectedSymbol, displayCandle.low) : '--'}</strong>
           </span>
           <span>
             C:{' '}
-            <strong className={lastCandle ? (lastCandle.isGreen ? 'text-[#00e676]' : 'text-[#ff3366]') : 'text-slate-200'}>
-              {lastCandle ? formatPrice(selectedSymbol, lastCandle.close) : '--'}
+            <strong className={isDisplayGreen ? 'text-[#00e676]' : 'text-[#ff3366]'}>
+              {displayCandle ? formatPrice(selectedSymbol, displayCandle.close) : '--'}
             </strong>
           </span>
-          <span>
-            Vol: <strong className="text-slate-200">{lastCandle ? lastCandle.volume.toLocaleString() : '--'}</strong>
+          {displayCandle?.volume != null && displayCandle.volume > 0 && (
+            <span>
+              Vol: <strong className="text-slate-200">{displayCandle.volume.toLocaleString()}</strong>
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
+          <span className="flex items-center gap-1 text-[#00e676]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
+            <span>Forming Candle (15s Tick)</span>
           </span>
         </div>
-
-        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 shrink-0">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#00e676]" />
-          <span>SQLite Candle Feed</span>
-        </div>
       </div>
 
-      {/* SVG Candlestick Canvas & Custom High-Resolution Visualizer */}
-      <div className="relative w-full min-w-0 h-80 bg-zinc-950/80 rounded-xl border border-white/10 overflow-hidden p-2">
-        {candles.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-zinc-500 font-mono text-xs">
-            <Activity className="w-5 h-5 animate-pulse text-cyan-400 mb-2" />
-            <span>Awaiting Candle Data...</span>
+      {/* TradingView Lightweight Charts Viewport */}
+      <div className="relative w-full h-[400px] bg-[#090a0f] rounded-xl border border-white/10 overflow-hidden shadow-inner">
+        {candles.length === 0 && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-zinc-950/80 text-zinc-500 font-mono text-xs">
+            <Activity className="w-6 h-6 animate-pulse text-cyan-400 mb-2" />
+            <span>Streaming Candle History...</span>
           </div>
-        ) : (
-          <>
-            <ResponsiveContainer width="100%" height="80%">
-              <ComposedChart data={candles} margin={{ top: 12, right: 15, left: 5, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="2 2" stroke="#151824" vertical={false} />
-                <XAxis
-                  dataKey="time"
-                  stroke="#475569"
-                  fontSize={10}
-                  tickLine={false}
-                  fontFamily="JetBrains Mono"
-                />
-                <YAxis
-                  domain={['auto', 'auto']}
-                  stroke="#475569"
-                  fontSize={10}
-                  tickLine={false}
-                  axisLine={false}
-                  orientation="right"
-                  fontFamily="JetBrains Mono"
-                  tickFormatter={(v) => formatPrice(selectedSymbol, v)}
-                />
-
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload as CandleData;
-                      return (
-                        <div className="p-2.5 bg-[#111319]/95 border border-[#1d2230] rounded shadow-terminal font-mono text-xs space-y-1 backdrop-blur-md">
-                          <p className="text-slate-400 font-bold border-b border-[#1d2230] pb-1">
-                            {data.time} ({selectedTimeframe})
-                          </p>
-                          <div className="grid grid-cols-2 gap-x-3 text-[11px]">
-                            <span className="text-slate-400">Open:</span>
-                            <span className="text-slate-200">{formatPrice(selectedSymbol, data.open)}</span>
-                            <span className="text-slate-400">High:</span>
-                            <span className="text-[#00e676]">{formatPrice(selectedSymbol, data.high)}</span>
-                            <span className="text-slate-400">Low:</span>
-                            <span className="text-[#ff3366]">{formatPrice(selectedSymbol, data.low)}</span>
-                            <span className="text-slate-400">Close:</span>
-                            <span className={data.isGreen ? 'text-[#00e676]' : 'text-[#ff3366]'}>
-                              {formatPrice(selectedSymbol, data.close)}
-                            </span>
-                          </div>
-                          {showEMA && (
-                            <div className="border-t border-[#1e1e2d] pt-1 text-[10px] space-y-0.5 text-purple-300">
-                              <div>EMA 20: {formatPrice(selectedSymbol, data.ema20)}</div>
-                              <div>EMA 50: {formatPrice(selectedSymbol, data.ema50)}</div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-
-                {/* Candlestick bodies via Custom Bar */}
-                <Bar
-                  dataKey="close"
-                  fill="#00e676"
-                  shape={(props: any) => {
-                    const { x, y, width, height, payload } = props;
-                    const candle = payload as CandleData;
-                    const isGreen = candle.isGreen;
-                    const fillColor = isGreen ? '#00e676' : '#ff3366';
-                    const strokeColor = isGreen ? '#00e676' : '#ff3366';
-
-                    const bodyY = isGreen ? y : y;
-                    const bodyH = Math.max(Math.abs(height * 0.15), 4);
-
-                    return (
-                      <g>
-                        {/* Wick */}
-                        <line
-                          x1={x + width / 2}
-                          y1={Math.max(bodyY - 12, 5)}
-                          x2={x + width / 2}
-                          y2={bodyY + bodyH + 12}
-                          stroke={strokeColor}
-                          strokeWidth={1.5}
-                        />
-                        {/* Body */}
-                        <rect
-                          x={x + 2}
-                          y={bodyY}
-                          width={Math.max(width - 4, 3)}
-                          height={bodyH}
-                          fill={fillColor}
-                          stroke={strokeColor}
-                          rx={1}
-                        />
-                      </g>
-                    );
-                  }}
-                />
-
-                {/* EMA Lines Overlay */}
-                {showEMA && (
-                  <>
-                    <Line
-                      type="monotone"
-                      dataKey="ema20"
-                      stroke="#a855f7"
-                      strokeWidth={1.5}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="ema50"
-                      stroke="#38bdf8"
-                      strokeWidth={1.5}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                  </>
-                )}
-
-                {/* Real Fair Value Gap (FVG) Reference Areas from Backend */}
-                {showFVG && indicatorData?.active_fvgs && indicatorData.active_fvgs.slice(0, 4).map((fvg, idx) => {
-                  const isBullish = fvg.fvg_type === 'BULLISH_FVG';
-                  return (
-                    <ReferenceArea
-                      key={`fvg-${idx}`}
-                      y1={fvg.bottom_price}
-                      y2={fvg.top_price}
-                      fill={isBullish ? '#00e676' : '#ffb800'}
-                      fillOpacity={0.14}
-                      stroke={isBullish ? '#00e676' : '#ffb800'}
-                      strokeDasharray="3 3"
-                    />
-                  );
-                })}
-
-                {/* Dynamic S/R Zones from SMC Backend */}
-                {showSR && liquidityZones?.sr_zones && liquidityZones.sr_zones.slice(0, 3).map((zone, idx) => {
-                  const isSupport = zone.zone_type === 'SUPPORT';
-                  return (
-                    <ReferenceArea
-                      key={`sr-${idx}`}
-                      y1={zone.price_low}
-                      y2={zone.price_high}
-                      fill={isSupport ? '#00d2ff' : '#a855f7'}
-                      fillOpacity={0.08}
-                      stroke={isSupport ? '#00d2ff' : '#a855f7'}
-                      strokeDasharray="2 2"
-                    />
-                  );
-                })}
-              </ComposedChart>
-            </ResponsiveContainer>
-
-            {/* Volume Sub-chart */}
-            <div className="h-[20%] w-full border-t border-[#151824] pt-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={candles} margin={{ top: 0, right: 15, left: 5, bottom: 0 }}>
-                  <Bar
-                    dataKey="volume"
-                    fill="#334155"
-                    shape={(props: any) => {
-                      const { x, y, width, height, payload } = props;
-                      const candle = payload as CandleData;
-                      const color = candle.isGreen ? 'rgba(0, 230, 118, 0.35)' : 'rgba(255, 51, 102, 0.35)';
-                      return <rect x={x + 2} y={y} width={Math.max(width - 4, 2)} height={height} fill={color} rx={1} />;
-                    }}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </>
         )}
+        <div ref={chartContainerRef} className="w-full h-full" />
       </div>
 
-      {/* Chart Footer Indicator Legend */}
-      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-0.5">
+      {/* Institutional Legend & SMC Setup Overlay Key */}
+      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-0.5 flex-wrap gap-2">
         <div className="flex items-center gap-3.5 flex-wrap">
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-xs bg-[#00e676] inline-block" />
@@ -565,21 +906,36 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               <span className="flex items-center gap-1 text-purple-400">
                 <span className="w-2.5 h-0.5 bg-purple-500 inline-block" /> EMA 20
               </span>
-              <span className="flex items-center gap-1 text-sky-400">
-                <span className="w-2.5 h-0.5 bg-sky-400 inline-block" /> EMA 50
+              <span className="flex items-center gap-1 text-cyan-400">
+                <span className="w-2.5 h-0.5 bg-cyan-400 inline-block" /> EMA 50
               </span>
             </>
           )}
-          {showFVG && (
-            <span className="flex items-center gap-1 text-amber-400">
-              <span className="w-2 h-2 bg-amber-400/30 border border-amber-400 inline-block rounded-xs" />
-              SMC FVG
+          {currentSignal && (
+            <>
+              <span className="flex items-center gap-1 text-cyan-300">
+                <span className="w-2.5 h-0.5 border-t-2 border-dashed border-cyan-400 inline-block" /> Entry
+              </span>
+              <span className="flex items-center gap-1 text-[#ff3366]">
+                <span className="w-2.5 h-0.5 border-t-2 border-dashed border-[#ff3366] inline-block" /> Stop Loss
+              </span>
+              <span className="flex items-center gap-1 text-[#00e676]">
+                <span className="w-2.5 h-0.5 border-t-2 border-dashed border-[#00e676] inline-block" /> Take Profit
+              </span>
+            </>
+          )}
+          {showSR && (
+            <span className="flex items-center gap-1 text-pink-400">
+              <span className="w-2 h-0.5 border-t border-dotted border-pink-400 inline-block" /> S/R Levels
             </span>
           )}
         </div>
-        <span className="text-slate-500 hidden sm:inline">
-          FastAPI SMC Feed
-        </span>
+
+        <div className="flex items-center gap-2 text-zinc-500 text-[10px]">
+          <span>TradingView Lightweight v5</span>
+          <span>•</span>
+          <span>FastAPI SMC Engine</span>
+        </div>
       </div>
     </div>
   );

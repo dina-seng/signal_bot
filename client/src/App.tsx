@@ -7,6 +7,7 @@ import { ActivePositionsTable } from './components/ActivePositionsTable';
 import { NotificationSettings } from './components/NotificationSettings';
 import { NewsRiskMonitor } from './components/NewsRiskMonitor';
 import { TradingChart } from './components/TradingChart';
+import { SystemTelemetry } from './components/SystemTelemetry';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import {
   NavigationTab,
@@ -240,7 +241,10 @@ export const App: React.FC = () => {
     try {
       const quoteRes = await quantViewApi.getQuote('XAU/USD');
       if (quoteRes.data) {
-        const quote = quoteRes.data;
+        const quote = {
+          ...quoteRes.data,
+          fetched_at: quoteRes.data.fetched_at || new Date().toISOString(),
+        };
         setLatestQuote(quote);
         const quoteIsFresh = quote.is_stale !== true;
         quoteFreshRef.current = quoteIsFresh;
@@ -258,6 +262,18 @@ export const App: React.FC = () => {
         const prices = await quantViewApi.getLatestPrices();
         if (prices && Object.keys(prices).length > 0) {
           setLivePrices(prices);
+          if (prices['XAU/USD']) {
+            setLatestQuote((prev) => ({
+              ...(prev || {
+                symbol: 'XAU/USD',
+                source: 'candle',
+                timestamp: new Date().toISOString(),
+              }),
+              symbol: 'XAU/USD',
+              price: prices['XAU/USD'],
+              fetched_at: new Date().toISOString(),
+            }));
+          }
         }
       } catch {
         // Ignore transient error
@@ -992,11 +1008,23 @@ export const App: React.FC = () => {
                 onTradeFromSignal={handleTradeFromSignal}
               />
 
+              {/* Institutional Telemetry HUD Widget */}
+              <SystemTelemetry
+                account={account}
+                quote={latestQuote}
+                scannerStatus={scannerStatus}
+                riskStatus={riskStatus}
+                isApiConnected={isApiConnected}
+              />
+
               {/* Candlestick Chart Area */}
               <div id="chart-section">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
+                  latestQuote={latestQuote}
+                  signals={signals}
+                  activeSignal={signals.find((s) => s.symbol === selectedChartSymbol && s.hasActiveSignal)}
                 />
               </div>
 
@@ -1053,6 +1081,9 @@ export const App: React.FC = () => {
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
+                  latestQuote={latestQuote}
+                  signals={signals}
+                  activeSignal={signals.find((s) => s.symbol === selectedChartSymbol && s.hasActiveSignal)}
                 />
               </div>
             </div>
@@ -1071,6 +1102,9 @@ export const App: React.FC = () => {
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
+                  latestQuote={latestQuote}
+                  signals={signals}
+                  activeSignal={signals.find((s) => s.symbol === selectedChartSymbol && s.hasActiveSignal)}
                 />
               </div>
             </div>
