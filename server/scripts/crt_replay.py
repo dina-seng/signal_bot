@@ -67,6 +67,236 @@ from app.services.strategies.crt.entry import calculate_retracement_entry  # noq
 from app.services.strategies.crt.targets import calculate_crt_targets  # noqa: E402
 from app.services.strategies.crt_strategy import CRTStrategy  # noqa: E402
 from app.services.strategies.strategy_manager import StrategyManager  # noqa: E402
+from app.services.structure.crt_analyzer import (  # noqa: E402
+    CRTAnalyzer,
+    _get_candle_ts,
+    _get_candle_val,
+    _get_timeframe_duration,
+)
+
+
+class CRTBothSidesAnalyzer(CRTAnalyzer):
+    """Replay experiment wrapper: evaluates sweeps of EITHER side of HTF candle.
+
+    Production CRTAnalyzer links the sweep side to the HTF candle color:
+    bullish HTF -> swept low only (BUY); bearish HTF -> swept high only (SELL).
+    This experimental analyzer evaluates sweeps on either side and determines
+    trade direction directly from the swept side:
+    - Swept low  -> BUY  (positive_direction = True)
+    - Swept high -> SELL (positive_direction = False)
+    """
+
+    @classmethod
+    def analyze(
+        cls,
+        range_candles: Sequence[Any],
+        confirm_candles: Sequence[Any],
+        min_manip_pct: float = 5.0,
+        confirm_bars: int = 1,
+        lookback_bars: Optional[int] = None,
+    ) -> CRTAnalysis:
+        if not range_candles or not confirm_candles:
+            return CRTAnalysis(
+                range_high=0.0,
+                range_low=0.0,
+                range_open=0.0,
+                range_close=0.0,
+                positive_direction=False,
+                breach_point=None,
+                is_breached=False,
+                is_confirmed=False,
+                manip_depth_pct=0.0,
+            )
+
+        ref_candle = range_candles[-1]
+        range_high = _get_candle_val(ref_candle, "high")
+        range_low = _get_candle_val(ref_candle, "low")
+        range_open = _get_candle_val(ref_candle, "open")
+        range_close = _get_candle_val(ref_candle, "close")
+        range_open_ts = _get_candle_ts(ref_candle)
+        range_size = range_high - range_low
+
+        if range_size <= 0.0:
+            return CRTAnalysis(
+                range_high=range_high,
+                range_low=range_low,
+                range_open=range_open,
+                range_close=range_close,
+                positive_direction=range_close > range_open,
+                breach_point=None,
+                is_breached=False,
+                is_confirmed=False,
+                manip_depth_pct=0.0,
+                range_open_timestamp=range_open_ts,
+            )
+
+        if range_open_ts is None or any(_get_candle_ts(c) is None for c in confirm_candles):
+            return CRTAnalysis(
+                range_high=round(range_high, 5),
+                range_low=round(range_low, 5),
+                range_open=round(range_open, 5),
+                range_close=round(range_close, 5),
+                positive_direction=range_close > range_open,
+                breach_point=None,
+                is_breached=False,
+                is_confirmed=False,
+                manip_depth_pct=0.0,
+                range_open_timestamp=range_open_ts,
+                has_missing_timestamps=True,
+            )
+
+        ref_tf = getattr(ref_candle, "timeframe", None) if not isinstance(ref_candle, dict) else ref_candle.get("timeframe")
+        htf_duration = _get_timeframe_duration(ref_tf)
+        range_close_ts = range_open_ts + htf_duration
+
+        filtered_confirms = [
+            c for c in confirm_candles
+            if _get_candle_ts(c) is not None and _get_candle_ts(c) >= range_close_ts
+        ]
+
+        if not filtered_confirms:
+            return CRTAnalysis(
+                range_high=round(range_high, 5),
+                range_low=round(range_low, 5),
+                range_open=round(range_open, 5),
+                range_close=round(range_close, 5),
+                positive_direction=range_close > range_open,
+                breach_point=None,
+                is_breached=False,
+                is_confirmed=False,
+                manip_depth_pct=0.0,
+                range_open_timestamp=range_open_ts,
+            )
+
+        eval_candles = (
+            filtered_confirms[-lookback_bars:]
+            if lookback_bars is not None and len(filtered_confirms) > lookback_bars
+            else filtered_confirms
+        )
+
+        breach_candidates_low = [
+            c for c in eval_candles
+            if _get_candle_val(c, "low") < range_low
+        ]
+        breach_candidates_high = [
+            c for c in eval_candles
+            if _get_candle_val(c, "high") > range_high
+        ]
+
+        is_breached = False
+        positive_direction = range_close > range_open
+        extreme_candle = None
+        breach_point: Optional[float] = None
+        breach_ts: Optional[datetime] = None
+        breach_wick_ratio = 0.0
+        manip_depth_pct = 0.0
+
+        if breach_candidates_low and not breach_candidates_high:
+            is_breached = True
+            positive_direction = True
+            extreme_candle = min(breach_candidates_low, key=lambda c: _get_candle_val(c, "low"))
+        elif breach_candidates_high and not breach_candidates_low:
+            is_breached = True
+            positive_direction = False
+            extreme_candle = max(breach_candidates_high, key=lambda c: _get_candle_val(c, "high"))
+        elif breach_candidates_low and breach_candidates_high:
+            is_breached = True
+            ext_low = min(breach_candidates_low, key=lambda c: _get_candle_val(c, "low"))
+            ext_high = max(breach_candidates_high, key=lambda c: _get_candle_val(c, "high"))
+            ts_l = _get_candle_ts(ext_low)
+            ts_h = _get_candle_ts(ext_high)
+            if ts_l is not None and ts_h is not None:
+                if ts_l > ts_h:
+                    positive_direction = True
+                    extreme_candle = ext_low
+                elif ts_h > ts_l:
+                    positive_direction = False
+                    extreme_candle = ext_high
+                else:
+                    d_low = (abs(range_low - _get_candle_val(ext_low, "low")) / range_size) * 100.0
+                    d_high = (abs(range_high - _get_candle_val(ext_high, "high")) / range_size) * 100.0
+                    if d_low >= d_high:
+                        positive_direction = True
+                        extreme_candle = ext_low
+                    else:
+                        positive_direction = False
+                        extreme_candle = ext_high
+            else:
+                positive_direction = True
+                extreme_candle = ext_low
+
+        if is_breached and extreme_candle is not None:
+            breach_ts = _get_candle_ts(extreme_candle)
+            c_high = _get_candle_val(extreme_candle, "high")
+            c_low = _get_candle_val(extreme_candle, "low")
+            c_open = _get_candle_val(extreme_candle, "open")
+            c_close = _get_candle_val(extreme_candle, "close")
+            c_total_range = c_high - c_low
+
+            if positive_direction:
+                breach_point = c_low
+                range_edge = range_low
+                manip_depth_pct = (abs(range_edge - breach_point) / range_size) * 100.0
+                lower_wick = max(0.0, min(c_open, c_close) - c_low)
+                breach_wick_ratio = lower_wick / c_total_range if c_total_range > 0 else 0.0
+            else:
+                breach_point = c_high
+                range_edge = range_high
+                manip_depth_pct = (abs(range_edge - breach_point) / range_size) * 100.0
+                upper_wick = max(0.0, c_high - max(c_open, c_close))
+                breach_wick_ratio = upper_wick / c_total_range if c_total_range > 0 else 0.0
+
+        manip_depth_pct = round(manip_depth_pct, 4)
+        breach_wick_ratio = round(breach_wick_ratio, 4)
+        manip_idx = None
+        if is_breached and extreme_candle is not None:
+            try:
+                manip_idx = filtered_confirms.index(extreme_candle)
+            except ValueError:
+                manip_idx = None
+
+        is_confirmed = False
+        effective_confirm_bars = max(1, confirm_bars)
+        confirmation_displacement = 0.0
+        reentry_depth_pct = 0.0
+
+        if is_breached and len(filtered_confirms) >= effective_confirm_bars:
+            last_closes = [
+                _get_candle_val(c, "close")
+                for c in filtered_confirms[-effective_confirm_bars:]
+            ]
+            if positive_direction:
+                is_confirmed = all(close_val > range_low for close_val in last_closes)
+            else:
+                is_confirmed = all(close_val < range_high for close_val in last_closes)
+
+            if is_confirmed and len(filtered_confirms) > 0:
+                last_c = filtered_confirms[-1]
+                l_close = _get_candle_val(last_c, "close")
+                l_open = _get_candle_val(last_c, "open")
+                confirmation_displacement = round(abs(l_close - l_open), 5)
+                if positive_direction:
+                    reentry_depth_pct = round(max(0.0, (l_close - range_low) / range_size) * 100.0, 2)
+                else:
+                    reentry_depth_pct = round(max(0.0, (range_high - l_close) / range_size) * 100.0, 2)
+
+        return CRTAnalysis(
+            range_high=round(range_high, 5),
+            range_low=round(range_low, 5),
+            range_open=round(range_open, 5),
+            range_close=round(range_close, 5),
+            positive_direction=positive_direction,
+            breach_point=round(breach_point, 5) if breach_point is not None else None,
+            is_breached=is_breached,
+            is_confirmed=is_confirmed,
+            manip_depth_pct=manip_depth_pct,
+            range_open_timestamp=range_open_ts,
+            breach_timestamp=breach_ts,
+            breach_wick_ratio=breach_wick_ratio,
+            confirmation_displacement=confirmation_displacement,
+            reentry_depth_pct=reentry_depth_pct,
+            manipulation_candle_index=manip_idx if manip_idx is not None else 0,
+        )
 
 TF_15M = timedelta(minutes=15)
 TF_1H = timedelta(hours=1)
@@ -113,6 +343,14 @@ CONFIRMED_STATE = "CONFIRMED_SETUP"
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+def _parse_start_date(val: Optional[str]) -> Optional[datetime]:
+    """Parse YYYY-MM-DD into UTC datetime at midnight."""
+    if not val:
+        return None
+    dt = datetime.strptime(val.strip(), "%Y-%m-%d")
+    return dt.replace(tzinfo=timezone.utc)
+
+
 def _parse_ts(raw: str) -> datetime:
     """Parse the timestamp formats present in the candle table into aware UTC."""
     s = str(raw).strip().replace(" ", "T")
@@ -129,6 +367,7 @@ def load_15m_candles(
     symbol: str,
     source: str,
     months: float,
+    start_date: Optional[str] = None,
 ) -> Tuple[List[CandleCreate], Dict[str, Any]]:
     """Load, de-duplicate and window XAU/USD 15m candles from SQLite (read-only)."""
     if not db_path.exists():
@@ -181,7 +420,11 @@ def load_15m_candles(
 
     raw_first, raw_last = deduped[0].timestamp, deduped[-1].timestamp
     window_end = raw_last
-    window_start = window_end - timedelta(days=months * 30.4375)
+    start_dt = _parse_start_date(start_date)
+    if start_dt is not None:
+        window_start = start_dt
+    else:
+        window_start = window_end - timedelta(days=months * 30.4375)
     windowed = [c for c in deduped if c.timestamp >= window_start]
 
     before_calendar = len(windowed)
@@ -240,6 +483,7 @@ class SignalRecord:
     spread_paid: float = 0.0
     notes: str = ""
     sweep_key: str = ""
+    target_type: Optional[str] = None
 
 
 def _empty_funnel() -> Dict[str, int]:
@@ -394,9 +638,11 @@ def replay(
     cooldown_seconds: float,
     max_hold_bars: int,
     warmup_bars: int,
+    crt_both_sides: bool = False,
 ) -> Tuple[Dict[str, int], List[SignalRecord], int]:
     """Walk the 15m series and evaluate CRT at every closed bar."""
-    crt = CRTStrategy(enable_dedup=False)  # no in-memory or DB cooldown side effects
+    analyzer = CRTBothSidesAnalyzer() if crt_both_sides else None
+    crt = CRTStrategy(analyzer=analyzer, enable_dedup=False)  # no in-memory or DB cooldown side effects
     engine = ConfluenceEngine(strategy_manager=StrategyManager([crt]))
 
     funnel = _empty_funnel()
@@ -512,6 +758,7 @@ def replay(
                 score=float(result.score or 0.0),
                 production_entry=production_entry,
                 sweep_key=sweep_key,
+                target_type=meta.get("target_type"),
             )
             simulate_outcome(
                 rec,
@@ -795,7 +1042,7 @@ def write_csv(signals: Sequence[SignalRecord], path: Path) -> None:
             "crt_entry", "production_entry", "entry_delta", "stop_loss", "take_profit_1",
             "take_profit_2", "risk_price", "rr_planned", "score",
             "filled", "fill_time_utc", "exit_time_utc", "exit_reason",
-            "r_multiple", "bars_held", "spread_paid", "sweep_key",
+            "r_multiple", "bars_held", "spread_paid", "sweep_key", "target_type",
         ])
         for s in signals:
             delta = "" if s.production_entry is None else round(s.production_entry - s.crt_entry, 5)
@@ -822,6 +1069,7 @@ def write_csv(signals: Sequence[SignalRecord], path: Path) -> None:
                 s.bars_held,
                 s.spread_paid,
                 s.sweep_key,
+                s.target_type or "",
             ])
 
 
@@ -844,6 +1092,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--warmup-bars", type=int, default=100, help="15m bars skipped before the first decision")
     p.add_argument("--out-dir", default=str(REPO_ROOT / "reports" / "crt_replay"),
                    help="Directory for the markdown report and CSV")
+    p.add_argument("--start-date", default=None,
+                   help="Optional start date (YYYY-MM-DD); chunks ending before this and bars before this are skipped")
+    p.add_argument("--crt-both-sides", action="store_true", default=False,
+                   help="Experiment only: evaluate sweeps on either side of HTF candle regardless of HTF color")
     # --- Full-range, chunked, resumable measurement mode (Part 3) ---
     p.add_argument("--full-range", action="store_true",
                    help="Process the entire DB range in monthly chunks (ignores --months cap)")
@@ -867,7 +1119,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     db_path = Path(args.db_path)
     print(f"[*] Loading {args.symbol} 15m candles from {db_path} (source={args.source}) ...")
-    bars_15m, meta = load_15m_candles(db_path, args.symbol, args.source, args.months)
+    bars_15m, meta = load_15m_candles(db_path, args.symbol, args.source, args.months, args.start_date)
     print(f"[*] {len(bars_15m):,} open-market 15m bars in the replay window")
 
     c1h, c1h_close, c4h, c4h_close = build_timeframe_series(bars_15m)
@@ -886,6 +1138,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cooldown_seconds=args.cooldown_seconds,
         max_hold_bars=args.max_hold_bars,
         warmup_bars=args.warmup_bars,
+        crt_both_sides=args.crt_both_sides,
     )
 
     metrics = compute_metrics(signals)
@@ -976,6 +1229,7 @@ def _signal_to_dict(s: SignalRecord) -> Dict[str, Any]:
         "bars_held": s.bars_held,
         "spread_paid": s.spread_paid,
         "sweep_key": s.sweep_key,
+        "target_type": s.target_type,
     }
 
 
@@ -1106,6 +1360,7 @@ def _build_trade_from_meta(
         crt_entry=entry, stop_loss=sl, take_profit_1=tp1, take_profit_2=tp2,
         risk_price=abs(entry - sl), rr_planned=meta.get("risk_reward_tp1"),
         score=float(meta.get("score") or 0.0), sweep_key=sweep_key,
+        target_type=meta.get("target_type"),
     )
     simulate_outcome(rec, bars=bars, signal_index=i, spread=spread,
                      expiry_bars=expiry_bars, max_hold_bars=max_hold_bars)
@@ -1179,7 +1434,7 @@ def build_counterfactual(
             entry_mode=entry_res.entry_mode, crt_entry=eff_entry, stop_loss=stop_loss,
             take_profit_1=plan.take_profit_1, take_profit_2=plan.take_profit_2,
             risk_price=risk_distance, rr_planned=plan.risk_reward_tp1, score=0.0,
-            sweep_key=sweep_key,
+            sweep_key=sweep_key, target_type=plan.target_type,
         )
         simulate_outcome(rec, bars=bars, signal_index=i, spread=spread,
                          expiry_bars=expiry_bars, max_hold_bars=max_hold_bars)
@@ -1194,9 +1449,11 @@ def replay_chunk(
     c4h_close: Sequence[datetime], indices: Sequence[int], symbol: str,
     spread: float, expiry_bars: int, max_hold_bars: int, warmup_bars: int,
     bounds: Tuple[datetime, datetime], month: str,
+    crt_both_sides: bool = False,
 ) -> List[BarRecord]:
     """Evaluate only ``indices`` but with the full precomputed series as lookback."""
-    crt = CRTStrategy(enable_dedup=False)
+    analyzer = CRTBothSidesAnalyzer() if crt_both_sides else None
+    crt = CRTStrategy(analyzer=analyzer, enable_dedup=False)
     engine = ConfluenceEngine(strategy_manager=StrategyManager([crt]))
     bar_close = [b.timestamp + TF_15M for b in bars]
     records: List[BarRecord] = []
@@ -1374,6 +1631,11 @@ def build_extended_report(
     lines.append(f"| Database | `{meta['db_path']}` |")
     lines.append(f"| Raw rows / duplicates dropped | {meta['raw_rows']:,} / {meta['duplicates_dropped']:,} |")
     lines.append(f"| Full range | {meta['raw_first']:%Y-%m-%d %H:%M} → {meta['raw_last']:%Y-%m-%d %H:%M} UTC |")
+    if meta.get("start_date"):
+        lines.append(f"| Replay start date | {meta['start_date']} UTC |")
+        lines.append(f"| Warm-up bars available | {meta.get('warmup_bars_count', 0):,} |")
+    if getattr(args, "crt_both_sides", False):
+        lines.append("| Experiment option | `--crt-both-sides` active (sweep side sets direction, HTF color ignored) |")
     lines.append(f"| Open-market bars replayed | {meta['open_market_bars']:,} |")
     lines.append(f"| Bar records captured | {len(records):,} |")
     lines.append(f"| Calibration boundary (60%) | {bounds[0]:%Y-%m-%d %H:%M} UTC |")
@@ -1441,8 +1703,15 @@ def main_full_range(args: argparse.Namespace) -> int:
     c1h, c1h_close, c4h, c4h_close = build_timeframe_series(bars)
     print(f"[*] Resampled 1h={len(c1h):,}, 4h={len(c4h):,} (complete buckets)")
 
+    start_dt = _parse_start_date(args.start_date)
+    warmup_bars_count = sum(1 for b in bars if b.timestamp < start_dt) if start_dt else 0
+    if start_dt:
+        print(f"[*] Filter --start-date={args.start_date} UTC (warm-up context: {warmup_bars_count:,} earlier 15m bars)")
+
     bounds = walk_forward_bounds(bars)
     months = month_keys(bars)
+    if start_dt:
+        months = [(m, s, e) for (m, s, e) in months if e > start_dt]
     ckpt_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else (Path(args.out_dir) / "checkpoints")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     print(f"[*] {len(months)} monthly chunks; checkpoints in {ckpt_dir}")
@@ -1452,18 +1721,24 @@ def main_full_range(args: argparse.Namespace) -> int:
         path = _ckpt_path(ckpt_dir, month)
         if path.exists() and not args.no_resume:
             recs = load_checkpoint(ckpt_dir, month)
+            if start_dt:
+                recs = [r for r in recs if _parse_ts(r.decision_time) >= start_dt]
             print(f"[=] {month}: {len(recs):,} records (cached)")
         else:
             indices = [
                 i for i, b in enumerate(bars)
-                if m_start <= b.timestamp < m_end
+                if m_start <= b.timestamp < m_end and (start_dt is None or b.timestamp >= start_dt)
             ]
+            if not indices:
+                print(f"[-] {month}: 0 records (before start date)")
+                continue
             recs = replay_chunk(
                 bars=bars, c1h=c1h, c1h_close=c1h_close, c4h=c4h,
                 c4h_close=c4h_close, indices=indices, symbol=args.symbol,
                 spread=args.spread, expiry_bars=args.expiry_bars,
                 max_hold_bars=args.max_hold_bars, warmup_bars=args.warmup_bars,
                 bounds=bounds, month=month,
+                crt_both_sides=args.crt_both_sides,
             )
             save_checkpoint(ckpt_dir, month, recs)
             print(f"[+] {month}: {len(recs):,} records (computed)")
@@ -1472,6 +1747,9 @@ def main_full_range(args: argparse.Namespace) -> int:
             print(f"[*] --max-chunks={args.max_chunks} reached; stopping early.")
             break
 
+    if start_dt:
+        meta["start_date"] = args.start_date
+        meta["warmup_bars_count"] = warmup_bars_count
     report, funnel_rows, cf_rows = build_extended_report(meta, all_records, bounds, args)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
