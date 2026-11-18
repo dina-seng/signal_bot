@@ -75,6 +75,9 @@ class PaperTradeResponse(BaseModel):
     target_entry_price: Optional[float] = None
     entry_price: float
     current_price: float
+    # Where current_price came from: "quote" (live cache), "candle" (stale fallback),
+    # or "stored" (last persisted mark).
+    price_source: Optional[str] = None
     stop_loss: float
     take_profit_1: float
     take_profit_2: Optional[float] = None

@@ -44,6 +44,7 @@ export interface AppConfig {
   quote_cache_ttl_seconds?: number;
   quote_idle_cache_ttl_seconds?: number;
   quote_presence_ttl_seconds?: number;
+  quote_stale_after_seconds?: number;
   active_symbols: string[];
 }
 
@@ -56,6 +57,9 @@ export interface BackendQuote {
   low?: number | null;
   volume?: number | null;
   timestamp: string;
+  provider_timestamp?: string | null;
+  fetched_at?: string | null;
+  last_price_change_at?: string | null;
   source: string;
   provider?: string;
   provider_symbol?: string;
@@ -92,6 +96,7 @@ export interface BackendPosition {
   status: string;
   entry_price: number;
   current_price: number;
+  price_source?: 'quote' | 'candle' | 'stored' | null;
   stop_loss: number;
   take_profit_1: number;
   take_profit_2?: number | null;

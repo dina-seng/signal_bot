@@ -82,6 +82,9 @@ export const App: React.FC = () => {
   const isFetchingSignalsRef = useRef<boolean>(false);
   const isFetchingNewsRef = useRef<boolean>(false);
   const isFetchingPricesRef = useRef<boolean>(false);
+  // True when the last quote poll returned a live (non-STALE) quote. Candle-close
+  // refreshes must never overwrite a newer quote while this is true.
+  const quoteFreshRef = useRef<boolean>(false);
 
   // UI interaction states
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
@@ -237,9 +240,16 @@ export const App: React.FC = () => {
     try {
       const quoteRes = await quantViewApi.getQuote('XAU/USD');
       if (quoteRes.data) {
-        setLatestQuote(quoteRes.data);
-        if (typeof quoteRes.data.price === 'number' && quoteRes.data.price > 0) {
-          setLivePrices((prev) => ({ ...prev, 'XAU/USD': quoteRes.data.price }));
+        const quote = quoteRes.data;
+        setLatestQuote(quote);
+        const quoteIsFresh = quote.is_stale !== true;
+        quoteFreshRef.current = quoteIsFresh;
+        if (typeof quote.price === 'number' && quote.price > 0) {
+          setLivePrices((prev) => {
+            // Never replace a fresh quote mark with an older cached/candle value.
+            if (!quoteIsFresh && prev['XAU/USD'] !== undefined) return prev;
+            return { ...prev, 'XAU/USD': quote.price };
+          });
         }
       }
     } catch {
@@ -262,10 +272,17 @@ export const App: React.FC = () => {
     if (isFetchingSignalsRef.current) return;
     isFetchingSignalsRef.current = true;
     try {
-      // 1. Fetch live prices from candles for all pairs
+      // 1. Fetch live prices from candles for all pairs. A candle close must never
+      //    clobber a newer live quote; when the quote is STALE we leave the badge
+      //    to say so rather than silently showing a stale candle as real-time.
       const prices = await quantViewApi.getLatestPrices();
       if (prices && Object.keys(prices).length > 0) {
-        setLivePrices(prices);
+        setLivePrices((prev) => {
+          if (quoteFreshRef.current && prev['XAU/USD'] !== undefined) {
+            return { ...prices, 'XAU/USD': prev['XAU/USD'] };
+          }
+          return { ...prev, ...prices };
+        });
       }
 
       // 2. Fetch signals
@@ -925,7 +942,7 @@ export const App: React.FC = () => {
               <div>
                 <span className="text-zinc-500 block text-[10px] uppercase">Staleness</span>
                 <span className={`font-semibold ${latestQuote?.is_stale ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {latestQuote?.is_stale ? 'STALE (>120s)' : 'FRESH'}
+                  {latestQuote?.is_stale ? `STALE (>${appConfig?.quote_stale_after_seconds ?? 180}s no change)` : 'FRESH'}
                 </span>
               </div>
               <div>
@@ -968,6 +985,7 @@ export const App: React.FC = () => {
                 isLoading={isInitialLoading}
                 isScanning={isScanningMarkets}
                 appConfig={appConfig}
+                quote={latestQuote}
                 onToggleNotify={handleToggleNotify}
                 onSelectSignalForChart={handleSelectSignalForChart}
                 onTriggerScan={handleScanMarkets}
@@ -1025,6 +1043,7 @@ export const App: React.FC = () => {
                 isLoading={isInitialLoading}
                 isScanning={isScanningMarkets}
                 appConfig={appConfig}
+                quote={latestQuote}
                 onToggleNotify={handleToggleNotify}
                 onSelectSignalForChart={handleSelectSignalForChart}
                 onTriggerScan={handleScanMarkets}

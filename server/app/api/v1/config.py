@@ -24,6 +24,7 @@ class AppConfigResponse(BaseModel):
     quote_cache_ttl_seconds: int
     quote_idle_cache_ttl_seconds: int
     quote_presence_ttl_seconds: int
+    quote_stale_after_seconds: int
     active_symbols: List[str]
 
 
@@ -45,5 +46,6 @@ def get_system_config():
         quote_cache_ttl_seconds=settings.QUOTE_CACHE_TTL_SECONDS,
         quote_idle_cache_ttl_seconds=settings.QUOTE_IDLE_CACHE_TTL_SECONDS,
         quote_presence_ttl_seconds=settings.QUOTE_PRESENCE_TTL_SECONDS,
+        quote_stale_after_seconds=settings.QUOTE_STALE_AFTER_SECONDS,
         active_symbols=list(ACTIVE_SYMBOLS),
     )

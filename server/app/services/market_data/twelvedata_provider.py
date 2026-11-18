@@ -372,8 +372,9 @@ class TwelveDataProvider(BaseMarketDataProvider):
             if raw_ts and isinstance(raw_ts, (int, float)) and raw_ts > 0:
                 quote_ts = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
 
+            # quote_ts is the provider's minute-rounded label. It is NOT a staleness
+            # signal: the API layer derives is_stale from last_price_change_at.
             age_sec = max(0.0, (now_utc - quote_ts).total_seconds())
-            is_stale = age_sec > settings.QUOTE_MAX_AGE_SECONDS
 
             return QuoteResponse(
                 symbol=canonical,
@@ -384,11 +385,13 @@ class TwelveDataProvider(BaseMarketDataProvider):
                 low=float(data["low"]) if data.get("low") else None,
                 volume=float(data["volume"]) if data.get("volume") else None,
                 timestamp=quote_ts,
+                provider_timestamp=quote_ts,
+                fetched_at=now_utc,
                 source="twelvedata",
                 provider="twelvedata",
                 provider_symbol="XAU/USD",
                 age_seconds=round(age_sec, 2),
-                is_stale=is_stale,
+                is_stale=False,
                 degraded=False,
                 fallback_reason=None,
                 cached=False,

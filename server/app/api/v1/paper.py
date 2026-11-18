@@ -2,11 +2,14 @@
 
 from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, desc
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.config import settings
 from app.api.deps import get_paper_trading_service
+from app.models.candle import Candle
+from app.services.signals.risk_manager import RiskManager
 from app.schemas.paper_trading import (
     AccountDepositRequest,
     AccountResetRequest,
@@ -119,6 +122,54 @@ def trade_from_signal(
         raise HTTPException(status_code=500, detail=f"Signal trade execution failed: {str(e)}")
 
 
+def _mark_positions_with_quote(db: Session, positions: List[PaperTradeResponse]) -> List[PaperTradeResponse]:
+    """Mark open positions from the shared quote cache, falling back to the last
+    closed candle only when the cached quote is unavailable or STALE."""
+    if not positions:
+        return positions
+
+    from app.api.v1.market import get_cached_quote
+
+    open_statuses = {"OPEN", "PARTIALLY_CLOSED"}
+    quote = get_cached_quote("XAU/USD")
+    quote_usable = bool(quote and quote.price > 0 and not quote.is_stale)
+
+    candle_close: Optional[float] = None
+    if not quote_usable:
+        last_candle = db.scalars(
+            select(Candle)
+            .where(Candle.symbol == "XAU/USD")
+            .order_by(desc(Candle.timestamp))
+            .limit(1)
+        ).first()
+        if last_candle is not None and float(last_candle.close) > 0:
+            candle_close = float(last_candle.close)
+
+    for pos in positions:
+        pos.price_source = pos.price_source or "stored"
+        if pos.symbol != "XAU/USD" or pos.status not in open_statuses:
+            continue
+
+        if quote_usable:
+            price = float(quote.price)
+            pos.price_source = "quote"
+        elif candle_close is not None:
+            price = candle_close
+            pos.price_source = "candle"
+        else:
+            continue
+
+        pos.current_price = price
+        pip_size = RiskManager.get_pip_size(pos.symbol)
+        pip_value = RiskManager.get_pip_value_per_lot(pos.symbol)
+        if pip_size > 0:
+            direction = getattr(pos.direction, "value", pos.direction)
+            pips = (price - pos.entry_price) / pip_size if direction == "BUY" else (pos.entry_price - price) / pip_size
+            pos.pnl_pips = round(pips, 1)
+            pos.unrealized_pnl = round(pips * pip_value * pos.remaining_position_size, 2)
+    return positions
+
+
 @router.get("/positions", response_model=List[PaperTradeResponse])
 def get_open_positions(
     symbol: Optional[str] = Query(None, description="Filter by symbol"),
@@ -129,7 +180,8 @@ def get_open_positions(
 ):
     """Query currently open and pending paper trading positions."""
     norm_sym = _normalize_symbol(symbol) if symbol else None
-    return service.get_positions(db=db, account_id=account_id, symbol=norm_sym, status=status)
+    positions = service.get_positions(db=db, account_id=account_id, symbol=norm_sym, status=status)
+    return _mark_positions_with_quote(db, positions)
 
 
 @router.get("/trades", response_model=List[PaperTradeResponse])

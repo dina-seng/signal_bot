@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { TradeSignal, PairSymbol } from '../types';
 import { ConfluenceCard } from './ConfluenceCard';
-import { AppConfig } from '../services/api';
+import { AppConfig, BackendQuote } from '../services/api';
 
 interface SignalMatrixProps {
   signals: TradeSignal[];
@@ -20,6 +20,7 @@ interface SignalMatrixProps {
   onTriggerScan?: () => void;
   onTradeFromSignal?: (signal: TradeSignal) => void;
   appConfig?: AppConfig | null;
+  quote?: BackendQuote | null;
 }
 
 type TickDirection = 'up' | 'down' | null;
@@ -34,7 +35,19 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
   onTriggerScan,
   onTradeFromSignal,
   appConfig,
+  quote,
 }) => {
+  // Honest provenance: provider labels are minute-rounded, so "updated" means the
+  // last time we actually fetched, not the provider minute label.
+  const quoteAgeSeconds = quote
+    ? Math.max(0, Math.round((Date.now() - new Date(quote.fetched_at || quote.timestamp).getTime()) / 1000))
+    : null;
+  const providerLabel = quote?.provider === 'twelvedata'
+    ? 'Twelve Data'
+    : quote?.provider === 'mock'
+      ? 'Mock'
+      : (quote?.provider || 'provider');
+  const staleAfterSeconds = appConfig?.quote_stale_after_seconds ?? 180;
   // Tick directions for green/red flash effect on real price changes
   const [tickDirections, setTickDirections] = useState<Record<string, TickDirection>>({});
   const prevPricesRef = useRef<Record<string, number>>({});
@@ -109,11 +122,18 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
             </h2>
           </div>
 
-          {/* Real-time Ticking Indicator */}
-          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)] shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            REAL-TIME QUOTE &bull; 10s
-          </span>
+          {/* Honest quote provenance / staleness badge */}
+          {quote?.is_stale ? (
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center gap-1.5 shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              STALE &bull; no price change &gt;{staleAfterSeconds}s
+            </span>
+          ) : (
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)] shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              1-min aggregated &middot; {providerLabel} &middot; updated {quoteAgeSeconds != null ? `${quoteAgeSeconds}s` : '--'} ago
+            </span>
+          )}
 
           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-white/5 text-zinc-400 border border-white/10 hidden md:flex items-center gap-1.5 shrink-0">
             Single-Asset Focus &bull; XAU/USD

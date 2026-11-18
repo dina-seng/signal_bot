@@ -118,6 +118,8 @@ class Settings(BaseSettings):
     QUOTE_IDLE_CACHE_TTL_SECONDS: int = 300
     # A dashboard heartbeat younger than this counts as an active viewer.
     QUOTE_PRESENCE_TTL_SECONDS: int = 60
+    # STALE when the price itself has not changed for this long during market hours.
+    QUOTE_STALE_AFTER_SECONDS: int = 180
     QUOTE_MAX_DEVIATION_PCT: float = 0.05
     YAHOO_GOLD_SYMBOL: str = "XAUUSD=X"
     TWELVE_DATA_API_KEY: Optional[str] = Field(

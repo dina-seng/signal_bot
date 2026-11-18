@@ -56,6 +56,12 @@ class QuoteResponse(BaseModel):
     low: Optional[float] = None
     volume: Optional[float] = None
     timestamp: datetime
+    # provider_timestamp is the provider's own (minute-rounded) label, fetched_at is
+    # when we called the provider, last_price_change_at is the last observed price
+    # change. Staleness is derived from last_price_change_at, never from the label.
+    provider_timestamp: Optional[datetime] = None
+    fetched_at: Optional[datetime] = None
+    last_price_change_at: Optional[datetime] = None
     source: str = "realtime"
     provider: str = "twelvedata"
     provider_symbol: str = ""

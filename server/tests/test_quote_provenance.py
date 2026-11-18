@@ -15,7 +15,7 @@ from app.services.market_data.twelvedata_provider import (
     TwelveDataRateLimitError,
     TokenBucketRateLimiter,
 )
-from app.api.v1.market import _quote_cache, _resolve_quote
+from app.api.v1.market import _apply_freshness, _quote_cache, _resolve_quote
 from app.main import app
 
 
@@ -104,7 +104,7 @@ async def test_total_failure_returns_503_never_fake_price():
 
 @pytest.mark.asyncio
 async def test_cache_keyed_by_provider_and_symbol_with_cache_status():
-    """Verify 3s cache is keyed by (provider, canonical_symbol) and reports cached=True with cache_age_ms."""
+    """Verify the cache is keyed by (provider, canonical_symbol) and reports cached=True with cache_age_ms."""
     _quote_cache.clear()
     mock_prov = MockMarketDataProvider()
 
@@ -119,29 +119,29 @@ async def test_cache_keyed_by_provider_and_symbol_with_cache_status():
     assert quote2.cache_age_ms >= 0
 
 
-@pytest.mark.asyncio
-async def test_staleness_flagged_if_age_exceeds_threshold():
-    """Verify quote is marked is_stale=True and degraded=True if timestamp is older than QUOTE_MAX_AGE_SECONDS."""
-    _quote_cache.clear()
-    stale_time = datetime.now(timezone.utc) - timedelta(seconds=settings.QUOTE_MAX_AGE_SECONDS + 10)
-    stale_quote = QuoteResponse(
+def test_staleness_derived_from_price_change_not_minute_label(monkeypatch):
+    """Staleness comes from last_price_change_at, never the minute-rounded provider label."""
+    now = datetime.now(timezone.utc)
+    quote = QuoteResponse(
         symbol="XAU/USD",
         price=2650.00,
-        timestamp=stale_time,
-        provider="yahoo",
-        provider_symbol="GC=F",
-        age_seconds=130.0,
+        timestamp=now - timedelta(minutes=30),  # old provider label: irrelevant
+        provider_timestamp=now - timedelta(minutes=30),
+        fetched_at=now,
+        last_price_change_at=now - timedelta(seconds=settings.QUOTE_STALE_AFTER_SECONDS + 10),
+        provider="twelvedata",
+        provider_symbol="XAU/USD",
+        age_seconds=0.0,
         is_stale=False,
         degraded=False,
     )
 
-    mock_prov = AsyncMock()
-    mock_prov.fetch_quote.return_value = stale_quote
+    monkeypatch.setattr("app.api.v1.market.is_market_open", lambda ts: True)
+    resolved = _apply_freshness(quote, now)
 
-    resolved = await _resolve_quote("XAU/USD", mock_prov)
     assert resolved.is_stale is True
     assert resolved.degraded is True
-    assert "Quote is stale" in (resolved.fallback_reason or "")
+    assert "no price change" in (resolved.fallback_reason or "").lower()
 
 
 def test_mock_provider_rejected_in_live_mode():

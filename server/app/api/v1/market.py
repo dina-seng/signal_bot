@@ -14,6 +14,7 @@ from app.models.candle import Candle
 from app.schemas.candle import CandleResponse, IngestionReport
 from app.schemas.market import MarketSymbolInfo, IngestionRequest, QuoteResponse
 from app.services.market_data.base import BaseMarketDataProvider
+from app.services.market_data.calendar import is_market_open
 from app.services.market_data.ingestion import IngestionService
 
 from app.services.market_data.symbols import (
@@ -68,6 +69,63 @@ def _effective_cache_ttl(now: Optional[float] = None) -> float:
     return float(settings.QUOTE_IDLE_CACHE_TTL_SECONDS)
 
 
+def _apply_freshness(quote: QuoteResponse, now_utc: datetime) -> QuoteResponse:
+    """Populate provenance timestamps and derive staleness from price changes.
+
+    The provider label is minute-rounded and resets every minute, so it must never
+    drive is_stale. Only a genuine absence of price movement (last_price_change_at)
+    during market hours makes a quote STALE.
+    """
+    if quote.provider_timestamp is None:
+        quote.provider_timestamp = quote.timestamp
+    if quote.fetched_at is None:
+        quote.fetched_at = quote.timestamp or now_utc
+    if quote.last_price_change_at is None:
+        quote.last_price_change_at = quote.fetched_at
+
+    quote.age_seconds = round(max(0.0, (now_utc - quote.fetched_at).total_seconds()), 2)
+
+    seconds_without_change = max(0.0, (now_utc - quote.last_price_change_at).total_seconds())
+    # Only meaningful while the market is open; a closed market legitimately prints
+    # no changes overnight/weekends.
+    if is_market_open(now_utc) and seconds_without_change > settings.QUOTE_STALE_AFTER_SECONDS:
+        quote.is_stale = True
+        quote.degraded = True
+        stale_msg = (
+            f"Stale: no price change for >{settings.QUOTE_STALE_AFTER_SECONDS}s during market hours"
+        )
+        if stale_msg not in (quote.fallback_reason or ""):
+            quote.fallback_reason = (
+                f"{quote.fallback_reason}; {stale_msg}" if quote.fallback_reason else stale_msg
+            )
+    return quote
+
+
+def get_cached_quote(symbol: str) -> Optional[QuoteResponse]:
+    """Return the freshest cached quote for a symbol without calling the provider.
+
+    Used by the paper-trading position response so open-position marks come from the
+    same cache the dashboard polls. Returns a snapshot with freshness applied; the
+    caller decides whether a STALE quote is usable.
+    """
+    try:
+        canonical = normalize_symbol(symbol)
+    except UnknownSymbolError:
+        return None
+
+    best: Optional[Tuple[float, QuoteResponse]] = None
+    for (_provider_name, cached_symbol), entry in list(_quote_cache.items()):
+        if cached_symbol == canonical and (best is None or entry[0] > best[0]):
+            best = entry
+    if best is None:
+        return None
+
+    snapshot = best[1].model_copy()
+    snapshot.cached = True
+    snapshot.cache_age_ms = round((time.time() - best[0]) * 1000, 1)
+    return _apply_freshness(snapshot, datetime.now(timezone.utc))
+
+
 async def _resolve_quote(
     symbol: str,
     provider: BaseMarketDataProvider,
@@ -94,7 +152,7 @@ async def _resolve_quote(
         cached_quote = cached[1].model_copy()
         cached_quote.cached = True
         cached_quote.cache_age_ms = cache_age_ms
-        return cached_quote
+        return _apply_freshness(cached_quote, now_utc)
 
     # 2. Fetch fresh quote from provider
     try:
@@ -111,16 +169,25 @@ async def _resolve_quote(
             detail=f"Real-time market quote currently unavailable for {canonical_symbol}",
         )
 
-    # 3. Staleness check
-    quote_age_sec = max(0.0, (now_utc - quote.timestamp).total_seconds()) if quote.timestamp else 0.0
-    quote.age_seconds = round(quote_age_sec, 2)
-    if quote_age_sec > settings.QUOTE_MAX_AGE_SECONDS:
-        quote.is_stale = True
-        quote.degraded = True
-        stale_msg = f"Quote is stale ({quote_age_sec:.0f}s > {settings.QUOTE_MAX_AGE_SECONDS}s)"
-        quote.fallback_reason = (
-            f"{quote.fallback_reason}; {stale_msg}" if quote.fallback_reason else stale_msg
-        )
+    # 3. Provenance + price-change freshness. The provider's minute label is stored
+    #    separately; is_stale is derived from last_price_change_at, never the label.
+    previous_quote = cached[1] if cached else None
+    quote.fetched_at = now_utc
+    quote.provider_timestamp = quote.timestamp
+    quote.is_stale = False
+    if previous_quote is not None:
+        price_changed = abs(float(previous_quote.price) - float(quote.price)) > 1e-9
+        if price_changed:
+            quote.last_price_change_at = now_utc
+        else:
+            quote.last_price_change_at = (
+                previous_quote.last_price_change_at
+                or previous_quote.fetched_at
+                or now_utc
+            )
+    else:
+        quote.last_price_change_at = now_utc
+    _apply_freshness(quote, now_utc)
 
     # 4. Relative deviation sanity cross-check against last closed candle
     if db is not None:
