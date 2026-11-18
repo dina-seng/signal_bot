@@ -1,12 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    background-color: #0a0b10;
-    color: #e2e8f0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #030014;
+    color: #f1f5f9;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -16,22 +18,73 @@
     font-family: 'JetBrains Mono', monospace;
     font-feature-settings: "tnum" 1, "zero" 1;
   }
+
+  /* Geist Sans utility for clean SaaS typography */
+  .font-sans {
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
 }
 
-/* Institutional Terminal custom scrollbars */
+/* Institutional Terminal & Modern SaaS custom scrollbars */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: #0a0b10;
+  background: #030014;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1d2230;
-  border-radius: 2px;
+  background: #1e1b4b;
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #282f42;
+  background: #312e81;
+}
+
+/* ZaqriraAI Atmospheric Orb Floating Keyframes */
+@keyframes orb-float-1 {
+  0%, 100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(60px, -45px) scale(1.08);
+  }
+  66% {
+    transform: translate(-35px, 50px) scale(0.95);
+  }
+}
+
+@keyframes orb-float-2 {
+  0%, 100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(-50px, 40px) scale(0.92);
+  }
+  66% {
+    transform: translate(45px, -35px) scale(1.06);
+  }
+}
+
+@keyframes orb-float-3 {
+  0%, 100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  50% {
+    transform: translate(40px, -55px) scale(1.12);
+  }
+}
+
+.animate-orb-purple {
+  animation: orb-float-1 24s ease-in-out infinite alternate;
+}
+
+.animate-orb-cyan {
+  animation: orb-float-2 28s ease-in-out infinite alternate;
+}
+
+.animate-orb-violet {
+  animation: orb-float-3 22s ease-in-out infinite alternate;
 }
 
 /* Subtle data pulse animation without aggressive blinking */
@@ -46,19 +99,19 @@
 
 /* Terminal card styling */
 .terminal-card {
-  background-color: #111319;
-  border: 1px solid #1d2230;
-  border-radius: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
 }
 
 .terminal-card-interactive {
-  background-color: #111319;
-  border: 1px solid #1d2230;
-  border-radius: 0.5rem;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .terminal-card-interactive:hover {
-  border-color: #282f42;
-  background-color: #131620;
+  border-color: rgba(255, 255, 255, 0.16);
+  background-color: rgba(255, 255, 255, 0.06);
 }

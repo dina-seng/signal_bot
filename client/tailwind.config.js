@@ -24,7 +24,7 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        sans: ['Geist', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'monospace'],
       },
       backgroundImage: {

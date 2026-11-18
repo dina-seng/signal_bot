@@ -8,6 +8,7 @@ import { NotificationSettings } from './components/NotificationSettings';
 import { NewsRiskMonitor } from './components/NewsRiskMonitor';
 import { TradingChart } from './components/TradingChart';
 import { SystemTelemetry } from './components/SystemTelemetry';
+import { GlassCard } from './components/ui/GlassCard';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import {
   NavigationTab,
@@ -799,27 +800,27 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="relative min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-white overflow-x-hidden">
-      {/* Dynamic Animated Abstract Mesh Gradient Layer */}
+    <div className="relative min-h-screen bg-[#030014] text-slate-100 flex flex-col font-sans selection:bg-violet-500/30 selection:text-white overflow-x-hidden">
+      {/* ZaqriraAI Global Atmosphere Background: 3 Large, Fixed, Heavily Blurred Floating Orbs */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0" aria-hidden="true">
-        {/* Deep base darkness */}
-        <div className="absolute inset-0 bg-zinc-950" />
+        {/* Deep Void Base Layer */}
+        <div className="absolute inset-0 bg-[#030014]" />
 
-        {/* Mesh Orb 1: Emerald Drift (Slow floating top-left) */}
-        <div className="absolute -top-[15%] -left-[10%] w-[55vw] h-[55vw] max-w-[850px] max-h-[850px] rounded-full bg-emerald-500/10 blur-[130px] animate-mesh-1 transform-gpu" />
+        {/* Orb 1: Neon Purple Float (Top-Left) */}
+        <div className="absolute -top-[12%] -left-[8%] w-[55vw] h-[55vw] max-w-[800px] max-h-[800px] rounded-full bg-purple-600/20 blur-[140px] animate-orb-purple transform-gpu" />
 
-        {/* Mesh Orb 2: Deep Violet Drift (Slow floating bottom-right) */}
-        <div className="absolute -bottom-[20%] -right-[10%] w-[60vw] h-[60vw] max-w-[900px] max-h-[900px] rounded-full bg-violet-600/12 blur-[140px] animate-mesh-2 transform-gpu" />
+        {/* Orb 2: Electric Cyan Float (Center-Right) */}
+        <div className="absolute top-[28%] -right-[8%] w-[50vw] h-[50vw] max-w-[750px] max-h-[750px] rounded-full bg-cyan-500/15 blur-[140px] animate-orb-cyan transform-gpu" />
 
-        {/* Mesh Orb 3: Subtle Sky/Cyan Accent Breathing (Center-right floating) */}
-        <div className="absolute top-[30%] left-[25%] w-[45vw] h-[45vw] max-w-[650px] max-h-[650px] rounded-full bg-sky-500/6 blur-[110px] animate-mesh-3 transform-gpu" />
+        {/* Orb 3: Deep Violet Float (Bottom-Left / Center) */}
+        <div className="absolute -bottom-[15%] left-[20%] w-[58vw] h-[58vw] max-w-[850px] max-h-[850px] rounded-full bg-violet-700/20 blur-[150px] animate-orb-violet transform-gpu" />
 
-        {/* Fintech Grid Overlay with Radial Spotlight Mask */}
+        {/* Subtle Modern Grid Overlay with Radial Spotlight Mask */}
         <div
-          className="absolute inset-0 bg-fintech-grid bg-[size:36px_36px] opacity-70"
+          className="absolute inset-0 bg-fintech-grid bg-[size:40px_40px] opacity-40"
           style={{
-            maskImage: 'radial-gradient(ellipse 70% 55% at 50% 35%, black 25%, transparent 85%)',
-            WebkitMaskImage: 'radial-gradient(ellipse 70% 55% at 50% 35%, black 25%, transparent 85%)',
+            maskImage: 'radial-gradient(ellipse 75% 60% at 50% 35%, black 20%, transparent 85%)',
+            WebkitMaskImage: 'radial-gradient(ellipse 75% 60% at 50% 35%, black 20%, transparent 85%)',
           }}
         />
       </div>
@@ -876,7 +877,7 @@ export const App: React.FC = () => {
         )}
 
         {/* Workspace Context Bar */}
-        <div className="px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 text-xs font-mono bg-zinc-950/60 backdrop-blur-md min-w-0">
+        <div className="px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 text-xs font-sans bg-[#030014]/60 backdrop-blur-xl min-w-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-zinc-500 uppercase text-[10px] tracking-wider shrink-0">Workspace:</span>
             <span className="font-semibold text-zinc-200 uppercase text-xs truncate">
@@ -982,43 +983,33 @@ export const App: React.FC = () => {
         )}
 
         {/* Main Content Body - Responsive Padding & Overflow Boundary */}
-        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 space-y-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-hidden">
-          {/* 1. UNIFIED DASHBOARD TAB */}
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-hidden relative z-10">
+          {/* 1. UNIFIED DASHBOARD TAB - BENTO GRID LAYOUT */}
           {currentTab === 'dashboard' && (
-            <>
+            <div className="grid grid-cols-12 gap-4 w-full">
+              {/* Telemetry HUD Widget */}
+              <GlassCard className="col-span-12" glowColor="purple">
+                <SystemTelemetry
+                  account={account}
+                  quote={latestQuote}
+                  scannerStatus={scannerStatus}
+                  riskStatus={riskStatus}
+                  isApiConnected={isApiConnected}
+                />
+              </GlassCard>
+
               {/* Performance Stats & Equity Curve derived from real trades */}
-              <PerformanceDashboard
-                stats={stats}
-                account={account}
-                closedTrades={closedTrades}
-                appConfig={appConfig}
-              />
+              <GlassCard className="col-span-12">
+                <PerformanceDashboard
+                  stats={stats}
+                  account={account}
+                  closedTrades={closedTrades}
+                  appConfig={appConfig}
+                />
+              </GlassCard>
 
-              {/* Signal Matrix (Single Card: XAU/USD) */}
-              <SignalMatrix
-                signals={signals}
-                livePrices={livePrices}
-                isLoading={isInitialLoading}
-                isScanning={isScanningMarkets}
-                appConfig={appConfig}
-                quote={latestQuote}
-                onToggleNotify={handleToggleNotify}
-                onSelectSignalForChart={handleSelectSignalForChart}
-                onTriggerScan={handleScanMarkets}
-                onTradeFromSignal={handleTradeFromSignal}
-              />
-
-              {/* Institutional Telemetry HUD Widget */}
-              <SystemTelemetry
-                account={account}
-                quote={latestQuote}
-                scannerStatus={scannerStatus}
-                riskStatus={riskStatus}
-                isApiConnected={isApiConnected}
-              />
-
-              {/* Candlestick Chart Area */}
-              <div id="chart-section">
+              {/* Candlestick Chart Area (Hero 8-col) */}
+              <GlassCard id="chart-section" className="col-span-12 lg:col-span-8" glowColor="cyan">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
@@ -1026,58 +1017,82 @@ export const App: React.FC = () => {
                   signals={signals}
                   activeSignal={signals.find((s) => s.symbol === selectedChartSymbol && s.hasActiveSignal)}
                 />
-              </div>
+              </GlassCard>
 
-              {/* Active Positions & Closed Trades Table (Live P&L with 3s refresh) */}
-              <ActivePositionsTable
-                positions={positions}
-                closedTrades={closedTrades}
-                isLoading={isInitialLoading}
-                onClosePosition={handleClosePosition}
-              />
+              {/* Signal Matrix (Single Card: XAU/USD) (4-col) */}
+              <GlassCard className="col-span-12 lg:col-span-4" glowColor="green">
+                <SignalMatrix
+                  signals={signals}
+                  livePrices={livePrices}
+                  isLoading={isInitialLoading}
+                  isScanning={isScanningMarkets}
+                  appConfig={appConfig}
+                  quote={latestQuote}
+                  onToggleNotify={handleToggleNotify}
+                  onSelectSignalForChart={handleSelectSignalForChart}
+                  onTriggerScan={handleScanMarkets}
+                  onTradeFromSignal={handleTradeFromSignal}
+                />
+              </GlassCard>
 
-              {/* News & Risk Status (Live Economic Calendar & Blackout Filter) */}
-              <NewsRiskMonitor
-                news={news}
-                riskStatus={riskStatus}
-                isLoading={isInitialLoading}
-                isSyncingCalendar={isSyncingCalendar}
-                onToggleBlackout={handleToggleBlackout}
-                onSyncCalendar={handleSyncNews}
-              />
+              {/* Active Positions & Closed Trades Table (Live P&L with 3s refresh) (8-col) */}
+              <GlassCard className="col-span-12 lg:col-span-8">
+                <ActivePositionsTable
+                  positions={positions}
+                  closedTrades={closedTrades}
+                  isLoading={isInitialLoading}
+                  onClosePosition={handleClosePosition}
+                />
+              </GlassCard>
 
-              {/* Notification & Background Scanner Settings Panel */}
-              <NotificationSettings
-                config={alertConfig}
-                appConfig={appConfig}
-                onUpdateConfig={setAlertConfig}
-                onSendTestNotification={handleSendTestNotification}
-                isSendingTest={isSendingTestTelegram}
-                testNotificationResult={testNotificationResult}
-                telegramStatus={telegramStatus}
-                scannerStatus={scannerStatus}
-                onTriggerScanner={handleTriggerScannerCycle}
-                isTriggeringScanner={isTriggeringScanner}
-              />
-            </>
+              {/* News & Risk Status (Live Economic Calendar & Blackout Filter) (4-col) */}
+              <GlassCard className="col-span-12 lg:col-span-4">
+                <NewsRiskMonitor
+                  news={news}
+                  riskStatus={riskStatus}
+                  isLoading={isInitialLoading}
+                  isSyncingCalendar={isSyncingCalendar}
+                  onToggleBlackout={handleToggleBlackout}
+                  onSyncCalendar={handleSyncNews}
+                />
+              </GlassCard>
+
+              {/* Notification & Background Scanner Settings Panel (Full width 12-col) */}
+              <GlassCard className="col-span-12">
+                <NotificationSettings
+                  config={alertConfig}
+                  appConfig={appConfig}
+                  onUpdateConfig={setAlertConfig}
+                  onSendTestNotification={handleSendTestNotification}
+                  isSendingTest={isSendingTestTelegram}
+                  testNotificationResult={testNotificationResult}
+                  telegramStatus={telegramStatus}
+                  scannerStatus={scannerStatus}
+                  onTriggerScanner={handleTriggerScannerCycle}
+                  isTriggeringScanner={isTriggeringScanner}
+                />
+              </GlassCard>
+            </div>
           )}
 
           {/* 2. DEDICATED SIGNALS TAB */}
           {currentTab === 'signals' && (
-            <div className="space-y-6">
-              <SignalMatrix
-                signals={signals}
-                livePrices={livePrices}
-                isLoading={isInitialLoading}
-                isScanning={isScanningMarkets}
-                appConfig={appConfig}
-                quote={latestQuote}
-                onToggleNotify={handleToggleNotify}
-                onSelectSignalForChart={handleSelectSignalForChart}
-                onTriggerScan={handleScanMarkets}
-                onTradeFromSignal={handleTradeFromSignal}
-              />
-              <div id="chart-section">
+            <div className="grid grid-cols-12 gap-4 w-full">
+              <GlassCard className="col-span-12 lg:col-span-5" glowColor="green">
+                <SignalMatrix
+                  signals={signals}
+                  livePrices={livePrices}
+                  isLoading={isInitialLoading}
+                  isScanning={isScanningMarkets}
+                  appConfig={appConfig}
+                  quote={latestQuote}
+                  onToggleNotify={handleToggleNotify}
+                  onSelectSignalForChart={handleSelectSignalForChart}
+                  onTriggerScan={handleScanMarkets}
+                  onTradeFromSignal={handleTradeFromSignal}
+                />
+              </GlassCard>
+              <GlassCard id="chart-section" className="col-span-12 lg:col-span-7" glowColor="cyan">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
@@ -1085,20 +1100,22 @@ export const App: React.FC = () => {
                   signals={signals}
                   activeSignal={signals.find((s) => s.symbol === selectedChartSymbol && s.hasActiveSignal)}
                 />
-              </div>
+              </GlassCard>
             </div>
           )}
 
           {/* 3. DEDICATED POSITIONS TAB */}
           {currentTab === 'positions' && (
-            <div className="space-y-6">
-              <ActivePositionsTable
-                positions={positions}
-                closedTrades={closedTrades}
-                isLoading={isInitialLoading}
-                onClosePosition={handleClosePosition}
-              />
-              <div id="chart-section">
+            <div className="grid grid-cols-12 gap-4 w-full">
+              <GlassCard className="col-span-12 lg:col-span-7">
+                <ActivePositionsTable
+                  positions={positions}
+                  closedTrades={closedTrades}
+                  isLoading={isInitialLoading}
+                  onClosePosition={handleClosePosition}
+                />
+              </GlassCard>
+              <GlassCard id="chart-section" className="col-span-12 lg:col-span-5" glowColor="cyan">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
@@ -1106,61 +1123,65 @@ export const App: React.FC = () => {
                   signals={signals}
                   activeSignal={signals.find((s) => s.symbol === selectedChartSymbol && s.hasActiveSignal)}
                 />
-              </div>
+              </GlassCard>
             </div>
           )}
 
           {/* 4. DEDICATED NEWS & RISK TAB */}
           {currentTab === 'news' && (
-            <div className="space-y-6">
-              <NewsRiskMonitor
-                news={news}
-                riskStatus={riskStatus}
-                isLoading={isInitialLoading}
-                isSyncingCalendar={isSyncingCalendar}
-                onToggleBlackout={handleToggleBlackout}
-                onSyncCalendar={handleSyncNews}
-              />
+            <div className="grid grid-cols-12 gap-4 w-full">
+              <GlassCard className="col-span-12">
+                <NewsRiskMonitor
+                  news={news}
+                  riskStatus={riskStatus}
+                  isLoading={isInitialLoading}
+                  isSyncingCalendar={isSyncingCalendar}
+                  onToggleBlackout={handleToggleBlackout}
+                  onSyncCalendar={handleSyncNews}
+                />
+              </GlassCard>
             </div>
           )}
 
           {/* 5. DEDICATED NOTIFICATION SETTINGS TAB */}
           {currentTab === 'settings' && (
-            <div className="space-y-6">
-              <NotificationSettings
-                config={alertConfig}
-                appConfig={appConfig}
-                onUpdateConfig={setAlertConfig}
-                onSendTestNotification={handleSendTestNotification}
-                isSendingTest={isSendingTestTelegram}
-                testNotificationResult={testNotificationResult}
-                telegramStatus={telegramStatus}
-                scannerStatus={scannerStatus}
-                onTriggerScanner={handleTriggerScannerCycle}
-                isTriggeringScanner={isTriggeringScanner}
-              />
+            <div className="grid grid-cols-12 gap-4 w-full">
+              <GlassCard className="col-span-12">
+                <NotificationSettings
+                  config={alertConfig}
+                  appConfig={appConfig}
+                  onUpdateConfig={setAlertConfig}
+                  onSendTestNotification={handleSendTestNotification}
+                  isSendingTest={isSendingTestTelegram}
+                  testNotificationResult={testNotificationResult}
+                  telegramStatus={telegramStatus}
+                  scannerStatus={scannerStatus}
+                  onTriggerScanner={handleTriggerScannerCycle}
+                  isTriggeringScanner={isTriggeringScanner}
+                />
+              </GlassCard>
             </div>
           )}
         </main>
 
         {/* Terminal Footer Bar displaying API response time */}
-        <footer className="mt-auto border-t border-[#1e1e2d] bg-[#0d0d14] px-4 lg:px-6 py-2.5 text-[11px] font-mono text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <footer className="mt-auto border-t border-white/10 bg-[#030014]/80 backdrop-blur-xl px-4 lg:px-6 py-2.5 text-[11px] font-sans text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-slate-400 font-semibold">QUANTVIEW v2.4.0</span>
+            <span className="text-slate-300 font-semibold tracking-wide">QUANTVIEW v2.4.0</span>
             <span>•</span>
-            <span>FastAPI Backend: http://localhost:8000</span>
+            <span className="font-mono text-[10px] text-slate-500">FastAPI: http://localhost:8000</span>
             <span>•</span>
             <span className="text-slate-400">Telegram Bot: @signalTheBEST_bot</span>
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
             {/* API Response Time Display (Required) */}
-            <span className="text-slate-400 font-semibold">
+            <span className="text-slate-300 font-semibold font-mono">
               API: {apiResponseTimeMs}ms
             </span>
             <span>•</span>
             <span
-              className={`flex items-center gap-1 ${
+              className={`flex items-center gap-1 font-mono text-[10px] ${
                 isApiConnected ? 'text-[#00e676]' : 'text-amber-400'
               }`}
             >
@@ -1172,7 +1193,7 @@ export const App: React.FC = () => {
               {isApiConnected ? 'LIVE DATA POLLING (15s/30s/60s)' : 'SIMULATION MODE'}
             </span>
             <span>•</span>
-            <span>All times UTC</span>
+            <span className="font-mono text-[10px]">UTC</span>
           </div>
         </footer>
       </div>

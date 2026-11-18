@@ -83,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
     : 'Simulation Active';
 
   return (
-    <header className="sticky top-0 z-30 w-full bg-zinc-950/80 backdrop-blur-md border-b border-white/10 px-4 sm:px-6 lg:px-8 py-2.5 transition-colors">
+    <header className="sticky top-0 z-30 w-full bg-[#030014]/80 backdrop-blur-xl border-b border-white/10 px-4 sm:px-6 lg:px-8 py-2.5 transition-colors">
       <div className="flex items-center justify-between gap-3 flex-wrap lg:flex-nowrap min-w-0">
         {/* Left: Terminal Branding & Unified System Status Pill */}
         <div className="flex items-center gap-3 shrink-0">
@@ -292,14 +292,14 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onRefresh}
             disabled={isRefreshing}
-            className={`px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 hover:border-white/20 text-xs font-mono font-medium flex items-center gap-1.5 transition-all duration-300 cursor-pointer shrink-0 ${
+            className={`px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center gap-1.5 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer shrink-0 ${
               isRefreshing ? 'opacity-70 cursor-wait' : ''
             }`}
             title="Trigger manual sync across all API endpoints"
             aria-label="Refresh Data"
           >
             <RefreshCw
-              className={`w-3.5 h-3.5 text-cyan-400 ${
+              className={`w-3.5 h-3.5 text-white ${
                 isRefreshing ? 'animate-spin' : ''
               }`}
             />

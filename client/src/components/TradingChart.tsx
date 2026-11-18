@@ -661,7 +661,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     );
 
   return (
-    <div className="relative min-w-0 w-full overflow-hidden rounded-2xl bg-zinc-900/60 backdrop-blur-md border border-white/10 p-3.5 sm:p-5 space-y-3 font-mono shadow-2xl">
+    <div className="relative min-w-0 w-full overflow-hidden p-3.5 sm:p-5 space-y-3 font-sans">
       {/* Chart Top Header & Toolbar */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-2.5 border-b border-[#1d2230]">
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -847,7 +847,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       )}
 
       {/* OHLCV Bar: Real-time Forming Candle Feed */}
-      <div className="flex items-center justify-between gap-3 text-[11px] px-2.5 py-1.5 rounded bg-[#0a0b10] border border-[#1d2230] overflow-x-auto">
+      <div className="flex items-center justify-between gap-3 text-[11px] px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 overflow-x-auto font-mono">
         <div className="flex items-center gap-3.5 text-slate-400">
           <span>
             O: <strong className="text-slate-200">{displayCandle ? formatPrice(selectedSymbol, displayCandle.open) : '--'}</strong>

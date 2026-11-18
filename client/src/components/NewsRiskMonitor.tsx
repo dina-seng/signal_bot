@@ -135,13 +135,13 @@ export const NewsRiskMonitor: React.FC<NewsRiskMonitorProps> = ({
               <button
                 onClick={onSyncCalendar}
                 disabled={isSyncingCalendar}
-                className={`px-2 py-0.5 rounded bg-[#161922] hover:bg-[#1d212d] text-slate-300 hover:text-white border border-[#1d2230] text-xs flex items-center gap-1 transition-colors cursor-pointer ${
+                className={`px-3 py-1 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center gap-1.5 border border-violet-400/30 shadow-[0_0_15px_rgba(124,58,237,0.35)] hover:shadow-[0_0_20px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer ${
                   isSyncingCalendar ? 'opacity-70 cursor-wait' : ''
                 }`}
                 title="Sync calendar from ForexFactory provider"
               >
-                <RefreshCw className={`w-3 h-3 text-cyan-400 ${isSyncingCalendar ? 'animate-spin' : ''}`} />
-                <span>{isSyncingCalendar ? 'Syncing...' : 'Sync'}</span>
+                <RefreshCw className={`w-3.5 h-3.5 text-white ${isSyncingCalendar ? 'animate-spin' : ''}`} />
+                <span>{isSyncingCalendar ? 'Syncing...' : 'Sync Calendar'}</span>
               </button>
             )}
           </div>

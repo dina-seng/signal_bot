@@ -388,20 +388,20 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
             <button
               onClick={onTriggerScanner}
               disabled={isTriggeringScanner}
-              className={`px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border ${
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold font-sans flex items-center gap-2 transition-all duration-300 cursor-pointer border ${
                 isTriggeringScanner
-                  ? 'bg-[#161922] text-slate-500 cursor-not-allowed border-[#1d2230]'
-                  : 'bg-[#161922] hover:bg-[#1d212d] text-cyan-400 border-cyan-500/30'
+                  ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border-white/10'
+                  : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white border-violet-400/30 shadow-[0_0_15px_rgba(124,58,237,0.35)] hover:shadow-[0_0_20px_rgba(124,58,237,0.55)]'
               }`}
             >
               {isTriggeringScanner ? (
                 <>
-                  <RefreshCw className="w-3 h-3 animate-spin text-cyan-400" />
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
                   <span>Triggering Cycle...</span>
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-3 h-3 text-cyan-400" />
+                  <Sparkles className="w-3.5 h-3.5 text-white" />
                   <span>Trigger Scanner Now</span>
                 </>
               )}

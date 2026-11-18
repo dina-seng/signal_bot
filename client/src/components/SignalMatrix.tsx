@@ -113,11 +113,11 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
   return (
     <div className="space-y-4 w-full min-w-0 overflow-hidden">
       {/* Sleek Glassmorphic Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 min-w-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-xl bg-white/[0.03] border border-white/10 min-w-0">
         <div className="flex items-center gap-3 flex-wrap min-w-0">
           <div className="flex items-center gap-2 shrink-0">
             <Layers className="w-4 h-4 text-emerald-400" />
-            <h2 className="text-sm font-semibold text-white tracking-wide uppercase font-mono truncate">
+            <h2 className="text-sm font-semibold text-white tracking-wide uppercase font-sans truncate">
               Confluence Matrix
             </h2>
           </div>
@@ -145,12 +145,12 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
             <button
               onClick={onTriggerScan}
               disabled={isScanning}
-              className={`px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 hover:border-white/20 text-xs font-mono font-medium flex items-center gap-2 transition-all duration-300 cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center gap-2 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer ${
                 isScanning ? 'opacity-70 cursor-wait' : ''
               }`}
               title="Run on-demand market scan across XAU/USD via GET /api/v1/signals/scan"
             >
-              <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${isScanning ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 text-white ${isScanning ? 'animate-spin' : ''}`} />
               <span>{isScanning ? 'Scanning...' : 'Scan Markets'}</span>
             </button>
           )}

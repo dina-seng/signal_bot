@@ -118,7 +118,7 @@ export const SystemTelemetry: React.FC<SystemTelemetryProps> = ({
       : 'text-[#ff3366] bg-transparent';
 
   return (
-    <div className="relative w-full rounded-2xl bg-zinc-900/60 backdrop-blur-md border border-white/10 p-3.5 sm:p-4 font-mono shadow-2xl space-y-3 overflow-hidden">
+    <div className="relative w-full p-3.5 sm:p-4 space-y-3 overflow-hidden">
       {/* Background Micro Accent Lines */}
       <div className="absolute top-0 right-0 w-96 h-full bg-gradient-to-l from-emerald-500/5 via-cyan-500/5 to-transparent pointer-events-none" />
 
