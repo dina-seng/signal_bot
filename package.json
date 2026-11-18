@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "concurrently -n backend,frontend -c blue,green \"npm run backend\" \"npm run frontend\"",
-    "backend": "cd server && uvicorn app.main:app --reload --port 8000",
+    "backend": "cd server && python -m uvicorn app.main:app --reload --port 8000",
     "frontend": "cd client && npm run dev"
   },
   "repository": {
