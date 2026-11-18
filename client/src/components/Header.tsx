@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import logoImg from '../../assets/logo.png';
 import {
   RefreshCw,
   Menu,
@@ -102,6 +103,9 @@ export const Header: React.FC<HeaderProps> = ({
             title="Return to QuantView Home"
             className="group flex items-center gap-2 hover:opacity-90 transition-opacity"
           >
+            <div className="w-5 h-5 rounded overflow-hidden flex items-center justify-center transition-all duration-300 drop-shadow-[0_0_6px_rgba(168,85,247,0.35)] group-hover:drop-shadow-[0_0_12px_rgba(168,85,247,0.8)]">
+              <img src={logoImg} alt="QuantView" className="w-full h-full object-contain" />
+            </div>
             <span className="text-xs font-mono font-bold tracking-widest text-white uppercase group-hover:text-purple-300 transition-colors">
               QUANT<span className="text-emerald-400">VIEW</span>
             </span>
