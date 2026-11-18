@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.core.database import init_db
 from app.api.v1.router import api_v1_router 
-from datetime import datetime 
+from datetime import datetime, timezone 
 
 
 from app.services.telegram.scheduler import (
@@ -71,7 +71,7 @@ app.include_router(api_v1_router, prefix="/api")
 @app.get("/ping", tags=["health"])
 def ping():
     """Ultra-lightweight keepalive endpoint for Render free tier."""
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 
