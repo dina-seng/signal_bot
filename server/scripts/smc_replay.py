@@ -135,6 +135,7 @@ class SmcRecord:
     cf_candidate: bool = False
     counterfactual_trade: Optional[Dict[str, Any]] = None
     cf_error: str = ""
+    ema_trend: str = ""
 
 
 @dataclass
@@ -334,6 +335,7 @@ def replay_chunk(
     warmup_bars: int,
     bounds: Tuple[datetime, datetime],
     month: str,
+    regime_filter: bool = False,
 ) -> Tuple[List[SmcRecord], SmcStats]:
     """Evaluate only ``indices`` but with the full precomputed series as lookback."""
     smc = SMCStrategy()
@@ -415,6 +417,23 @@ def replay_chunk(
 
         accepted = gate == CONFIRMED_STATE
         opp_key = _opportunity_key(symbol, PRIMARY_TIMEFRAME, direction, primary)
+        detail = ""
+
+        ema_snapshot = getattr(indicators, "ema", None)
+        ema_trend = getattr(ema_snapshot, "ema_trend", "NEUTRAL") if ema_snapshot else "NEUTRAL"
+
+        if regime_filter and accepted:
+            if direction == "BUY":
+                regime_ok = (ema_trend == "BULLISH_STACK")
+            elif direction == "SELL":
+                regime_ok = (ema_trend == "BEARISH_STACK")
+            else:
+                regime_ok = False
+
+            if not regime_ok:
+                accepted = False
+                gate = "REGIME_FILTER_REJECT"
+                detail = f"REGIME_FILTER_REJECT: {direction} requires {'BULLISH_STACK' if direction == 'BUY' else 'BEARISH_STACK'} but got {ema_trend}"
 
         atr_obj = getattr(indicators, "atr", None)
         atr = float(getattr(atr_obj, "atr_value", 0.0) or 0.0)
@@ -423,8 +442,7 @@ def replay_chunk(
         key_support = getattr(base, "key_support", None)
         key_resistance = getattr(base, "key_resistance", None)
 
-        detail = ""
-        if gate != CONFIRMED_STATE:
+        if gate != CONFIRMED_STATE and not detail:
             for reason in result.reasons:
                 text = str(reason)
                 if "LTF" in text or "Floor" in text or "Confluence" in text or "Conflict" in text:
@@ -448,6 +466,7 @@ def replay_chunk(
             struct_liq_score=float(struct_liq),
             is_qualified_pre_ltf=bool(is_qualified_pre_ltf),
             detail=detail,
+            ema_trend=ema_trend,
         )
 
         if accepted:
@@ -804,6 +823,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--warmup-bars", type=int, default=100)
     p.add_argument("--start-date", default=None,
                    help="Optional start date (YYYY-MM-DD); chunks ending before this and bars before this are skipped")
+    p.add_argument("--end-date", default=None,
+                   help="Optional end date (YYYY-MM-DD or ISO timestamp); chunks starting after this and bars after this are skipped")
+    p.add_argument("--calibration-only", action="store_true", default=False,
+                   help="Run replay strictly on the CALIBRATION window (bars before 2025-05-21 08:15 UTC)")
+    p.add_argument("--regime-filter", action="store_true", default=False,
+                   help="Filter out counter-trend setups using 1H EMA stack (BUY requires BULLISH_STACK, SELL requires BEARISH_STACK)")
+    p.add_argument("--baseline-ckpt-dir", default=str(REPO_ROOT / "reports" / "smc_replay_extended" / "checkpoints"),
+                   help="Directory of baseline checkpoints to derive regime-filtered records from when available")
     p.add_argument("--full-range", action="store_true",
                    help="Process the entire DB range in monthly chunks")
     p.add_argument("--checkpoint-dir", default=None,
@@ -820,13 +847,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
+    if args.regime_filter and args.out_dir == str(REPO_ROOT / "reports" / "smc_replay_extended"):
+        args.out_dir = str(REPO_ROOT / "reports" / "smc_replay_regime_filter")
+
     db_path = Path(args.db_path)
     print(f"[*] Loading {args.symbol} 15m candles from {db_path} ...")
     bars, meta = load_full_15m_candles(db_path, args.symbol, args.source)
     print(f"[*] {len(bars):,} open-market 15m bars "
           f"({meta['raw_first']} -> {meta['raw_last']})")
 
-    if not args.full_range:
+    if not args.full_range and not args.calibration_only:
         # Default = 3 monthly chunks, matching the CRT smoke-test ergonomics.
         args.max_chunks = args.max_chunks or 3
 
@@ -837,6 +867,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         f"LTF_UNCONFIRMED_PENALTY={LTF_UNCONFIRMED_PENALTY:.1f}, "
         f"DIRECTIONAL_CONFLICT_PENALTY={DIRECTIONAL_CONFLICT_PENALTY:.1f}"
     )
+    if args.regime_filter:
+        print("[*] Regime Filter: ENABLED (BUY requires 1H BULLISH_STACK, SELL requires 1H BEARISH_STACK)")
+    else:
+        print("[*] Regime Filter: DISABLED (Baseline SMC)")
 
     start_dt = _parse_start_date(args.start_date)
     warmup_bars_count = sum(1 for b in bars if b.timestamp < start_dt) if start_dt else 0
@@ -844,26 +878,90 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"[*] Filter --start-date={args.start_date} UTC (warm-up context: {warmup_bars_count:,} earlier 15m bars)")
 
     bounds = walk_forward_bounds(bars)
+    if args.calibration_only:
+        end_dt = bounds[0]
+        print(f"[*] CALIBRATION-ONLY active: strictly evaluating before {end_dt.isoformat()} UTC (Zero contamination)")
+    elif args.end_date:
+        end_dt = _parse_start_date(args.end_date)
+        print(f"[*] Filter --end-date={args.end_date} UTC")
+    else:
+        end_dt = None
+
     months = month_keys(bars)
     if start_dt:
         months = [(m, s, e) for (m, s, e) in months if e > start_dt]
+    if end_dt:
+        months = [(m, s, e) for (m, s, e) in months if s < end_dt]
+
     ckpt_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else (Path(args.out_dir) / "checkpoints")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    baseline_ckpt_dir = Path(args.baseline_ckpt_dir) if args.baseline_ckpt_dir else None
+
+    # Precompute 1H EMA snapshot series for fast derivation if reusing baseline checkpoints
+    from app.services.indicators.ema_calculator import EMACalculator
+    ema_calc = EMACalculator()
+    ema_trends_1h = []
+    for i in range(len(c1h)):
+        window = c1h[max(0, i - 199):i + 1]
+        closes = [c.close for c in window]
+        snap, _, _, _ = ema_calc.calculate_ema_snapshot(closes)
+        ema_trends_1h.append(snap.ema_trend)
 
     all_records: List[SmcRecord] = []
     gap = SmcStats()
     started = datetime.now()
     for idx, (month, m_start, m_end) in enumerate(months):
         path = _ckpt_path(ckpt_dir, month)
+        base_path = _ckpt_path(baseline_ckpt_dir, month) if baseline_ckpt_dir else None
         if path.exists() and not args.no_resume:
             recs = load_checkpoint(ckpt_dir, month)
             if start_dt:
                 recs = [r for r in recs if _parse_ts(r.decision_time) >= start_dt]
+            if end_dt:
+                recs = [r for r in recs if _parse_ts(r.decision_time) < end_dt]
             print(f"[=] {month}: {len(recs):,} records (cached)")
+        elif base_path and base_path.exists() and not args.no_resume:
+            base_recs = load_checkpoint(baseline_ckpt_dir, month)
+            if args.regime_filter:
+                filtered_recs: List[SmcRecord] = []
+                for r in base_recs:
+                    dt = _parse_ts(r.decision_time)
+                    if start_dt and dt < start_dt:
+                        continue
+                    idx1h = bisect_right(c1h_close, dt) - 1
+                    trend = ema_trends_1h[idx1h] if 0 <= idx1h < len(ema_trends_1h) else "NEUTRAL"
+                    r.ema_trend = trend
+                    if r.accepted:
+                        if r.direction == "BUY":
+                            regime_ok = (trend == "BULLISH_STACK")
+                        elif r.direction == "SELL":
+                            regime_ok = (trend == "BEARISH_STACK")
+                        else:
+                            regime_ok = False
+                        if not regime_ok:
+                            r.accepted = False
+                            r.gate = "REGIME_FILTER_REJECT"
+                            r.setup_state = NO_SETUP_STATE
+                            r.accepted_trade = None
+                            r.detail = f"REGIME_FILTER_REJECT: {r.direction} requires {'BULLISH_STACK' if r.direction == 'BUY' else 'BEARISH_STACK'} but got {trend}"
+                    filtered_recs.append(r)
+                save_checkpoint(ckpt_dir, month, filtered_recs)
+                recs = filtered_recs
+                if end_dt:
+                    recs = [r for r in recs if _parse_ts(r.decision_time) < end_dt]
+                print(f"[+] {month}: {len(recs):,} records (derived from baseline via regime filter)")
+            else:
+                save_checkpoint(ckpt_dir, month, base_recs)
+                recs = base_recs
+                if end_dt:
+                    recs = [r for r in recs if _parse_ts(r.decision_time) < end_dt]
+                print(f"[=] {month}: {len(recs):,} records (reused baseline cache)")
         else:
             indices = [
                 i for i, b in enumerate(bars)
-                if m_start <= b.timestamp < m_end and (start_dt is None or b.timestamp >= start_dt)
+                if m_start <= b.timestamp < m_end
+                and (start_dt is None or b.timestamp >= start_dt)
+                and (end_dt is None or b.timestamp < end_dt)
             ]
             if not indices:
                 print(f"[-] {month}: 0 records (before start date)")
@@ -873,7 +971,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 c4h_close=c4h_close, indices=indices, symbol=args.symbol,
                 spread=args.spread, expiry_bars=args.expiry_bars,
                 max_hold_bars=args.max_hold_bars, warmup_bars=args.warmup_bars,
-                bounds=bounds, month=month,
+                bounds=bounds, month=month, regime_filter=args.regime_filter,
             )
             save_checkpoint(ckpt_dir, month, recs)
             gap.warmup_skipped += stats.warmup_skipped

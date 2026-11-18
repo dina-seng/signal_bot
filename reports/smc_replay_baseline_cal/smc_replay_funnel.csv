@@ -1,0 +1,6 @@
+split,gate,bars,buy_bars,sell_bars,distinct_opportunities
+calibration,CONFIRMED_SETUP,3617,2445,1172,932
+calibration,CONFLUENCE_FLOOR,2038,1129,909,539
+calibration,LTF_PENALTY,1728,1059,669,490
+calibration,PA_FLOOR,1105,588,517,285
+calibration,SCORE_BELOW_THRESHOLD,43446,24744,18702,11072
