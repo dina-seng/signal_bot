@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.database import init_db
-from app.api.v1.router import api_v1_router
+from app.api.v1.router import api_v1_router 
+from datetime import datetime 
 
 
 from app.services.telegram.scheduler import (
@@ -65,6 +66,13 @@ app.add_middleware(
 
 # Include API Routers
 app.include_router(api_v1_router, prefix="/api")    
+
+
+@app.get("/ping", tags=["health"])
+def ping():
+    """Ultra-lightweight keepalive endpoint for Render free tier."""
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
 
 
 @app.get("/")
