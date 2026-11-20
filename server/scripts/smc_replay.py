@@ -76,8 +76,8 @@ from app.services.strategies.smc_strategy import (  # noqa: E402
     SMCStrategy,
 )
 
-# Reuse the proven CRT harness primitives. Importing does not modify the module.
-from crt_replay import (  # noqa: E402
+# Reuse the proven replay harness primitives.
+from replay_harness import (  # noqa: E402
     SignalRecord,
     _bootstrap_ci,
     _parse_start_date,

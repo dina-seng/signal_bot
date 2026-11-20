@@ -33,7 +33,7 @@ if str(REPO_ROOT / "server") not in sys.path:
 if str(REPO_ROOT / "server" / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "server" / "scripts"))
 
-from crt_replay import load_full_15m_candles, walk_forward_bounds
+from replay_harness import load_full_15m_candles, walk_forward_bounds
 
 
 def _dedupe(trades: List[Dict[str, Any]], key: str = "sweep_key") -> List[Dict[str, Any]]:

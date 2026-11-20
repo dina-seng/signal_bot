@@ -198,7 +198,7 @@ export const Landing: React.FC = () => {
               </h1>
 
               <p className="mt-6 text-base sm:text-lg text-slate-400 leading-relaxed max-w-xl">
-                Automated Smart Money Concepts (SMC) and Candle Range Theory (CRT) for
+                Automated Smart Money Concepts (SMC) for
                 XAU/USD. Backtested on 688 trades.
               </p>
               <p className="mt-3 text-sm text-slate-500 leading-relaxed max-w-xl">
@@ -305,22 +305,22 @@ export const Landing: React.FC = () => {
                   <Activity className="w-5 h-5" />
                 </div>
                 <h3 className="mt-5 text-lg font-semibold text-white tracking-tight">
-                  Candle Range Theory
+                  Multi-Timeframe Structure
                 </h3>
                 <p className="mt-2.5 text-sm text-slate-400 leading-relaxed flex-1">
-                  Measures range expansion and displacement velocity across consecutive
-                  candles. Only ranges with confirmed displacement qualify, which filters
-                  consolidation chop and defines a precise entry zone inside the leg.
+                  Synchronizes 4h structural trend with 1h intermediate swings and 15m
+                  lower-timeframe execution. Signals enforce zero lookahead and require
+                  structural consensus and LTF confirmation before qualification.
                 </p>
                 <div className="mt-6 pt-4 border-t border-white/5 flex flex-wrap gap-1.5 text-[10px] font-mono">
                   <span className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
-                    Displacement
+                    4h HTF Bias
                   </span>
                   <span className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
-                    Range expansion
+                    1h Structure
                   </span>
                   <span className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
-                    Entry zones
+                    15m LTF Confirmation
                   </span>
                 </div>
               </motion.article>

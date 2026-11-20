@@ -39,7 +39,7 @@ if str(REPO_ROOT / "server" / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "server" / "scripts"))
 
 from app.services.indicators.atr_calculator import ATRCalculator
-from crt_replay import load_full_15m_candles, walk_forward_bounds
+from replay_harness import load_full_15m_candles, walk_forward_bounds
 
 
 def calc_spearman(x: np.ndarray, y: np.ndarray) -> Tuple[float, float, float, int]:
