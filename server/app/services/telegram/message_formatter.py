@@ -139,7 +139,7 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
     # 3. Market Regime & HTF Context
     regime = ctx.regime
     if not regime:
-        if "Range Sniper" in strategy_label or "RANGING" in str(getattr(signal, "htf_trend", "")):
+        if "RANGING" in str(getattr(signal, "htf_trend", "")):
             regime = "RANGING / MEAN REVERSION"
         elif getattr(signal, "trend_alignment", None):
             regime = str(signal.trend_alignment)

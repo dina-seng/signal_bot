@@ -10,7 +10,6 @@ from app.models.signal_candidate import SignalCandidate
 from app.models.backtest import BacktestRun, BacktestTrade
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
 from app.models.api_usage import ApiUsage
-from app.models.crt_sweep_event import CRTSweepEvent
 
 __all__ = [
     "Base",
@@ -28,5 +27,4 @@ __all__ = [
     "PaperTrade",
     "AccountTransaction",
     "ApiUsage",
-    "CRTSweepEvent",
 ]

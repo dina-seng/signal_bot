@@ -123,25 +123,3 @@ class MultiTimeframeStructureResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-
-class CRTAnalysis(BaseModel):
-    """Candle Range Theory (CRT) Analysis based on Accumulation, Manipulation, and Distribution (AMD)."""
-    range_high: float
-    range_low: float
-    range_open: float
-    range_close: float
-    positive_direction: bool  # True if range_close > range_open
-    breach_point: Optional[float] = None  # The extreme low/high during manipulation
-    is_breached: bool = False
-    is_confirmed: bool = False  # True if price closed back inside the range
-    manip_depth_pct: float = 0.0  # Percentage of range size that was breached
-    range_open_timestamp: Optional[datetime] = None
-    breach_timestamp: Optional[datetime] = None
-    breach_wick_ratio: float = 0.0
-    confirmation_displacement: float = 0.0
-    reentry_depth_pct: float = 0.0
-    has_missing_timestamps: bool = False
-    manipulation_candle_index: int = 0
-
-    model_config = ConfigDict(from_attributes=True)
-

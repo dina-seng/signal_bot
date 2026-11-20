@@ -38,7 +38,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
 from app.services.indicators.atr_calculator import ATRCalculator
-from crt_replay import SignalRecord, load_full_15m_candles, simulate_outcome, walk_forward_bounds
+from replay_harness import SignalRecord, load_full_15m_candles, simulate_outcome, walk_forward_bounds
 
 TF_15M = timedelta(minutes=15)
 

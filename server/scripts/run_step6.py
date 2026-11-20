@@ -45,7 +45,7 @@ from app.schemas.signal import SignalDirection
 from app.services.signals.confluence_engine import ConfluenceEngine
 from app.services.signals.risk_manager import RiskManager
 from app.services.strategies.smc_strategy import SMCStrategy
-from crt_replay import (
+from replay_harness import (
     SignalRecord,
     build_timeframe_series,
     load_full_15m_candles,
