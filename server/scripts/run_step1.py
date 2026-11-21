@@ -30,7 +30,7 @@ if str(REPO_ROOT / "server") not in sys.path:
 if str(REPO_ROOT / "server" / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "server" / "scripts"))
 
-from crt_replay import SignalRecord, load_full_15m_candles, simulate_outcome
+from replay_harness import SignalRecord, load_full_15m_candles, simulate_outcome
 
 
 def run_step1() -> None:

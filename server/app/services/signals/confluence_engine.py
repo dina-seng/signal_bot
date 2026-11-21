@@ -343,7 +343,7 @@ class ConfluenceEngine:
         risk_params: Optional[RiskParameters] = None
 
         if direction in (SignalDirection.BUY, SignalDirection.SELL):
-            # Check if strategy supplied specific custom risk levels (e.g. CRT dynamic SL/TP)
+            # Check if strategy supplied specific custom risk levels (e.g. dynamic SL/TP)
             custom_sl = result.metadata.get("stop_loss") if result.metadata else None
             custom_tp1 = result.metadata.get("take_profit_1") if result.metadata else None
 
@@ -490,13 +490,7 @@ class ConfluenceEngine:
             strategy_name=result.strategy_name,
         )
 
-        strat_name = result.strategy_name or ""
-        if "Range Sniper" in strat_name:
-            regime = "RANGING / MEAN REVERSION"
-        elif "CRT" in strat_name or "Candle Range" in strat_name:
-            regime = "CRT / AMD EXPANSION"
-        else:
-            regime = "TREND FOLLOWING"
+        regime = "TREND FOLLOWING"
 
         sig_htf_trend = (
             htf_trend

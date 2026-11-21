@@ -18,7 +18,6 @@ from app.schemas.structure import (
     StructureAnalysisRequest,
     StructureAnalysisResponse,
     MultiTimeframeStructureResponse,
-    CRTAnalysis,
 )
 
 from app.schemas.liquidity import (
@@ -124,7 +123,6 @@ __all__ = [
     "StructureAnalysisRequest",
     "StructureAnalysisResponse",
     "MultiTimeframeStructureResponse",
-    "CRTAnalysis",
     "BOSCHOCHType",
     "LiquidityEventType",
     "ZoneType",

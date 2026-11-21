@@ -59,7 +59,6 @@ def init_db():
     import app.models.liquidity
     import app.models.backtest
     import app.models.api_usage
-    import app.models.crt_sweep_event
 
     logger.info("Initializing database tables...")
     try:

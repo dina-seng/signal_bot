@@ -68,7 +68,7 @@ for _p in (SERVER_ROOT, SCRIPTS_ROOT):
         sys.path.insert(0, str(_p))
 
 from app.services.indicators.atr_calculator import ATRCalculator  # noqa: E402
-from crt_replay import (  # noqa: E402
+from replay_harness import (  # noqa: E402
     SignalRecord,
     _parse_start_date,
     load_full_15m_candles,
