@@ -67,8 +67,7 @@ app.add_middleware(
 # Include API Routers
 app.include_router(api_v1_router, prefix="/api")    
 
-
-@app.get("/ping", tags=["health"],   methods=["GET", "HEAD"])
+@app.api_route("/ping", methods=["GET", "HEAD"], tags=["health"])
 def ping():
     """Ultra-lightweight keepalive endpoint for Render free tier."""
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
