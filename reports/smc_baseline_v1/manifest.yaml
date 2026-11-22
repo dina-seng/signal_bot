@@ -1,0 +1,68 @@
+baseline_id: smc-baseline-v1
+engine_commit: 3a9053027738c0a1f205fce1aff82c11f0fa8fbd
+created_utc: '2026-11-22T08:19:54.761049+00:00'
+data:
+  path: D:\trade\backtest.db
+  sha256: 34b740025988355e3c624791d262b0e8998598fa658d893e76507ceef82d9ae1
+  symbol: XAU/USD
+  source: twelvedata
+  timeframe: 15m
+  raw_rows: 110280
+  open_market_rows: 87976
+  missing_intraday_bars: 76
+  first_bar_open_utc: '2023-03-01T00:00:00+00:00'
+  last_bar_open_utc: '2026-11-19T05:30:00+00:00'
+backtest_range:
+- '2025-01-01'
+- latest
+strategy:
+  config_hash: 0440a6c418fc4ce0d70eabe2ea98b9d1ec2d3105b5655f1e12d2106f4ded0d22
+  frozen_commit: 87509a43ef6af26b6bb69de5310e5e2d44fb0581
+execution:
+  convention_version: optionB-v1
+  config_hash: ed30420334716bcafc37c96db97c620f0cb36fd1cee21757556c472007246041
+  cadence: 15m_close
+  fill: next_15m_open
+  price_anchor: 1h_close
+  geometry: signal_price_anchored_fixed
+  r_denominator: planned_risk
+  gap_fill: adverse_open / limit_or_better
+  intrabar: sl_first
+  void_rules:
+  - VOID_ENTRY_BEYOND_SL
+  - VOID_ENTRY_BEYOND_TP
+  - NO_FILL_SESSION_BOUNDARY
+  - NO_FILL_MISSING_NEXT_BAR
+  cost:
+    value: 0.4
+    basis: price_units_per_position_unit_round_trip
+    deductions_per_trade: 1
+splits:
+  calibration:
+  - '2023-03-01'
+  - 2025-05-21T08:15
+  validation:
+  - 2025-05-21T08:15
+  - 2026-02-16T03:00
+  test:
+  - 2026-02-16T03:00
+  - 2026-11-15T15:00
+  holdout:
+    after: 2026-11-15T15:00
+    status: contaminated_current_snapshot
+metrics:
+  drawdown_basis: exit_time
+  breakeven_definition: loss
+  bootstrap: day_cluster
+  seed: 12345
+  min_n_for_verdict: 100
+expected:
+  n_filled: 695
+  n_void_entry: 42
+  total_r: 136.4979
+  r_tol: 0.005
+artifacts:
+  checkpoints: reports/smc_baseline_v1/checkpoints/
+  report: reports/smc_baseline_v1/report.md
+  controls: reports/smc_baseline_v1/controls.csv
+  regression_fixtures: server/tests/

@@ -69,7 +69,10 @@ def generate_synthetic_random_walk(
 
 def test_random_walk_control_shows_no_positive_edge():
     """Verify that on a random walk with spread and slippage, the strategy shows no meaningful positive expectancy."""
-    c15, c1h, c4h = generate_synthetic_random_walk(bar_count=600, volatility=2.2, seed=55)
+    # 600 bars produced only 2 trades -- a statistically meaningless sample
+    # (BT-028). 12,000 bars yields ~53 trades with this seed, enough for the
+    # expectancy/false-edge control to be interpretable.
+    c15, c1h, c4h = generate_synthetic_random_walk(bar_count=12000, volatility=2.2, seed=55)
     harness = WalkForwardHarness()
 
     res = harness.run_walk_forward(
@@ -98,6 +101,6 @@ def test_random_walk_control_shows_no_positive_edge():
             f"On random data, expectancy should be negative or near zero due to spread & slippage."
         )
 
-        # Expectancy is negative (-0.04R on seed 55)
+        # Expectancy stays non-positive after transaction friction
         assert overall_metrics.expectancy_r <= 0.0
         assert overall_metrics.profit_factor <= 1.05

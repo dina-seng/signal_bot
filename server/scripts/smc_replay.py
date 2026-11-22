@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import subprocess
 import sys
 from bisect import bisect_right
 from collections import defaultdict
@@ -91,6 +92,10 @@ from replay_harness import (  # noqa: E402
     trade_metrics,
     walk_forward_bounds,
 )
+from replay_metrics import compute_core_metrics, day_cluster_bootstrap_ci
+from run_manifest import MANIFEST_FIELDS, build_run_manifest, hash_file, hash_paths
+
+import yaml
 
 def split_of(ts: datetime, bounds: Tuple[datetime, datetime]) -> str:
     b1, b2 = bounds
@@ -222,6 +227,7 @@ def _simulate(
     spread: float,
     expiry_bars: int,
     max_hold_bars: int,
+    session_ids: Optional[Sequence[int]] = None,
 ) -> SignalRecord:
     simulate_outcome(
         rec,
@@ -230,6 +236,7 @@ def _simulate(
         spread=spread,
         expiry_bars=expiry_bars,
         max_hold_bars=max_hold_bars,
+        session_ids=session_ids,
     )
     return rec
 
@@ -343,6 +350,7 @@ def replay_chunk(
     bounds: Tuple[datetime, datetime],
     month: str,
     regime_filter: bool = False,
+    session_ids: Optional[Sequence[int]] = None,
 ) -> Tuple[List[SmcRecord], SmcStats]:
     """Evaluate only ``indices`` but with the full precomputed series as lookback."""
     smc = SMCStrategy()
@@ -490,7 +498,7 @@ def replay_chunk(
                 float(score),
             )
             if trade is not None:
-                _simulate(trade, bars, i, spread, expiry_bars, max_hold_bars)
+                _simulate(trade, bars, i, spread, expiry_bars, max_hold_bars, session_ids)
                 rec.accepted_trade = _signal_to_dict(trade)
             else:
                 rec.cf_error = f"ACCEPTED_GEOMETRY:{err}"
@@ -509,7 +517,7 @@ def replay_chunk(
                 float(score),
             )
             if trade is not None:
-                _simulate(trade, bars, i, spread, expiry_bars, max_hold_bars)
+                _simulate(trade, bars, i, spread, expiry_bars, max_hold_bars, session_ids)
                 rec.counterfactual_trade = _signal_to_dict(trade)
             else:
                 rec.cf_error = err
@@ -525,20 +533,46 @@ def _ckpt_path(ckpt_dir: Path, month: str) -> Path:
     return ckpt_dir / f"{month}.json"
 
 
-def save_checkpoint(ckpt_dir: Path, month: str, records: Sequence[SmcRecord]) -> None:
+def save_checkpoint(
+    ckpt_dir: Path,
+    month: str,
+    records: Sequence[SmcRecord],
+    provenance: Optional[Dict[str, Any]] = None,
+    stats: Optional[SmcStats] = None,
+) -> None:
+    """Write a versioned checkpoint with a provenance header (contract §9.3)."""
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     path = _ckpt_path(ckpt_dir, month)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(
-        json.dumps({"month": month, "records": [asdict(r) for r in records]}),
-        encoding="utf-8",
-    )
+    payload = {
+        "month": month,
+        "schema_version": "v1",
+        "provenance": provenance or {},
+        "stats": asdict(stats) if stats is not None else {},
+        "records": [asdict(r) for r in records],
+    }
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
     tmp.replace(path)
 
 
-def load_checkpoint(ckpt_dir: Path, month: str) -> List[SmcRecord]:
+def load_checkpoint(
+    ckpt_dir: Path,
+    month: str,
+    expected_provenance: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[SmcRecord], SmcStats]:
+    """Read a checkpoint, rejecting provenance mismatches (N-05)."""
     data = json.loads(_ckpt_path(ckpt_dir, month).read_text(encoding="utf-8"))
-    return [SmcRecord(**d) for d in data["records"]]
+    if expected_provenance is not None:
+        actual = data.get("provenance") or {}
+        if actual != expected_provenance:
+            raise SystemExit(
+                f"provenance mismatch for {month}: checkpoint={actual} "
+                f"run={expected_provenance} (use --no-resume to recompute)"
+            )
+    records = [SmcRecord(**d) for d in data["records"]]
+    stats_data = data.get("stats") or {}
+    stats = SmcStats(**stats_data) if stats_data else SmcStats()
+    return records, stats
 
 
 # ---------------------------------------------------------------------------
@@ -558,32 +592,27 @@ def _dedupe(trades: Sequence[Dict[str, Any]], key: str = "sweep_key") -> List[Di
 
 
 def _metrics(trades: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Canonical metrics: shared definitions, exit-ordered DD, day-cluster CI."""
     m = dict(trade_metrics(trades))
     filled = [t for t in trades if t.get("filled") and t.get("r_multiple") is not None]
     rs = [float(t["r_multiple"]) for t in filled]
-    if rs:
-        wins = [r for r in rs if r > 0]
-        losses = [r for r in rs if r <= 0]
-        gross_gain = sum(wins)
-        gross_loss = abs(sum(losses))
-        m["profit_factor"] = (gross_gain / gross_loss) if gross_loss > 0 else (
-            math.inf if gross_gain > 0 else 0.0
-        )
-        m["total_r"] = sum(rs)
-        ordered = sorted(filled, key=lambda t: str(t.get("signal_time") or ""))
-        equity = peak = max_dd = 0.0
-        for t in ordered:
-            equity += float(t["r_multiple"])
-            peak = max(peak, equity)
-            max_dd = max(max_dd, peak - equity)
-        m["max_drawdown_r"] = max_dd
-        lo, hi = _bootstrap_ci(rs)
-        m["ci_lower"], m["ci_upper"] = lo, hi
-    else:
-        m["profit_factor"] = None
-        m["total_r"] = None
-        m["max_drawdown_r"] = None
-        m["ci_lower"], m["ci_upper"] = None, None
+    if not rs:
+        m.update({
+            "profit_factor": None, "total_r": None, "max_drawdown_r": None,
+            "ci_lower": None, "ci_upper": None,
+        })
+        return m
+    order = [str(t.get("exit_time") or t.get("signal_time") or "") for t in filled]
+    clusters = [o[:10] for o in order]
+    core = compute_core_metrics(rs, order=order)
+    m["win_rate"] = core["win_rate"]
+    m["avg_r"] = core["avg_r"]
+    m["median_r"] = core["median_r"]
+    m["profit_factor"] = core["profit_factor"]
+    m["total_r"] = core["total_r"]
+    m["max_drawdown_r"] = core["max_drawdown_r"]
+    m["ci_lower"], m["ci_upper"] = day_cluster_bootstrap_ci(rs, clusters)
+    m["ci_basis"] = "day_cluster"
     return m
 
 
@@ -711,7 +740,10 @@ def build_report(
     lines.append(f"| Evaluation errors | {gap_stats.eval_errors:,} |")
     lines.append(f"| Calibration boundary (60%) | {bounds[0]:%Y-%m-%d %H:%M} UTC |")
     lines.append(f"| Validation boundary (80%) | {bounds[1]:%Y-%m-%d %H:%M} UTC |")
-    lines.append(f"| Round-trip friction | \\${args.spread:.2f} per completed trade |")
+    lines.append(
+        f"| Round-trip execution cost | {args.spread:.2f} price units per position unit, "
+        "round trip (deducted once per trade) |"
+    )
     lines.append("")
     lines.append(
         "Split windows: calibration = earliest 60% (observation only), validation = next 20%, "
@@ -849,7 +881,39 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--out-dir",
         default=str(REPO_ROOT / "reports" / "smc_replay_extended"),
     )
+    p.add_argument(
+        "--write-manifest", action="store_true", default=False,
+        help="Emit the versioned run manifest (Phase 5 only; never overwrites history)",
+    )
     return p.parse_args(argv)
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def _build_provenance(db_path: Path) -> Dict[str, Any]:
+    """Code/data/config identity attached to every checkpoint (N-05)."""
+    return {
+        "engine_commit": _git_commit(),
+        "data_sha256": hash_file(db_path),
+        "strategy_config_hash": hash_paths([
+            SERVER_ROOT / "app/services/strategies/smc_strategy.py",
+            SERVER_ROOT / "app/services/signals/evaluators.py",
+            SERVER_ROOT / "app/services/signals/risk_manager.py",
+        ]),
+        "execution_config_hash": hash_paths([
+            SCRIPTS_ROOT / "replay_harness.py",
+            SCRIPTS_ROOT / "smc_replay.py",
+        ]),
+        "execution_convention_version": "optionB-v1",
+        "split_id": "smc-v1-60_20_20",
+    }
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -864,7 +928,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         db_path = REPO_ROOT / args.db_path
 
     print(f"[*] Loading {args.symbol} 15m candles from {db_path} ...")
-    bars, meta = load_full_15m_candles(db_path, args.symbol, args.source)
+    bars, meta = load_full_15m_candles(
+        db_path, args.symbol, args.source, as_of=datetime.now(timezone.utc)
+    )
+    session_ids = meta["session_ids"]
+    provenance = _build_provenance(db_path)
+    print(f"[*] Provenance: commit={provenance['engine_commit']} data={provenance['data_sha256'][:12]}")
     print(f"[*] {len(bars):,} open-market 15m bars "
           f"({meta['raw_first']} -> {meta['raw_last']})")
 
@@ -932,14 +1001,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         path = _ckpt_path(ckpt_dir, month)
         base_path = _ckpt_path(baseline_ckpt_dir, month) if baseline_ckpt_dir else None
         if path.exists() and not args.no_resume:
-            recs = load_checkpoint(ckpt_dir, month)
+            recs, cached_stats = load_checkpoint(ckpt_dir, month, expected_provenance=provenance)
+            gap.warmup_skipped += cached_stats.warmup_skipped
+            gap.insufficient_data += cached_stats.insufficient_data
+            gap.eval_errors += cached_stats.eval_errors
+            gap.error_samples.extend(cached_stats.error_samples[: max(0, 5 - len(gap.error_samples))])
             if start_dt:
                 recs = [r for r in recs if _parse_ts(r.decision_time) >= start_dt]
             if end_dt:
                 recs = [r for r in recs if _parse_ts(r.decision_time) < end_dt]
             print(f"[=] {month}: {len(recs):,} records (cached)")
         elif base_path and base_path.exists() and not args.no_resume:
-            base_recs = load_checkpoint(baseline_ckpt_dir, month)
+            base_recs, _ = load_checkpoint(baseline_ckpt_dir, month)
             if args.regime_filter:
                 filtered_recs: List[SmcRecord] = []
                 for r in base_recs:
@@ -964,13 +1037,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                             r.accepted_trade = None
                             r.detail = f"REGIME_FILTER_REJECT: {r.direction} requires {'BULLISH_STACK' if r.direction == 'BUY' else 'BEARISH_STACK'} but got {trend}"
                     filtered_recs.append(r)
-                save_checkpoint(ckpt_dir, month, filtered_recs)
+                save_checkpoint(ckpt_dir, month, filtered_recs, provenance=provenance)
                 recs = filtered_recs
                 if end_dt:
                     recs = [r for r in recs if _parse_ts(r.decision_time) < end_dt]
                 print(f"[+] {month}: {len(recs):,} records (derived from baseline via regime filter)")
             else:
-                save_checkpoint(ckpt_dir, month, base_recs)
+                save_checkpoint(ckpt_dir, month, base_recs, provenance=provenance)
                 recs = base_recs
                 if end_dt:
                     recs = [r for r in recs if _parse_ts(r.decision_time) < end_dt]
@@ -991,8 +1064,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 spread=args.spread, expiry_bars=args.expiry_bars,
                 max_hold_bars=args.max_hold_bars, warmup_bars=args.warmup_bars,
                 bounds=bounds, month=month, regime_filter=args.regime_filter,
+                session_ids=session_ids,
             )
-            save_checkpoint(ckpt_dir, month, recs)
+            save_checkpoint(ckpt_dir, month, recs, provenance=provenance, stats=stats)
             gap.warmup_skipped += stats.warmup_skipped
             gap.insufficient_data += stats.insufficient_data
             gap.eval_errors += stats.eval_errors
@@ -1021,7 +1095,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _write_csv(
         cf_csv, cf_rows,
         ("split", "rejection_reason", "candidate_bars", "distinct_opportunities",
-         "n_candidates", "n_filled", "n_no_fill", "win_rate", "avg_r", "expectancy",
+         "n_candidates", "n_filled", "n_no_fill", "n_void_entry", "void_rate",
+         "win_rate", "avg_r", "expectancy",
          "profit_factor", "max_drawdown_r", "total_r", "ci_lower", "ci_upper", "flagged_lt30"),
     )
     print(f"[*] Elapsed              : {elapsed:,.0f}s")
@@ -1030,6 +1105,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"[*] Counterfactual CSV   : {cf_csv}")
     print(f"[*] Total bar records    : {len(all_records):,}")
     print(f"[*] Emitted bars         : {sum(1 for r in all_records if r.accepted):,}")
+
+    if args.write_manifest:
+        filled_trades = [
+            r.accepted_trade for r in all_records
+            if r.accepted_trade and r.accepted_trade.get("filled")
+        ]
+        void_trades = [
+            r.accepted_trade for r in all_records
+            if r.accepted_trade and r.accepted_trade.get("void_reason")
+        ]
+        deduped_filled = _dedupe(filled_trades)
+        expected = {
+            "n_filled": len(deduped_filled),
+            "n_void_entry": len(void_trades),
+            "total_r": round(sum(float(t["r_multiple"]) for t in deduped_filled), 4),
+            "r_tol": 0.005,
+        }
+        manifest = build_run_manifest(
+            args, meta,
+            provenance["engine_commit"],
+            provenance["strategy_config_hash"],
+            provenance["execution_config_hash"],
+            provenance["data_sha256"],
+            expected,
+        )
+        manifest_path = out_dir / "manifest.yaml"
+        manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+        print(f"[*] Run manifest         : {manifest_path}")
     return 0
 
 

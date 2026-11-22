@@ -231,7 +231,8 @@ def test_check_data_staleness_weekend_awareness():
     res = check_data_staleness([fri_close_candle], symbol="EUR/USD", timeframe="1h", as_of=saturday_noon)
     assert res.is_stale is False
     assert res.is_weekend is True
-    assert "Market is closed for weekend" in res.message
+    # Message covers weekend and daily break; both indicate a closed market.
+    assert "Market is closed" in res.message and "is valid" in res.message
 
 
 # ---------------------------------------------------------------------------

@@ -561,22 +561,27 @@ def test_risk_manager_gold_structural_distance():
     )
     # Must NOT fall back to ATR (which would be 2000 - 1.5*2 = 1997.00)
     assert params_gold_valid.stop_loss == 1984.00
-    assert params_gold_valid.risk_pips == 1600.0  # (2000 - 1984) / 0.01
+    # Canonical instrument spec uses pip_size=0.10 for XAU/USD (symbols.py),
+    # so 16.00 price units = 160 pips. The 0.01 convention used by the ATR
+    # module is a separate, documented inconsistency (BT-010); this test must
+    # assert the canonical RiskManager spec, not silently change it.
+    assert params_gold_valid.risk_pips == 160.0  # (2000 - 1984) / 0.10
 
-    # 2. Gold BUY with excessive structural swing ($30.00 / 3000 pips > 2500 pips)
-    # Entry: 2000.00, Support: 1970.00 -> Should fall back to ATR SL = 2000 - 1.5*2 = 1997.00
+    # 2. Gold BUY with genuinely excessive structural swing under the canonical
+    # 0.10 pip convention: $300 = 3000 pips > 2500-pip cap.
+    # Entry: 2000.00, Support: 1700.00 -> falls back to ATR SL = 2000 - 1.5*2 = 1997.00
     params_gold_excessive = rm.calculate_trade_risk(
         symbol="XAU/USD",
         direction=SignalDirection.BUY,
         entry_price=2000.00,
         atr_value=atr_val,
-        key_support_low=1970.00,
+        key_support_low=1700.00,
         account_balance=10000.0,
         risk_percent=0.5,
     )
     assert params_gold_excessive.stop_loss == 1997.00
 
-    # 3. Gold SELL with $15.00 structural swing (1500 pips)
+    # 3. Gold SELL with $15.00 structural swing (150 pips at the canonical 0.10 pip)
     # Entry: 2000.00, Resistance: 2015.00
     # Expected SL = resistance + 0.5 * atr = 2015.00 + 1.00 = 2016.00
     params_gold_sell = rm.calculate_trade_risk(

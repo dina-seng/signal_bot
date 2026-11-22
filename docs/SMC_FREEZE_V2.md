@@ -20,7 +20,7 @@ All live parameters in `server/app/services/strategies/smc_strategy.py` and `ser
 | `STRUCTURE_WEIGHT` | `35.0` pts | [server/app/services/signals/evaluators.py:54](file:///D:/trade/server/app/services/signals/evaluators.py#L54) | Maximum points allocated to Market Structure pillar |
 | `LIQUIDITY_WEIGHT` | `40.0` pts | [server/app/services/signals/evaluators.py:42](file:///D:/trade/server/app/services/strategies/smc_strategy.py#L42) | Maximum points allocated to Liquidity / SMC pillar |
 | `PRICE_ACTION_WEIGHT` | `25.0` pts | [server/app/services/signals/evaluators.py:416](file:///D:/trade/server/app/services/signals/evaluators.py#L416) | Maximum points allocated to Price Action pillar |
-| `ROUND_TRIP_SPREAD` | `$0.40` | `server/scripts/smc_replay.py:793` | Fixed round-trip transaction friction model |
+| `ROUND_TRIP_SPREAD` | `0.40` price units per position unit, round trip | `server/scripts/smc_replay.py` (`--spread`, ~:822) | Fixed round-trip execution cost, deducted once per trade. See Baseline v1 pointer below. |
 
 ---
 
@@ -145,3 +145,21 @@ Because no candidate passed all qualification gates, production scanner logic re
          # Suppress only if within 1.0x ATR of an open same-direction entry AND < 1h elapsed
          pass
      ```
+
+---
+
+## 7. Baseline v1 artifact pointer (2026-11-22)
+
+The canonical execution contract and regenerated artifacts are:
+
+- Contract: `execution_contract_final.md`; readiness: `implementation_checklist.md`, `implementation_status.md`
+- Primary headline: `reports/smc_baseline_v1/report.md` (2025 window)
+- Provenance: `reports/smc_baseline_v1/manifest.yaml`
+- Migration delta: `reports/smc_baseline_v1/delta_report.md`
+- Supplementary full range: `reports/smc_baseline_v1/full_range/`
+
+Execution convention `optionB-v1`: signal at a closed 15m bar, fill at the next
+eligible 15m open, structural SL/TP fixed at signal time, planned risk as the R
+denominator, deterministic entry voids, and a flat 0.40 price-unit-per-position
+round trip cost. The forward holdout after 2026-11-15 15:00 is contaminated on
+the current snapshot; no edge claim is made.

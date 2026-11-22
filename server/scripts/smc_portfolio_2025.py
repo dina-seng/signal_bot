@@ -1,4 +1,8 @@
-"""Real (portfolio-constrained) SMC backtest for the 2025-01-01 -> latest window.
+"""Capacity-filtered (portfolio-constrained) 1R SMC simulation, 2025-01-01 -> latest.
+
+This is NOT a capital-aware account backtest: there is no shared equity, margin,
+lot sizing, or compounding. Results are a capacity-filtered set of independently
+simulated fixed-1R trades and must be labelled as such.
 
 Reads the already-produced replay checkpoints in
 ``reports/exp_2025_smc/checkpoints`` (one record per evaluated 15m bar) and
@@ -13,8 +17,8 @@ Frozen portfolio rules (unchanged):
     price distance from every open same-direction entry, OR >= 1h since the last
     same-direction entry (implemented exactly as the frozen code; see difference 6)
   - DAILY_LOSS_STOP = -3.0 R realized per UTC day halts new entries that day
-  - Risk per position = 1.0 R; the $0.40 round-trip spread is already inside the
-    checkpoint ``r_multiple`` values.
+  - Risk per position = 1.0 R; the flat 0.40 price-unit-per-position-unit round-trip
+    execution cost is already inside the checkpoint ``r_multiple`` values.
 
 Candles are opened read-only from ``backtest.db`` (SQLite ``mode=ro``) and are
 used only for (a) ATR(14, 15m) and (b) re-simulating the Step 4 controls with
@@ -59,6 +63,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SERVER_ROOT = REPO_ROOT / "server"
@@ -74,6 +79,7 @@ from replay_harness import (  # noqa: E402
     load_full_15m_candles,
     simulate_outcome,
 )
+from replay_metrics import compute_core_metrics
 
 TF_15M = timedelta(minutes=15)
 
@@ -89,10 +95,11 @@ SPREAD = 0.40
 EXPIRY_BARS = 8
 MAX_HOLD_BARS = 500
 
-# --- Pre-registered verification targets ------------------------------------
-EXPECTED_TRADES = 688
-EXPECTED_TOTAL_R = 136.45
-R_CHECK_TOL = 0.005
+# --- Versioned verification gate (contract §9.1) ----------------------------
+# Historical hard-coded 688 / +136.45 targets were removed: any correct
+# execution fix invalidates them. Expected values come from the run manifest.
+DEFAULT_MANIFEST_PATH = REPO_ROOT / "reports" / "smc_baseline_v1" / "manifest.yaml"
+DEFAULT_R_CHECK_TOL = 0.005
 
 HALF_YEARS = ("2025-H1", "2025-H2", "2026-H1", "2026-H2")
 # Half-years treated as validation / test for the Step 4 pass rule (see report).
@@ -159,14 +166,21 @@ def load_checkpoint_trades(
     bar_close_index: Dict[datetime, int],
     start: datetime,
     end: Optional[datetime],
-) -> Tuple[List[Dict[str, Any]], int, int]:
-    """Load every accepted bar in [start, end] as a flat trade dict."""
+) -> Tuple[List[Dict[str, Any]], int, int, int, Counter]:
+    """Load every accepted bar in [start, end] as a flat trade dict.
+
+    Void-entry records (contract §3.3) carry no exit time and no R. They are
+    counted and excluded here -- before any ``exit_time`` dereference -- so the
+    portfolio simulator never fabricates a position or crashes on them.
+    """
     files = sorted(glob.glob(str(ckpt_dir / "*.json")))
     if not files:
         raise SystemExit(f"No checkpoint files found in {ckpt_dir}")
 
     raw: List[Dict[str, Any]] = []
     total_records = 0
+    void_count = 0
+    void_reasons: Counter = Counter()
     for fpath in files:
         with open(fpath, "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -175,6 +189,10 @@ def load_checkpoint_trades(
             if not (r.get("accepted") and r.get("accepted_trade")):
                 continue
             t = dict(r["accepted_trade"])
+            if t.get("void_reason") or not t.get("filled") or t.get("exit_time") is None:
+                void_count += 1
+                void_reasons[str(t.get("void_reason") or "UNSPECIFIED_VOID")] += 1
+                continue
             decision_dt = datetime.fromisoformat(r["decision_time"])
             exit_dt = datetime.fromisoformat(t["exit_time"])
             if decision_dt < start:
@@ -216,7 +234,7 @@ def load_checkpoint_trades(
             raw.append(trade)
 
     raw.sort(key=lambda x: (x["decision_dt"], x["bar_idx"]))
-    return raw, len(files), total_records
+    return raw, len(files), total_records, void_count, void_reasons
 
 
 def dedupe_by_key(trades: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -309,10 +327,7 @@ def compute_metrics(
 ) -> Dict[str, Any]:
     n = len(trades)
     rs = [t["r"] for t in trades]
-    wins = [r for r in rs if r > 0]
-    losses = [r for r in rs if r <= 0]
-    gross_gain = sum(wins)
-    gross_loss = abs(sum(losses))
+    core = compute_core_metrics(rs, order=[t["exit_dt"].isoformat() for t in trades])
 
     ordered = exit_ordered(trades)
     equity = 0.0
@@ -356,14 +371,12 @@ def compute_metrics(
 
     return {
         "n": n,
-        "win_rate": (100.0 * len(wins) / n) if n else None,
-        "avg_r": (sum(rs) / n) if n else None,
-        "median_r": float(np.median(rs)) if n else None,
-        "profit_factor": (
-            (gross_gain / gross_loss) if gross_loss > 0 else (math.inf if gross_gain > 0 else 0.0)
-        ) if n else None,
-        "total_r": sum(rs) if n else None,
-        "max_dd_r": max_dd if n else None,
+        "win_rate": core["win_rate"],
+        "avg_r": core["avg_r"],
+        "median_r": core["median_r"],
+        "profit_factor": core["profit_factor"],
+        "total_r": core["total_r"],
+        "max_dd_r": core["max_drawdown_r"],
         "max_dd_days": max_dd_days if n else None,
         "max_dd_trades": max_dd_trades if n else None,
         "max_dd_open_end": max_dd_open_end if n else False,
@@ -450,6 +463,10 @@ def simulate_control(
         rec, bars, trade["bar_idx"], spread=SPREAD,
         expiry_bars=EXPIRY_BARS, max_hold_bars=MAX_HOLD_BARS,
     )
+    if rec.r_multiple is None:
+        # A hypothetical direction voided at entry under the Option B contract:
+        # no position exists, so it contributes 0R to the control distribution.
+        return 0.0
     return float(rec.r_multiple)
 
 
@@ -531,6 +548,28 @@ def control_block(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def load_manifest_expected(path: Path) -> Dict[str, Any]:
+    """Read versioned expected values from a Baseline v1 run manifest."""
+    if not path.exists():
+        raise SystemExit(
+            f"Verification manifest not found: {path} "
+            "(use --no-verify for exploratory runs, never for a published baseline)"
+        )
+    with path.open("r", encoding="utf-8") as fh:
+        manifest = yaml.safe_load(fh) or {}
+    expected = manifest.get("expected") or {}
+    missing = [k for k in ("n_filled", "n_void_entry", "total_r") if k not in expected]
+    if missing:
+        raise SystemExit(f"Verification manifest missing expected fields: {missing}")
+    return {
+        "n_filled": int(expected["n_filled"]),
+        "n_void_entry": int(expected["n_void_entry"]),
+        "total_r": float(expected["total_r"]),
+        "r_tol": float(expected.get("r_tol", DEFAULT_R_CHECK_TOL)),
+        "manifest": str(path),
+    }
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Portfolio-constrained SMC replay on the 2025+ checkpoint window.",
@@ -549,6 +588,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--start-date", default="2025-01-01")
     p.add_argument("--end-date", default=None, help="Optional exclusive end date (YYYY-MM-DD)")
     p.add_argument("--seeds", type=int, default=1000)
+    p.add_argument(
+        "--manifest", default=str(DEFAULT_MANIFEST_PATH),
+        help="Versioned run manifest supplying expected counts/R for verification",
+    )
+    p.add_argument(
+        "--no-verify", action="store_true",
+        help="Skip the manifest gate (exploratory runs only; never for a published baseline)",
+    )
     p.add_argument("--force", action="store_true", help="Overwrite an existing report.md")
     return p.parse_args(argv)
 
@@ -583,25 +630,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     bar_close_index = {b.timestamp + TF_15M: i for i, b in enumerate(bars)}
 
     # ------------------------------------------------------------------
-    # Verification gate: 688 trades / +136.45 R unconstrained.
+    # Verification gate: versioned manifest + deterministic fixtures.
     # ------------------------------------------------------------------
-    raw, n_files, n_records = load_checkpoint_trades(
+    expected = None if args.no_verify else load_manifest_expected(Path(args.manifest))
+    raw, n_files, n_records, void_count, void_reasons = load_checkpoint_trades(
         Path(args.checkpoint_dir), bars, atr_series, bar_close_index, start, end,
     )
     distinct = dedupe_by_key(raw)
     total_r = sum(t["r"] for t in distinct)
     print(f"[*] Checkpoints: {n_files} files / {n_records:,} bar records")
     print(f"[*] Accepted bars: {len(raw):,}; distinct opportunity keys: {len(distinct):,}")
+    print(f"[*] Voided entries excluded: {void_count:,} {dict(void_reasons)}")
     print(f"[*] Unconstrained total R: {total_r:+.4f}")
-    if len(distinct) != EXPECTED_TRADES:
-        raise SystemExit(
-            f"VERIFICATION FAILED: expected {EXPECTED_TRADES} distinct trades, got {len(distinct)}"
-        )
-    if abs(total_r - EXPECTED_TOTAL_R) > R_CHECK_TOL:
-        raise SystemExit(
-            f"VERIFICATION FAILED: expected {EXPECTED_TOTAL_R:+.2f} R, got {total_r:+.4f} R"
-        )
-    print("[+] Verification passed: 688 trades / +136.45 R unconstrained")
+    if expected is not None:
+        checks = [
+            ("n_filled", expected["n_filled"], len(distinct), len(distinct) == expected["n_filled"]),
+            ("n_void_entry", expected["n_void_entry"], void_count, void_count == expected["n_void_entry"]),
+            ("total_r", expected["total_r"], round(total_r, 4),
+             abs(total_r - expected["total_r"]) <= expected["r_tol"]),
+        ]
+        failures = [f"{name}: expected {exp}, got {obs}" for name, exp, obs, ok in checks if not ok]
+        if failures:
+            raise SystemExit(
+                "VERIFICATION FAILED against manifest "
+                f"{expected['manifest']}: " + "; ".join(failures)
+            )
+        print(f"[+] Verification passed against manifest {expected['manifest']}")
+    else:
+        print("[!] Verification gate SKIPPED (--no-verify); exploratory run only")
 
     n_buy_all = sum(1 for t in distinct if t["direction"] == "BUY")
     n_sell_all = len(distinct) - n_buy_all
@@ -749,7 +805,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         {"stage": "SKIPPED_UNFILLED", "count": 0,
          "note": "n/a — all entries are market fills"},
         {"stage": "PORTFOLIO_ENTERED", "count": len(entered),
-         "note": "Executed with $0.40 round-trip friction"},
+         "note": "Capacity-filtered 1R entries; 0.40 price units/position round trip"},
     ]
     write_csv(out_dir / "funnel.csv", funnel_rows, ("stage", "count", "note"))
 
@@ -806,14 +862,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     A("")
     A("| Check | Expected | Observed | Result |")
     A("| :--- | ---: | ---: | :--- |")
-    A(f"| Distinct trades (one per `opportunity_key`) | {EXPECTED_TRADES:,} | {len(distinct):,} | PASS |")
-    A(f"| Unconstrained total R | {EXPECTED_TOTAL_R:+.2f} | {total_r:+.4f} | PASS |")
+    exp_trades = f"{expected['n_filled']:,}" if expected else "n/a"
+    exp_void = f"{expected['n_void_entry']:,}" if expected else "n/a"
+    exp_r = f"{expected['total_r']:+.4f}" if expected else "n/a"
+    ok_trades = ("PASS" if len(distinct) == expected["n_filled"] else "FAIL") if expected else "n/a"
+    ok_void = ("PASS" if void_count == expected["n_void_entry"] else "FAIL") if expected else "n/a"
+    ok_r = ("PASS" if abs(total_r - expected["total_r"]) <= expected["r_tol"] else "FAIL") if expected else "n/a"
+    A(f"| Distinct trades (one per `opportunity_key`) | {exp_trades} | {len(distinct):,} | {ok_trades} |")
+    A(f"| Voided entries (excluded) | {exp_void} | {void_count:,} | {ok_void} |")
+    A(f"| Unconstrained total R | {exp_r} | {total_r:+.4f} | {ok_r} |")
     A(f"| Re-simulated R == checkpoint R | 0 mismatches | {mismatches} | PASS |")
     A("")
     A("Data: `backtest.db` opened read-only (`mode=ro`), Twelve Data 15m bars, "
-      "open-market bars only. `$0.40` round-trip friction is already inside every "
-      "checkpoint `r_multiple`; controls re-use the same friction through the shared "
-      "`simulate_outcome` engine.")
+      "open-market bars only. The flat 0.40 price-unit-per-position-unit round-trip "
+      "execution cost is already inside every checkpoint `r_multiple`; controls re-use "
+      "the same convention through the shared `simulate_outcome` engine.")
     A("")
     A("---")
     A("")
@@ -930,8 +993,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # ---- 3. Direction split ----------------------------------------
     A("## 3. Direction split (constrained and unconstrained)")
     A("")
-    A("Unconstrained = the 688 de-duplicated opportunities with no portfolio rules. "
-      "Constrained = the 249 trades that survived the rules.")
+    A(f"Unconstrained = the {len(distinct):,} de-duplicated opportunities with no portfolio "
+      f"rules. Constrained = the {len(entered):,} trades that survived the rules. "
+      "This is a capacity-filtered 1R trade set, not a capital-aware account simulation.")
     A("")
     for title, dm, total_n in (
         ("Unconstrained", dir_unconstrained, len(distinct)),
@@ -964,12 +1028,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     A("## 4. Controls on the same constrained entries")
     A("")
     A("Controls reuse the exact same entry timestamps, stop distances, TP ladder "
-      "(mirrored to the opposite side) and `$0.40` friction. Two random-direction "
+      "(mirrored to the opposite side) and the flat 0.40 price-unit-per-position-unit "
+      "round-trip cost. Two random-direction "
       "controls are reported, both over seeds `1..1000`:")
     A("")
     A("1. **50/50 coin** — each entry independently assigned BUY/SELL.")
     A("2. **Ratio-preserving shuffle** — the period's BUY/SELL count ratio is kept "
       "exactly, only the assignment is shuffled (the pre-registered C2 control).")
+    A("")
+    A("If a mirrored control direction would void at entry under the Option B "
+      "contract, it contributes 0R (no position exists). Voided baseline entries "
+      "are excluded from both the real and control populations.")
     A("")
     A("Percentile rank = share of the 1,000 random means at or below the real mean R. "
       f"The pass rule is **percentile ≥ {PASS_PERCENTILE:.1f} on BOTH later half-years** "
@@ -1073,17 +1142,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
       f"{VALIDATION_PERIOD} carries {v_c['n']} constrained trades and {TEST_PERIOD} "
       f"carries {t_c['n']}. A 97.5% percentile threshold on ~50–70 trades has wide "
       "sampling error, and any half-year with n<30 is flagged descriptive-only above.")
-    A("4. **Simulation, not execution.** Fills are conservative same-bar "
-      "stop-first, 50% booked at TP1 with break-even stop, timeout mark-to-market at "
-      "500 bars, and a constant $0.40 round-trip. Real slippage, gaps, weekend "
-      "financing, broker minimum lot sizes and news voids are not modelled.")
+    A("4. **Simulation, not execution.** Under the Option B contract, entry fills at "
+      "the next 15m open, in-trade gaps fill at executable prices, same-bar ambiguity "
+      "resolves stop-first, and SL/TP levels stay fixed after signal generation. "
+      "50% is booked at TP1 with break-even stop; residual positions close at the "
+      "500-bar limit or end of data. Cost is a flat 0.40 price units per position unit "
+      "round trip. This is a capacity-filtered 1R simulation: shared capital, margin, "
+      "compounding, weekend financing, broker lot sizes and news voids are not modelled.")
     A("5. **Rule interpretation.** `MIN_ENTRY_SEPARATION` is implemented exactly as "
       "the frozen code (skip if *any* open same-direction entry is both <1h and "
       "<1 ATR away). The alternative reading — a global 1h escape after the last "
       "same-direction entry — was not silently substituted; it is noted here because "
       f"it changes the separation skip count ({skip_counts['all']['SEPARATION_RULE']} "
       "under the frozen reading).")
-    A("6. **Concurrency dominates the funnel.** The gap between 688 unconstrained "
+    A(f"6. **Concurrency dominates the funnel.** The gap between {len(distinct):,} unconstrained "
       "and the constrained set is almost entirely the 3-slot cap, not the strategy "
       "signal count. Holding times are long (median "
       f"{fmt(metrics_all['hold_bars_median'], 0)} market bars), so the portfolio is "

@@ -96,6 +96,8 @@ def run_step_c1() -> None:
         for r in data["records"]:
             if r.get("accepted") and r.get("accepted_trade"):
                 t = dict(r["accepted_trade"])
+                if t.get("void_reason") or not t.get("filled") or t.get("exit_time") is None:
+                    continue  # void entries carry no position, no R, no exit time
                 t["decision_dt"] = datetime.fromisoformat(r["decision_time"])
                 t["exit_dt"] = datetime.fromisoformat(t["exit_time"])
                 t["day"] = t["decision_dt"].strftime("%Y-%m-%d")
@@ -507,15 +509,27 @@ def run_step_c1() -> None:
     lines.append("| :--- | ---: | ---: | :--- |")
     for r_name, cnt in sorted(exit_mix_counts.items(), key=lambda x: x[1], reverse=True):
         pct = exit_mix_pct[r_name]
-        desc = "Full loss hit" if r_name == "STOP_LOSS" else (
-            "500-bar timeout forced closure at market price" if r_name == "TIMEOUT_MARK_TO_MARKET" else (
-                "Both TP1 and TP2 targets reached" if r_name == "TP2" else "TP1 reached, remaining closed at BE"
-            )
-        )
+        desc = {
+            "STOP_LOSS": "Full loss hit (stop or adverse gap fill)",
+            "TP1_BE_STOP": "TP1 reached, remaining closed at break-even",
+            "TP2": "Both TP1 and TP2 targets reached",
+            "TIME_EXPIRY": "500-bar max hold reached; residual closed at last bar close",
+            "END_OF_DATA": "Data ended; residual closed at last bar close",
+            "TIMEOUT_MARK_TO_MARKET": "Legacy label for 500-bar timeout forced closure",
+        }.get(r_name, "See simulator exit-reason definitions")
         lines.append(f"| `{r_name}` | {cnt:,} | **{pct:.1f}%** | {desc} |")
     lines.append("")
     lines.append("> **Holding Time Diagnostic**:")
-    lines.append(r"> Exactly **34.2% of entered trades exit via `TIMEOUT_MARK_TO_MARKET`** (reaching the 500-bar max holding limit).")
+    timeout_count = sum(
+        cnt for name, cnt in exit_mix_counts.items()
+        if name in {"TIME_EXPIRY", "END_OF_DATA", "TIMEOUT_MARK_TO_MARKET"}
+    )
+    timeout_pct = 100.0 * timeout_count / sum(exit_mix_counts.values()) if exit_mix_counts else 0.0
+    lines.append(
+        f"> **{timeout_pct:.1f}%** of entered trades exit via max-hold/end-of-data "
+        "(500-bar limit or end of data), labelled `TIME_EXPIRY`/`END_OF_DATA` by "
+        "the current simulator."
+    )
     lines.append("> Because positions take an average of 103.4 hours to exit, 3 open positions occupy all portfolio capacity for an average of 4+ days, forcing the rejection of 928 viable distinct setups.")
     lines.append("")
     lines.append("---")
@@ -532,7 +546,13 @@ def run_step_c1() -> None:
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("## 6. Executability on a $100 Account")
+    lines.append("## 6. Illustrative Position-Sizing Sensitivity (NOT an account simulation)")
+    lines.append("")
+    lines.append("> **Scope note.** The canonical baseline is a fixed-1R, capacity-filtered "
+      "simulation with no account equity, margin, lot sizing or compounding. The figures "
+      "below are an *illustrative* sensitivity using the instrument spec and the "
+      "RiskManager's **unused** sizing formula; they are not part of the headline R "
+      "results and must not be read as account-level backtest output.")
     lines.append("")
     lines.append("- **Instrument**: `XAU/USD` (Gold Spot / US Dollar)")
     lines.append("- **Contract Specifications** (from `server/app/services/market_data/symbols.py:get_instrument_spec`):")
@@ -559,7 +579,7 @@ def run_step_c1() -> None:
     lines.append(f"| **90th Percentile** | ${sd_p90:.2f} | ${sd_p90 * 1.0:.2f} | {sd_p90:.1f}% | ⚠️ **YES** ({sd_p90/0.5:.1f}x limit) |")
     lines.append(f"| **Maximum** | ${sd_max:.2f} | ${sd_max * 1.0:.2f} | {sd_max:.1f}% | ⚠️ **YES** ({sd_max/0.5:.1f}x limit) |")
     lines.append("")
-    lines.append("> **Executability Proof on a $100 Account**:")
+    lines.append("> **Illustrative sizing sensitivity** (not a simulated account):")
     lines.append(f"> - In **{over_05pct} of {len(stop_distances)} setups ({pct_over_05pct:.1f}%)**, the risk on the minimum allowable lot size (0.01 lot) exceeds 0.5% ($0.50) of a $100 account.")
     lines.append(f"> - In fact, in **{over_2pct} of {len(stop_distances)} setups ({pct_over_2pct:.1f}%)**, 0.01 lot risk exceeds 2.0% ($2.00) of a $100 account.")
     lines.append("> - Because standard brokers enforce a hard minimum lot size of 0.01, **the SMC strategy cannot be executed on a $100 account under a 0.5% risk rule** without catastrophic over-leveraging (median trade risks 33.6% of equity). A minimum account size of $6,800 is required to size the median stop ($33.63) at 0.5% risk.")
@@ -579,7 +599,7 @@ def run_step_c1() -> None:
         m_scan = sum(1 for t in scanner_entered if t["month"] == m)
         spd = m_port / m_days if m_days else 0.0
         util = (m_port / m_dist * 100.0) if m_dist else 0.0
-        m_split = distinct_setups[0]["split"]
+        m_split = "n/a"  # months with no setups have no split attribution
         for t in distinct_setups:
             if t["month"] == m:
                 m_split = t["split"]
