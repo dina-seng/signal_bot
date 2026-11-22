@@ -1,0 +1,9 @@
+stage,count,note
+RAW_ACCEPTED_BARS,2701,Every accepted 15m bar in the window
+SKIPPED_REPEAT_SWEEP,1966,Later 15m bars from the same opportunity_key
+DISTINCT_OPPORTUNITIES,735,ONE_ENTRY_PER_SWEEP applied
+SKIPPED_CONCURRENCY_CAP,463,MAX_CONCURRENT=3 already open
+SKIPPED_SEPARATION_RULE,2,< 1 ATR and < 1h from an open same-direction entry
+SKIPPED_DAILY_LOSS_STOP,12,Day already at or below -3.0 R realized
+SKIPPED_UNFILLED,0,n/a — all entries are market fills
+PORTFOLIO_ENTERED,258,Capacity-filtered 1R entries; 0.40 price units/position round trip
