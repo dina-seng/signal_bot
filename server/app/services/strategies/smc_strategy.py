@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from app.core.logging import logger
+from app.services.market_data.freshness import ensure_utc_datetime, get_timeframe_delta
 from app.schemas.indicators import IndicatorAnalysisResponse
 from app.schemas.liquidity import AdvancedStructureAnalysisResponse
 from app.schemas.signal import ScoreBreakdown, SignalDirection
@@ -127,6 +128,9 @@ class SMCStrategy(BaseStrategy):
         buy_score, buy_breakdown, buy_reasons, buy_fatal = self.consensus_filter.synthesize(
             buy_evals, SignalDirection.BUY
         )
+        # PA/confluence floors are enforced here (N-03): synthesize() reports
+        # them via is_qualified but deliberately does not zero the score.
+        buy_qualified = bool(buy_breakdown.is_qualified)
 
         # ----- Multi-Pillar Evaluations: SELL -----
         sell_evals = {
@@ -139,10 +143,30 @@ class SMCStrategy(BaseStrategy):
         sell_score, sell_breakdown, sell_reasons, sell_fatal = self.consensus_filter.synthesize(
             sell_evals, SignalDirection.SELL
         )
+        sell_qualified = bool(sell_breakdown.is_qualified)
 
         # ----- LTF Confirmation Filter (penalize if 15m doesn't confirm) -----
         final_buy_score = buy_score
         final_sell_score = sell_score
+
+        # As-of cutoff for LTF confirmation: the close of the last fully closed
+        # 15m bar, i.e. the decision time. This aligns the confirmation window
+        # with the 15m MTF structure used by the scoring pillars instead of
+        # leaving it frozen at the 1h close (N-02). The execution price anchor
+        # remains the frozen 1h close; only this strategy-side filter moves.
+        ltf_decision_time: Optional[datetime] = None
+        if candles_15m:
+            for c in reversed(candles_15m):
+                is_closed = c.get("is_closed") if isinstance(c, dict) else getattr(c, "is_closed", None)
+                if is_closed is False:
+                    continue
+                ts = c.get("timestamp") if isinstance(c, dict) else getattr(c, "timestamp", None)
+                if ts is not None:
+                    try:
+                        ltf_decision_time = ensure_utc_datetime(ts) + get_timeframe_delta("15m")
+                    except Exception:
+                        ltf_decision_time = None
+                break
 
         if timeframe in ["1h", "4h"] and candles_15m:
             # BUY LTF check
@@ -152,6 +176,7 @@ class SMCStrategy(BaseStrategy):
                 primary_candles=candles,
                 ltf_candles=candles_15m,
                 max_bars_ago=5,
+                decision_time=ltf_decision_time,
             )
             if not is_buy_confirmed:
                 final_buy_score = max(0.0, buy_score - LTF_UNCONFIRMED_PENALTY)
@@ -168,6 +193,7 @@ class SMCStrategy(BaseStrategy):
                 primary_candles=candles,
                 ltf_candles=candles_15m,
                 max_bars_ago=5,
+                decision_time=ltf_decision_time,
             )
             if not is_sell_confirmed:
                 final_sell_score = max(0.0, sell_score - LTF_UNCONFIRMED_PENALTY)
@@ -178,12 +204,23 @@ class SMCStrategy(BaseStrategy):
                 logger.info(f"LTF confirmation failed for SELL {symbol} [{timeframe}]: {sell_ltf_reason}")
 
         # ----- Direction Selection -----
-        if final_buy_score >= final_sell_score and final_buy_score >= self._min_score_threshold:
+        # A score alone is not a setup: the PA and confluence floors must also
+        # pass (is_qualified), otherwise a floor-violating signal could be
+        # accepted solely on structure + liquidity strength (N-03).
+        if (
+            final_buy_score >= final_sell_score
+            and final_buy_score >= self._min_score_threshold
+            and buy_qualified
+        ):
             direction = SignalDirection.BUY
             total_score = final_buy_score
             breakdown = buy_breakdown
             reasons = buy_reasons
-        elif final_sell_score > final_buy_score and final_sell_score >= self._min_score_threshold:
+        elif (
+            final_sell_score > final_buy_score
+            and final_sell_score >= self._min_score_threshold
+            and sell_qualified
+        ):
             direction = SignalDirection.SELL
             total_score = final_sell_score
             breakdown = sell_breakdown
@@ -198,8 +235,12 @@ class SMCStrategy(BaseStrategy):
                 f"Market State: {structure.market_state}",
                 f"Technical Bias: {indicators.confluence_bias} (Score: {indicators.confluence_score:+.0f})",
             ]
-            # Include best catalysts as context
+            # Include best catalysts as context, surfacing any floor veto first.
             best_catalysts = buy_reasons if final_buy_score >= final_sell_score else sell_reasons
+            best_catalysts = sorted(
+                best_catalysts,
+                key=lambda c: 0 if "Floor Not Met" in c else 1,
+            )
             for c in best_catalysts[:3]:
                 if not c.startswith("MARKET BIAS"):
                     reasons.append(f"Observation: {c}")

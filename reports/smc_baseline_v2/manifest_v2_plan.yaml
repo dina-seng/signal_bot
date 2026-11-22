@@ -1,0 +1,58 @@
+# Manifest scaffold for the Baseline v2 strategy-fix run.
+# NOT a run manifest: finalize after committing the strategy changes and
+# executing reports/smc_baseline_v2/. Do not use this file as provenance.
+
+baseline_id: smc-baseline-v2
+status: PLANNED
+
+strategy:
+  # Recomputed with hash_paths([smc_strategy.py, evaluators.py, risk_manager.py])
+  # after the N-03 / N-02 fixes. Verified locally.
+  config_hash: 3b5600d82dc70bc34c97d25a95abd28ad34d9659777e407e3036e085d0c26861
+  # Set to the commit SHA that CONTAINS the strategy edits:
+  #   git rev-parse HEAD
+  frozen_commit: PENDING_POST_COMMIT
+  # Provenance gap: ltf_confirmation.py is not part of strategy_config_hash
+  # (would require editing the frozen smc_replay.py). Current sha256:
+  #   cc1c9345abab50125ed0557a385b17d4198b0a3bdb947011483e00796d8fea5b
+  # The frozen_commit above pins it; optionally record this hash here.
+
+execution:
+  # MUST remain byte-identical to Baseline v1 — no frozen script was touched.
+  convention_version: optionB-v1
+  config_hash: ed30420334716bcafc37c96db97c620f0cb36fd1cee21757556c472007246041
+  cadence: 15m_close
+  fill: next_15m_open
+  price_anchor: 1h_close        # FROZEN — unchanged by the LTF cadence fix
+  geometry: signal_price_anchored_fixed
+  r_denominator: planned_risk
+  gap_fill: adverse_open / limit_or_better
+  intrabar: sl_first
+  cost:
+    value: 0.4
+    basis: price_units_per_position_unit_round_trip
+    deductions_per_trade: 1
+
+data:
+  # Reuse the pinned v1 snapshot; recompute only if the DB changes.
+  sha256: 34b740025988355e3c624791d262b0e8998598fa658d893e76507ceef82d9ae1
+  symbol: XAU/USD
+  source: twelvedata
+  timeframe: 15m
+splits:
+  id: smc-v1-60_20_20
+
+strategy_changes:
+  - id: N-03
+    description: PA (10) and confluence (20) floors enforced as hard filters in SMCStrategy direction selection.
+    expected_v1_delta: 0 accepted trades (0/695 v1 opportunities violated either floor)
+  - id: N-02
+    description: LTF confirmation window anchored to the 15m decision close instead of the 1h close; execution price anchor unchanged.
+    expected_v1_delta: up to 322 LTF-penalized v1 opportunities may change verdict
+
+expected:
+  # Fill from the v2 run; v1 reference: n_filled=695, n_void_entry=42, total_r=136.4979
+  n_filled: TBD
+  n_void_entry: TBD
+  total_r: TBD
+  r_tol: 0.005

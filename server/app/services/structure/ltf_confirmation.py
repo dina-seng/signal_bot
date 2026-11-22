@@ -25,26 +25,42 @@ class LTFConfirmationEngine:
         primary_candles: Sequence[Union[CandleBase, Any]],
         ltf_candles: Sequence[Union[CandleBase, Any]],
         max_bars_ago: int = 5,
+        decision_time: Optional[datetime] = None,
     ) -> tuple[bool, str]:
         """
         Check if Lower Timeframe confirms the Higher Timeframe signal.
-        
+
         Args:
             primary_timeframe: The main signal timeframe (e.g., "1h", "4h")
             primary_direction: Signal direction (BULLISH or BEARISH)
             primary_candles: Primary timeframe candles
             ltf_candles: Lower timeframe candles (e.g., 15m for 1H signals)
             max_bars_ago: How many recent LTF bars to check for confirmation
-            
+            decision_time: As-of cutoff for the LTF window. When supplied by
+                ``SMCStrategy`` this is the 15m decision close, so the LTF
+                confirmation sees the same 15m data as the MTF alignment. When
+                omitted, the legacy primary-timeframe (1h) close is used.
+
         Returns:
             Tuple of (is_confirmed: bool, reason: str)
         """
         if not ltf_candles:
             return False, "Insufficient LTF data for confirmation"
 
-        # Determine primary candle close time if available
+        # Determine the LTF window cutoff. The 15m decision close is preferred:
+        # it keeps the confirmation window aligned with the 15m MTF structure
+        # actually used for the decision instead of freezing it at the 1h close
+        # (up to 45 minutes stale intra-hour). Candles closing after the cutoff
+        # are still excluded, so this introduces no lookahead.
         primary_close_time = None
-        if primary_candles:
+        if decision_time is not None:
+            try:
+                primary_close_time = ensure_utc_datetime(decision_time)
+            except Exception:
+                primary_close_time = None
+
+        # Legacy fallback: derive the cutoff from the primary (1h) candle close.
+        if primary_close_time is None and primary_candles:
             last_prim = primary_candles[-1]
             prim_ts = getattr(last_prim, "timestamp", None)
             if isinstance(last_prim, dict):
