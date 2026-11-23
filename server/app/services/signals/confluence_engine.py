@@ -615,7 +615,7 @@ class ConfluenceEngine:
         """
         # Single authoritative risk % for the whole signal/execution pipeline.
         risk_percent = risk_percent or settings.MAX_RISK_PERCENT
-        logger.info(
+        logger.debug(
             f"[RISK] {symbol}: signal sizing uses risk={risk_percent:.1f}% "
             f"balance=${account_balance:,.2f} (settings.MAX_RISK_PERCENT)"
         )

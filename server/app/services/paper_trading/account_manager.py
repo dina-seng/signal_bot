@@ -66,6 +66,14 @@ class VirtualAccountManager:
                 account = db.scalars(stmt).first()
         return account
 
+    def get_active_account(self, db: Session) -> Optional[VirtualAccount]:
+        """Return the active paper account, or None. Never creates one implicitly."""
+        return db.scalars(
+            select(VirtualAccount)
+            .where(VirtualAccount.is_active == True)
+            .order_by(VirtualAccount.id.asc())
+        ).first()
+
     def create_account(self, db: Session, request: VirtualAccountCreate) -> VirtualAccount:
         """Create a new virtual account."""
         account = VirtualAccount(

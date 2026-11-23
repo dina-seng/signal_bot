@@ -420,7 +420,7 @@ class WalkForwardHarness:
                 candles_4h=eval_4h,
                 candles_15m=eval_15m,
                 account_balance=10000.0,
-                risk_percent=settings.MAX_RISK_PERCENT,
+                risk_percent=settings.RESEARCH_RISK_PERCENT,
                 as_of=current_bar_close,
                 backtest_mode=True,
             )

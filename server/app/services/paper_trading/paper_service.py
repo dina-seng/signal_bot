@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
+from app.core.config import settings
 from app.core.logging import logger
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
 from app.schemas.paper_trading import (
@@ -42,6 +43,20 @@ class PaperTradingService:
     # -------------------------------------------------------------
     # 1. Virtual Account Operations
     # -------------------------------------------------------------
+    def get_execution_context(self, db: Session) -> Optional[Dict[str, float]]:
+        """Authoritative balance + risk % shared by dashboard, scanner and executor.
+
+        Returns None when no active paper account exists; callers must handle that
+        explicitly instead of substituting a fictional balance.
+        """
+        account = self.account_manager.get_active_account(db)
+        if account is None:
+            return None
+        return {
+            "balance": float(account.balance),
+            "risk_percent": float(settings.MAX_RISK_PERCENT),
+        }
+
     def get_account_summary(self, db: Session, account_id: Optional[int] = None) -> VirtualAccountResponse:
         """Get virtual account financial summary."""
         if account_id:

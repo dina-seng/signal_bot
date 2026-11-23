@@ -491,12 +491,14 @@ export const quantViewApi = {
   },
 
   // 8. Signals (Default unified=true for multi-timeframe consensus)
+  // Balance and risk % are resolved server-side from the active paper account.
   async getSignals(limit = 20, unified = true): Promise<{ data: BackendSignal[]; durationMs: number }> {
     console.log(`[API] GET /api/v1/signals?limit=${limit}&unified=${unified}`);
     return fetchWithTiming<BackendSignal[]>(`${API_BASE}/signals?limit=${limit}&unified=${unified}`);
   },
 
   // 9. Scan All Markets On-Demand (Unified Multi-Timeframe)
+  // No balance/risk arguments: backend uses the authoritative paper-account context.
   async scanMarkets(timeframe = '1h', unified = true): Promise<{ data: BackendMarketScanResult; durationMs: number }> {
     console.log(`[API] GET /api/v1/signals/scan?unified=${unified}&timeframe=${timeframe}`);
     return fetchWithTiming<BackendMarketScanResult>(`${API_BASE}/signals/scan?unified=${unified}&timeframe=${timeframe}&persist_qualified=true`);

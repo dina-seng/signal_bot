@@ -360,47 +360,52 @@ class AutomatedMarketScanner:
             # 3. Run Strategy Signal Evaluation across symbols.
             # Signal-level sizing must use the SAME balance and risk % as the
             # paper executor, otherwise alerts show impossible lot sizes.
-            scan_account = self.paper_service.account_manager.get_or_create_default_account(db)
-            scan_balance = float(scan_account.balance)
-            scan_risk = float(settings.MAX_RISK_PERCENT)
-            logger.info(
-                f"[RISK] Signal sizing context: balance=${scan_balance:,.2f} "
-                f"risk={scan_risk:.1f}% (settings.MAX_RISK_PERCENT)"
-            )
+            scan_context = self.paper_service.get_execution_context(db)
             scan_batches = []
-            if timeframes or timeframe:
-                for tf in target_timeframes:
-                    logger.info(f"Signal analysis started for timeframe [{tf}]")
+            if scan_context is None:
+                logger.error(
+                    "Signal scan skipped: no active paper account for authoritative sizing."
+                )
+            else:
+                scan_balance = scan_context["balance"]
+                scan_risk = scan_context["risk_percent"]
+                logger.info(
+                    f"[RISK] Signal sizing context: balance=${scan_balance:,.2f} "
+                    f"risk={scan_risk:.1f}% (paper account + settings.MAX_RISK_PERCENT)"
+                )
+                if timeframes or timeframe:
+                    for tf in target_timeframes:
+                        logger.info(f"Signal analysis started for timeframe [{tf}]")
+                        try:
+                            batch_res = self.signal_generator.scan_all_symbols(
+                                db=db,
+                                symbols=target_symbols,
+                                timeframe=tf,
+                                account_balance=scan_balance,
+                                risk_percent=scan_risk,
+                                persist_qualified=True,
+                            )
+                            scan_batches.append(batch_res)
+                        except Exception as e:
+                            logger.error(f"Signal analysis failed for timeframe [{tf}]: {e}")
+                            db.rollback()
+                            continue
+                        logger.info(f"Signal analysis completed for timeframe [{tf}]")
+                else:
+                    logger.info("Unified multi-timeframe signal analysis started across target symbols")
                     try:
-                        batch_res = self.signal_generator.scan_all_symbols(
+                        unified_res = self.signal_generator.scan_unified_all(
                             db=db,
                             symbols=target_symbols,
-                            timeframe=tf,
                             account_balance=scan_balance,
                             risk_percent=scan_risk,
                             persist_qualified=True,
                         )
-                        scan_batches.append(batch_res)
+                        scan_batches.append(unified_res)
                     except Exception as e:
-                        logger.error(f"Signal analysis failed for timeframe [{tf}]: {e}")
+                        logger.error(f"Unified signal analysis failed: {e}")
                         db.rollback()
-                        continue
-                    logger.info(f"Signal analysis completed for timeframe [{tf}]")
-            else:
-                logger.info("Unified multi-timeframe signal analysis started across target symbols")
-                try:
-                    unified_res = self.signal_generator.scan_unified_all(
-                        db=db,
-                        symbols=target_symbols,
-                        account_balance=10000.0,
-                        risk_percent=0.5,
-                        persist_qualified=True,
-                    )
-                    scan_batches.append(unified_res)
-                except Exception as e:
-                    logger.error(f"Unified signal analysis failed: {e}")
-                    db.rollback()
-                logger.info("Unified signal analysis completed")
+                    logger.info("Unified signal analysis completed")
 
             for scan_res in scan_batches:
                 for result in scan_res.results:
@@ -548,7 +553,14 @@ class AutomatedMarketScanner:
                                     trade = db.get(PaperTrade, trade_id)
                                     if trade:
                                         if "reached TP1" in ev:
-                                            closed_l = round(trade.initial_position_size * 0.5, 2)
+                                            # Derive the closed volume from the position itself;
+                                            # in full-3R mode TP1 closes the whole position.
+                                            closed_l = round(
+                                                trade.initial_position_size - trade.remaining_position_size,
+                                                2,
+                                            )
+                                            if closed_l <= 0:
+                                                closed_l = trade.initial_position_size
                                             msg_text = self.formatter.format_tp1_hit(
                                                 symbol=trade.symbol,
                                                 price=trade.take_profit_1,

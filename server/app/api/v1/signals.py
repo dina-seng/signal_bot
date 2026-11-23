@@ -7,7 +7,7 @@ from sqlalchemy import select, desc
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.api.deps import get_signal_generator
+from app.api.deps import get_paper_trading_service, get_signal_generator
 from app.models.signal import Signal
 from app.schemas.signal import (
     MarketScanResponse,
@@ -18,6 +18,14 @@ from app.schemas.signal import (
 from app.services.signals import SignalGenerator
 
 router = APIRouter(prefix="/signals", tags=["Trading Signals & Scanner"])
+
+
+def _authoritative_signal_context(db, service) -> tuple[float, float]:
+    """Balance and risk % for signal sizing come from the paper account, never the client."""
+    context = service.get_execution_context(db)
+    if context is None:
+        raise HTTPException(status_code=503, detail="No active paper account available for signal sizing.")
+    return context["balance"], context["risk_percent"]
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -95,13 +103,17 @@ def get_signals(
 def scan_markets(
     unified: bool = Query(True, description="Whether to use Unified Multi-Timeframe Scanner"),
     timeframe: str = Query("1h", description="Timeframe to scan if unified is False (e.g. 15m, 1h, 4h)"),
-    account_balance: float = Query(10000.0, ge=100.0),
-    risk_percent: float = Query(settings.MAX_RISK_PERCENT, ge=0.1, le=5.0),
     persist_qualified: bool = Query(True, description="Whether to persist qualified signals to DB"),
     db: Session = Depends(get_db),
     generator: SignalGenerator = Depends(get_signal_generator),
+    service=Depends(get_paper_trading_service),
 ):
-    """Scan all supported Forex and Commodity markets for high-confluence trade setups."""
+    """Scan all supported Forex and Commodity markets for high-confluence trade setups.
+
+    Balance and risk % are resolved from the active paper account; client-supplied
+    values are intentionally not accepted.
+    """
+    account_balance, risk_percent = _authoritative_signal_context(db, service)
     if unified:
         return generator.scan_unified_all(
             db=db,
@@ -123,13 +135,13 @@ def scan_markets(
 
 @router.get("/unified", response_model=MarketScanResponse)
 def get_unified_signals(
-    account_balance: float = Query(10000.0, ge=100.0),
-    risk_percent: float = Query(settings.MAX_RISK_PERCENT, ge=0.1, le=5.0),
     persist_qualified: bool = Query(True, description="Whether to persist qualified signals to DB"),
     db: Session = Depends(get_db),
     generator: SignalGenerator = Depends(get_signal_generator),
+    service=Depends(get_paper_trading_service),
 ):
-    """Unified Multi-Timeframe Scanner endpoint returning consistent signals across 15m, 30m, and 1H."""
+    """Unified Multi-Timeframe Scanner endpoint; balance/risk come from the paper account."""
+    account_balance, risk_percent = _authoritative_signal_context(db, service)
     return generator.scan_unified_all(
         db=db,
         symbols=settings.SUPPORTED_SYMBOLS,

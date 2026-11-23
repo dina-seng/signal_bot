@@ -66,6 +66,14 @@ class Settings(BaseSettings):
         le=5.0,
         validation_alias=AliasChoices("MAX_RISK_PERCENT", "RISK_PER_ORDER_PCT"),
     )
+    # Historical research/backtests keep their own default so a live paper-risk
+    # change never silently mutates research signal populations.
+    RESEARCH_RISK_PERCENT: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=5.0,
+        description="Risk % used by research/backtest harnesses only",
+    )
 
     # Backtesting & Execution Friction (USD per ounce for XAU/USD)
     XAUUSD_SPREAD: float = Field(

@@ -285,7 +285,14 @@ class PaperPositionManager:
                     events.append(f"Position #{t.id} ({t.symbol}) hit TP2 @ {t.take_profit_2:.5f}")
                     continue
 
-                # 3. Take Profit 1 Check (Partial close 50% + Move SL to BE)
+                # 3a. TP2 absent -> documented fallback: full exit at TP1.
+                #     Keeps positions with only one target managed; no invalid partial lots.
+                elif t.take_profit_1 and not t.take_profit_2 and price >= t.take_profit_1:
+                    self.close_position(db, t.id, current_price=t.take_profit_1, close_ratio=1.0, exit_reason="TP1_FULL_EXIT")
+                    tp1_count += 1
+                    events.append(f"Position #{t.id} ({t.symbol}) hit TP1 (no TP2 set): full exit.")
+
+                # 3b. Take Profit 1 Check (Partial close 50% + Move SL to BE)
                 elif (
                     settings.PARTIAL_CLOSE_AT_TP1
                     and t.remaining_position_size > float(self.broker_spec.min_lot) + 1e-9
@@ -320,7 +327,13 @@ class PaperPositionManager:
                     events.append(f"Position #{t.id} ({t.symbol}) hit TP2 @ {t.take_profit_2:.5f}")
                     continue
 
-                # 3. Take Profit 1 Check
+                # 3a. TP2 absent -> documented fallback: full exit at TP1.
+                elif t.take_profit_1 and not t.take_profit_2 and price <= t.take_profit_1:
+                    self.close_position(db, t.id, current_price=t.take_profit_1, close_ratio=1.0, exit_reason="TP1_FULL_EXIT")
+                    tp1_count += 1
+                    events.append(f"Position #{t.id} ({t.symbol}) hit TP1 (no TP2 set): full exit.")
+
+                # 3b. Take Profit 1 Check
                 elif (
                     settings.PARTIAL_CLOSE_AT_TP1
                     and t.remaining_position_size > float(self.broker_spec.min_lot) + 1e-9

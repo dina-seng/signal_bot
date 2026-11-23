@@ -424,6 +424,11 @@ class PaperOrderExecutor:
         tp1 = order.take_profit_1
         tp2 = order.take_profit_2
 
+        if status == "OPEN" and not tp1 and not tp2:
+            raise ValueError(
+                "Unmanaged position rejected: at least one take-profit target is required."
+            )
+
         if not sl or not tp1:
             risk_res = self.risk_manager.calculate_trade_risk(
                 symbol=order.symbol,
@@ -435,6 +440,12 @@ class PaperOrderExecutor:
             sl = sl or risk_res.stop_loss
             tp1 = tp1 or risk_res.take_profit_1
             tp2 = tp2 or risk_res.take_profit_2
+
+        if status == "OPEN" and (sl is None or (tp1 is None and tp2 is None)):
+            raise ValueError(
+                "Unmanaged position rejected: a stop loss and at least one take-profit "
+                "target are required."
+            )
 
         # Broker-spec sizing from the resolved price distance (Decimal, no float floor).
         risk_pct = order.risk_percent or settings.MAX_RISK_PERCENT
