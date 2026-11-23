@@ -204,6 +204,20 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           bottom: 0.22,
         },
       },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
       autoSize: true,
     });
 
@@ -662,16 +676,16 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
   return (
     <div className="relative min-w-0 w-full overflow-hidden p-3.5 sm:p-5 space-y-3 font-sans">
-      {/* Chart Top Header & Toolbar */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-2.5 border-b border-[#1d2230]">
-        <div className="flex items-center gap-2.5 flex-wrap">
+      {/* Chart Top Header & Toolbar: Fluid Wrapping & Horizontally Scrollable Controls on Mobile */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 pb-2.5 border-b border-[#1d2230]">
+        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap min-w-0">
           {/* Symbol Select Buttons */}
-          <div className="flex items-center p-0.5 rounded bg-[#0a0b10] border border-[#1d2230]">
+          <div className="flex items-center p-0.5 rounded-lg bg-[#0a0b10] border border-[#1d2230] shrink-0">
             {(['XAU/USD'] as PairSymbol[]).map((sym) => (
               <button
                 key={sym}
                 onClick={() => onSymbolChange(sym)}
-                className={`px-2 py-0.5 text-xs font-bold rounded transition-colors cursor-pointer ${
+                className={`min-h-[44px] sm:min-h-[32px] md:min-h-0 px-2.5 py-1 text-xs font-bold rounded flex items-center justify-center transition-colors cursor-pointer ${
                   selectedSymbol === sym
                     ? 'bg-[#161922] text-[#00e676] border border-[#1d2230]'
                     : 'text-slate-400 hover:text-slate-200'
@@ -682,13 +696,13 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             ))}
           </div>
 
-          {/* Timeframe Select (Supports 1m, 5m, 15m, 1h, 4h, 1D) */}
-          <div className="flex items-center p-0.5 rounded bg-[#0a0b10] border border-[#1d2230]">
+          {/* Timeframe Select (Supports 1m, 5m, 15m, 1h, 4h, 1D) - Horizontally Scrollable on Mobile */}
+          <div className="flex items-center p-0.5 rounded-lg bg-[#0a0b10] border border-[#1d2230] overflow-x-auto max-w-full scrollbar-none touch-pan-x">
             {['1m', '5m', '15m', '1h', '4h', '1D'].map((tf) => (
               <button
                 key={tf}
                 onClick={() => setSelectedTimeframe(tf)}
-                className={`px-2 py-0.5 text-xs font-semibold rounded transition-colors cursor-pointer ${
+                className={`min-h-[44px] sm:min-h-[32px] md:min-h-0 min-w-[38px] sm:min-w-0 px-2.5 py-1 text-xs font-semibold rounded flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
                   selectedTimeframe === tf
                     ? 'bg-[#161922] text-cyan-400 border border-[#1d2230]'
                     : 'text-slate-500 hover:text-slate-300'
@@ -701,59 +715,60 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
           {/* Active SMC Signal Banner Pill if present */}
           {currentSignal && (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-950 border border-cyan-500/30 text-[10px]">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-950 border border-cyan-500/30 text-[10px] shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
               <span className="text-cyan-300 font-bold">
                 {currentSignal.direction} OVERLAY ACTIVE
               </span>
-              <span className="text-zinc-500">
+              <span className="text-zinc-500 hidden sm:inline">
                 (TP1: {currentSignal.takeProfit1 ? formatPrice(selectedSymbol, currentSignal.takeProfit1) : '--'})
               </span>
             </div>
           )}
         </div>
 
-        {/* Indicators Overlay Toggle & Data Source Badge */}
-        <div className="flex items-center gap-1.5 flex-wrap">
+        {/* Indicators Overlay Toggle & Data Source Badge: Stack / Wrap Gracefully */}
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full lg:w-auto justify-start lg:justify-end">
           <span
-            className={`px-2 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 ${
+            className={`px-2 py-1 rounded text-[10px] font-bold border flex items-center gap-1 shrink-0 ${
               isRealData
                 ? 'bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30'
                 : 'bg-zinc-800 text-zinc-400 border-zinc-700'
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
-            {isRealData ? 'LIGHTWEIGHT CHARTS (TV)' : 'AWAITING DATA'}
+            <span className="hidden xs:inline">{isRealData ? 'LIGHTWEIGHT CHARTS (TV)' : 'AWAITING DATA'}</span>
+            <span className="xs:hidden">{isRealData ? 'TV CHART' : 'WAITING'}</span>
           </span>
 
           <button
             onClick={() => setShowEMA(!showEMA)}
-            className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors flex items-center gap-1 cursor-pointer ${
+            className={`min-h-[44px] md:min-h-0 px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer ${
               showEMA
                 ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
                 : 'bg-[#0a0b10] text-slate-500 border-[#1d2230]'
             }`}
           >
-            <Layers className="w-3 h-3" />
+            <Layers className="w-3.5 h-3.5 text-purple-400" />
             <span>EMA 20/50</span>
           </button>
 
           <button
             onClick={() => setShowSR(!showSR)}
-            className={`px-2 py-0.5 rounded text-xs font-medium border transition-colors flex items-center gap-1 cursor-pointer ${
+            className={`min-h-[44px] md:min-h-0 px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer ${
               showSR
                 ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
                 : 'bg-[#0a0b10] text-slate-500 border-[#1d2230]'
             }`}
           >
-            <Layers className="w-3 h-3" />
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
             <span>S/R {liquidityZones?.sr_zones?.length ? `(${liquidityZones.sr_zones.length})` : ''}</span>
           </button>
 
           <button
             onClick={loadChartData}
             title="Reload Chart Data"
-            className="p-1 rounded bg-[#0a0b10] hover:bg-zinc-800 text-slate-400 hover:text-white border border-[#1d2230] transition-colors cursor-pointer"
+            className="min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center p-2 md:p-1 rounded-lg bg-[#0a0b10] hover:bg-zinc-800 text-slate-400 hover:text-white border border-[#1d2230] transition-colors cursor-pointer shrink-0"
           >
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
@@ -880,7 +895,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       </div>
 
       {/* TradingView Lightweight Charts Viewport */}
-      <div className="relative w-full h-[300px] sm:h-[400px] lg:h-[500px] bg-[#090a0f] rounded-xl border border-white/10 overflow-hidden shadow-inner">
+      <div className="relative w-full h-[320px] sm:h-[400px] md:h-[460px] lg:h-[500px] min-w-0 bg-[#090a0f] rounded-xl border border-white/10 overflow-hidden shadow-inner">
         {candles.length === 0 && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-zinc-950/80 text-zinc-500 font-mono text-xs">
             <Activity className="w-6 h-6 animate-pulse text-cyan-400 mb-2" />

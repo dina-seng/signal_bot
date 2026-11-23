@@ -124,3 +124,13 @@
   border-color: rgba(255, 255, 255, 0.16);
   background-color: rgba(255, 255, 255, 0.06);
 }
+
+/* Hide scrollbars while allowing touch/scroll interaction */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+

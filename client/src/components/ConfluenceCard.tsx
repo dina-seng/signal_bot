@@ -113,7 +113,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
             {/* View Mode Toggle Button */}
             <button
               onClick={() => setViewMode(viewMode === 'ticker' ? 'tradingview' : 'ticker')}
-              className={`rounded-lg border px-2 py-0.5 font-mono text-[10px] transition-colors cursor-pointer ${
+              className={`min-h-[44px] sm:min-h-0 flex items-center justify-center rounded-lg border px-2.5 py-1 sm:py-0.5 font-mono text-[10px] transition-colors cursor-pointer ${
                 viewMode === 'tradingview'
                   ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
                   : 'bg-white/[0.04] text-zinc-400 border-white/10 hover:text-white'
@@ -144,8 +144,8 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
           </div>
         </div>
 
-        {/* 2-Column Responsive Body Layout on Desktop */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-5">
+        {/* Responsive Body Layout: 1 col on mobile, 2 cols on tablet, 1 col inside 40% desktop card, 2 cols on 2xl */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-4">
           {/* LEFT COLUMN: Price Ticker & AI Neural Intelligence */}
           <div className="space-y-3.5">
             {/* 2. Live Price Ticker or TradingView Mini Widget */}
@@ -215,7 +215,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
               <div className="mt-2.5">
                 <button
                   onClick={() => setIsAiExpanded(!isAiExpanded)}
-                  className="flex w-full items-center justify-between text-[11px] font-medium text-indigo-300/80 hover:text-indigo-200 transition-colors cursor-pointer"
+                  className="flex w-full min-h-[44px] sm:min-h-0 items-center justify-between text-[11px] font-medium text-indigo-300/80 hover:text-indigo-200 transition-colors cursor-pointer"
                 >
                   <span className="flex items-center gap-1">
                     <Sparkles className="h-3 w-3 text-indigo-400" />
@@ -226,7 +226,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
 
                 {isAiExpanded && (
                   <div className="mt-1.5 rounded-r-lg border-l-2 border-indigo-500 bg-indigo-950/40 p-2.5 pl-3 backdrop-blur-sm">
-                    <p className="font-sans text-xs italic leading-relaxed text-indigo-200/90">
+                    <p className="font-sans text-xs italic leading-relaxed text-indigo-200/90 whitespace-normal break-words">
                       "{aiReasoningText}"
                     </p>
                   </div>

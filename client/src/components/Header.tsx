@@ -251,19 +251,19 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Right: Glassmorphic Financial Metrics & Synchronization Controls (Fluid wrapping & no squish) */}
-        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap sm:flex-nowrap overflow-x-auto max-w-full py-0.5 justify-end">
+        {/* Right: Glassmorphic Financial Metrics & Synchronization Controls */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 flex-wrap sm:flex-nowrap max-w-full py-0.5 justify-end">
           {/* Account Balance */}
-          <div className="flex items-baseline gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
-            <span className="text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">BAL:</span>
+          <div className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
+            <span className="text-[9px] sm:text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">BAL:</span>
             <span className="text-xs sm:text-sm font-semibold text-white">
               {formatCurrency(account.balance)}
             </span>
           </div>
 
           {/* Equity */}
-          <div className="flex items-baseline gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
-            <span className="text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">EQ:</span>
+          <div className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
+            <span className="text-[9px] sm:text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">EQ:</span>
             <span className="text-xs sm:text-sm font-semibold text-white">
               {formatCurrency(account.equity)}
             </span>
@@ -271,17 +271,17 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Floating P&L */}
           <div
-            className={`flex items-baseline gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl backdrop-blur-md border font-mono transition-all shrink-0 ${
+            className={`flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl backdrop-blur-md border font-mono transition-all shrink-0 ${
               pnlMeta.isPositive
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/15'
                 : 'bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500/15'
             }`}
           >
-            <span className="text-[10px] uppercase opacity-75 font-semibold tracking-wider">P&amp;L:</span>
+            <span className="text-[9px] sm:text-[10px] uppercase opacity-75 font-semibold tracking-wider">P&amp;L:</span>
             <span className="text-xs sm:text-sm font-semibold">
               {pnlMeta.formatted}
             </span>
-            <span className="text-[10px] opacity-80">
+            <span className="text-[9px] sm:text-[10px] opacity-80 hidden xs:inline sm:inline">
               ({pnlMeta.isPositive ? '+' : ''}{account.unrealizedPnlPercent.toFixed(2)}%)
             </span>
           </div>
@@ -299,11 +299,11 @@ export const Header: React.FC<HeaderProps> = ({
             <span>SYNC {pollSecondsRemaining}s</span>
           </div>
 
-          {/* Refresh Action Button */}
+          {/* Refresh Action Button with minimum 44px touch target on mobile */}
           <button
             onClick={onRefresh}
             disabled={isRefreshing}
-            className={`px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center gap-1.5 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer shrink-0 ${
+            className={`min-h-[44px] min-w-[44px] px-3 sm:px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center justify-center gap-1.5 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer shrink-0 ${
               isRefreshing ? 'opacity-70 cursor-wait' : ''
             }`}
             title="Trigger manual sync across all API endpoints"
@@ -314,7 +314,7 @@ export const Header: React.FC<HeaderProps> = ({
                 isRefreshing ? 'animate-spin' : ''
               }`}
             />
-            <span className="hidden sm:inline text-xs">Sync</span>
+            <span className="text-xs">Sync</span>
           </button>
         </div>
       </div>

@@ -43,7 +43,7 @@ import {
   AppConfig,
 } from '../services/api';
 import { formatPrice, getTimeUntil } from '../utils/formatters';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Send, Cpu, ChevronDown, ChevronUp } from 'lucide-react';
 
 const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD'];
 
@@ -90,6 +90,7 @@ export const Dashboard: React.FC = () => {
 
   // UI interaction states
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+  const [isMobileTelemetryOpen, setIsMobileTelemetryOpen] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isSendingTestTelegram, setIsSendingTestTelegram] = useState<boolean>(false);
   const [testNotificationResult, setTestNotificationResult] = useState<{
@@ -842,7 +843,7 @@ export const Dashboard: React.FC = () => {
       />
 
       {/* Main Content Wrapper (Elevated above background mesh) */}
-      <div className="relative z-10 lg:pl-56 flex flex-col min-h-screen">
+      <div className="relative z-10 lg:pl-[240px] flex flex-col min-h-screen">
         {/* Top Header with Real Balance, LIVE DATA badge, and Refresh Data button */}
         <Header
           account={account}
@@ -987,7 +988,7 @@ export const Dashboard: React.FC = () => {
         )}
 
         {/* Main Content Body - Responsive Padding & Overflow Boundary */}
-        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-x-hidden relative z-10">
+        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-16 md:pb-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-x-hidden relative z-10">
           {/* 1. UNIFIED DASHBOARD TAB - BENTO GRID LAYOUT */}
           {currentTab === 'dashboard' && (
             <div className="grid grid-cols-12 gap-4 w-full">
@@ -1012,32 +1013,35 @@ export const Dashboard: React.FC = () => {
                 />
               </GlassCard>
 
-              {/* Candlestick Chart Area (Hero 8-col) */}
-              <GlassCard id="chart-section" className="col-span-12 lg:col-span-8" glowColor="cyan">
-                <TradingChart
-                  selectedSymbol={selectedChartSymbol}
-                  onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
-                  latestQuote={latestQuote}
-                  signals={signals}
-                  activeSignal={signals.find((s) => s.symbol === selectedChartSymbol && s.hasActiveSignal)}
-                />
-              </GlassCard>
+              {/* 2-Column Core Trading Desk Grid: Desktop (Confluence 40% | Chart 60%), Tablet/Mobile (Confluence on top, Chart below) */}
+              <div className="col-span-12 grid grid-cols-1 lg:grid-cols-5 gap-4 w-full min-w-0">
+                {/* Left Column (Desktop 40%): Confluence Matrix Card */}
+                <GlassCard className="col-span-1 lg:col-span-2 order-1 w-full min-w-0" glowColor="green">
+                  <SignalMatrix
+                    signals={signals}
+                    livePrices={livePrices}
+                    isLoading={isInitialLoading}
+                    isScanning={isScanningMarkets}
+                    appConfig={appConfig}
+                    quote={latestQuote}
+                    onToggleNotify={handleToggleNotify}
+                    onSelectSignalForChart={handleSelectSignalForChart}
+                    onTriggerScan={handleScanMarkets}
+                    onTradeFromSignal={handleTradeFromSignal}
+                  />
+                </GlassCard>
 
-              {/* Signal Matrix (Single Card: XAU/USD) (4-col) */}
-              <GlassCard className="col-span-12 lg:col-span-4" glowColor="green">
-                <SignalMatrix
-                  signals={signals}
-                  livePrices={livePrices}
-                  isLoading={isInitialLoading}
-                  isScanning={isScanningMarkets}
-                  appConfig={appConfig}
-                  quote={latestQuote}
-                  onToggleNotify={handleToggleNotify}
-                  onSelectSignalForChart={handleSelectSignalForChart}
-                  onTriggerScan={handleScanMarkets}
-                  onTradeFromSignal={handleTradeFromSignal}
-                />
-              </GlassCard>
+                {/* Right Column (Desktop 60%): XAU/USD Chart with Lightweight Charts */}
+                <GlassCard id="chart-section" className="col-span-1 lg:col-span-3 order-2 w-full min-w-0" glowColor="cyan">
+                  <TradingChart
+                    selectedSymbol={selectedChartSymbol}
+                    onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
+                    latestQuote={latestQuote}
+                    signals={signals}
+                    activeSignal={signals.find((s) => s.symbol === selectedChartSymbol && s.hasActiveSignal)}
+                  />
+                </GlassCard>
+              </div>
 
               {/* Active Positions & Closed Trades Table (Live P&L with 3s refresh) (8-col) */}
               <GlassCard className="col-span-12 lg:col-span-8">
@@ -1082,8 +1086,8 @@ export const Dashboard: React.FC = () => {
 
           {/* 2. DEDICATED SIGNALS TAB */}
           {currentTab === 'signals' && (
-            <div className="grid grid-cols-12 gap-4 w-full">
-              <GlassCard className="col-span-12 lg:col-span-5" glowColor="green">
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 w-full min-w-0">
+              <GlassCard className="col-span-1 lg:col-span-2 order-1 w-full min-w-0" glowColor="green">
                 <SignalMatrix
                   signals={signals}
                   livePrices={livePrices}
@@ -1097,7 +1101,7 @@ export const Dashboard: React.FC = () => {
                   onTradeFromSignal={handleTradeFromSignal}
                 />
               </GlassCard>
-              <GlassCard id="chart-section" className="col-span-12 lg:col-span-7" glowColor="cyan">
+              <GlassCard id="chart-section" className="col-span-1 lg:col-span-3 order-2 w-full min-w-0" glowColor="cyan">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
@@ -1202,6 +1206,68 @@ export const Dashboard: React.FC = () => {
             <span className="font-mono text-[10px]">UTC</span>
           </div>
         </footer>
+
+        {/* Mobile-Only Collapsible System Telemetry Panel (< md) */}
+        <div className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#030014]/95 backdrop-blur-xl border-t border-white/10 shadow-[0_-8px_30px_rgba(0,0,0,0.8)]">
+          <button
+            onClick={() => setIsMobileTelemetryOpen(!isMobileTelemetryOpen)}
+            className="w-full flex min-h-[44px] items-center justify-between px-4 py-2.5 text-xs font-mono text-zinc-300 hover:text-white transition-colors cursor-pointer"
+            aria-label="Toggle Mobile System Telemetry Panel"
+          >
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${isApiConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="font-semibold text-white">System Telemetry</span>
+              <span className="text-[10px] text-zinc-500">
+                &bull; {isApiConnected ? 'ONLINE' : 'STANDBY'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+              <span>{isMobileTelemetryOpen ? 'Collapse' : 'Details'}</span>
+              {isMobileTelemetryOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+            </div>
+          </button>
+
+          {isMobileTelemetryOpen && (
+            <div className="px-4 pb-4 pt-1 border-t border-white/5 space-y-2.5 max-h-[50vh] overflow-y-auto">
+              {/* Telegram status */}
+              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 font-mono text-xs">
+                <span className="text-zinc-300 flex items-center gap-2">
+                  <Send className="w-3.5 h-3.5 text-cyan-400" />
+                  Telegram Bot
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-zinc-500">@signalTheBEST_bot</span>
+                  <span className={`font-bold text-[10px] ${isApiConnected ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {isApiConnected ? 'ONLINE' : 'STANDBY'}
+                  </span>
+                </div>
+              </div>
+
+              {/* SMC Scanner status */}
+              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 font-mono text-xs">
+                <span className="text-zinc-300 flex items-center gap-2">
+                  <Cpu className="w-3.5 h-3.5 text-zinc-400" />
+                  SMC Scanner
+                </span>
+                <span className={`font-bold text-[10px] ${scannerStatus?.is_running ? 'text-cyan-400' : isApiConnected ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                  {scannerStatus?.is_running ? 'ACTIVE SCAN' : isApiConnected ? 'READY' : 'OFFLINE'}
+                </span>
+              </div>
+
+              {/* Latency & Feed */}
+              <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+                <div className="p-2 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-zinc-500 block text-[9px] uppercase">API Latency</span>
+                  <span className="font-bold text-cyan-400">{apiResponseTimeMs}ms</span>
+                </div>
+                <div className="p-2 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-zinc-500 block text-[9px] uppercase">Quote Age</span>
+                  <span className="font-bold text-zinc-200">{latestQuote?.age_seconds != null ? `${latestQuote.age_seconds.toFixed(1)}s` : 'Fresh'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
