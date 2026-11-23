@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import html
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from app.core.config import settings
 from app.services.market_data.symbols import (
@@ -350,8 +350,13 @@ class TelegramMessageFormatter:
         return format_signal(sig)
 
     @classmethod
-    def format_trade_rejection(cls, sig: SignalResponse, reason: str) -> str:
-        """Compact alert explaining why a qualified signal opened no paper trade."""
+    def format_trade_rejection(
+        cls,
+        sig: SignalResponse,
+        reason: str,
+        hints: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Compact alert with the exact capital/risk lever for a rejected signal."""
         sym = getattr(sig, "symbol", "N/A")
         try:
             sym = normalize_symbol(sym)
@@ -365,7 +370,7 @@ class TelegramMessageFormatter:
         )
         score = getattr(sig, "setup_score", None)
         score_str = f"{score:.1f} / 100" if score is not None else "N/A"
-        return "\n".join([
+        lines = [
             "⚠️ <b>TRADE REJECTED — RISK BUDGET</b> ⚠️",
             "━━━━━━━━━━━━━━━━━━━━",
             f"📊 <b>Instrument:</b> <code>{escape_html(sym)}</code>",
@@ -373,10 +378,31 @@ class TelegramMessageFormatter:
             f"🎯 <b>Direction:</b> <code>{escape_html(dir_str)}</code>",
             f"⭐ <b>Confluence Score:</b> <code>{score_str}</code>",
             "━━━━━━━━━━━━━━━━━━━━",
+        ]
+        hints = hints or {}
+        hint_lines: List[str] = []
+        if hints.get("stop"):
+            hint_lines.append(f"📏 <b>Stop:</b> <code>{escape_html(hints['stop'])}</code>")
+        if hints.get("lots"):
+            hint_lines.append(f"📐 <b>Lots:</b> <code>{escape_html(hints['lots'])}</code>")
+        if hints.get("max_stop"):
+            context = hints.get("budget_context")
+            suffix = f" ({escape_html(context)})" if context else ""
+            hint_lines.append(
+                f"🎯 <b>Max affordable stop:</b> <code>{escape_html(hints['max_stop'])}</code>{suffix}"
+            )
+        if hints.get("required_balance"):
+            hint_lines.append(
+                f"💰 <b>Balance needed for this stop:</b> "
+                f"<code>{escape_html(hints['required_balance'])}</code>"
+            )
+        lines.extend(hint_lines)
+        lines.extend([
+            "━━━━━━━━━━━━━━━━━━━━",
             f"⚠️ <b>Trade Rejected:</b> <code>{escape_html(reason)}</code>",
-            "No paper position was opened — the per-trade risk budget cannot fund "
-            "the minimum lot at this stop distance.",
+            "No paper position was opened — raise balance or risk % to afford this stop.",
         ])
+        return "\n".join(lines)
 
     @classmethod
     def format_tp1_hit(

@@ -49,7 +49,9 @@ class PaperTrade(Base):
     direction = Column(String(10), nullable=False)  # "BUY", "SELL"
     order_type = Column(String(15), nullable=False, default="MARKET")  # "MARKET", "LIMIT", "STOP"
     status = Column(String(20), nullable=False, default="OPEN", index=True)  # "PENDING", "OPEN", "PARTIALLY_CLOSED", "CLOSED", "CANCELLED"
-    
+    # Broker lot-spec profile used for sizing this position (nullable for legacy rows).
+    broker_profile = Column(String(64), nullable=True)
+
     # Pricing & Levels
     target_entry_price = Column(Float, nullable=True)  # Set for LIMIT/STOP pending orders
     entry_price = Column(Float, nullable=False)

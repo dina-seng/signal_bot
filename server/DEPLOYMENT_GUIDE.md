@@ -115,7 +115,13 @@ RSI_PERIOD=14
 ATR_PERIOD=14
 MIN_SETUP_SCORE=60.0
 MIN_RR=2.0
-MAX_RISK_PERCENT=0.5
+MAX_RISK_PERCENT=5.0   # config max (ge=0.1, le=5.0). Keep Render env var in sync.
+
+# Affordability math (XAU/USD, 0.01 min lot ≈ $1 per 1.00 price point of stop):
+#   budget = balance * risk%        e.g. $214.20 * 5% = $10.71
+#   max affordable stop (points) = budget / $1 = 10.71 points (~107 pips at pip_size 0.10)
+#   balance needed for a stop S points = S / risk%   (20pt -> $400, 40pt -> $800, 77pt -> $1,540)
+# Stops wider than the affordable distance are REJECTED, never clamped to min lot.
 
 # ==========================================
 # Economic News Blackout Window

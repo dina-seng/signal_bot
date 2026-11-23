@@ -278,3 +278,53 @@ def test_small_stop_is_accepted_with_risk_compliant_lot(test_db_session):
     risk_distance = abs(trade.entry_price - trade.stop_loss)
     actual_risk = risk_distance * 100.0 * trade.initial_position_size
     assert actual_risk <= 214.20 * 0.005 + 0.02
+
+
+def test_option_c_affordable_stop_accepted_at_min_lot(test_db_session, monkeypatch):
+    """5% risk on $214.20 funds a 9-point stop at 0.01 lot, within budget."""
+    from app.core.config import settings
+    from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
+
+    monkeypatch.setattr(settings, "MAX_RISK_PERCENT", 5.0)
+    _small_account(test_db_session, 214.20)
+    _seed_candle(test_db_session, symbol="XAU/USD", close=3592.79)
+
+    order = PaperOrderCreate(
+        symbol="XAU/USD", direction=SignalDirection.BUY, order_type="MARKET",
+        stop_loss=3583.79, take_profit_1=3610.79, risk_percent=5.0,
+    )
+    trade = PaperOrderExecutor().execute_order(
+        test_db_session, order, current_market_price=3592.79
+    )
+
+    budget = 214.20 * 0.05
+    realized_risk = abs(trade.entry_price - trade.stop_loss) * 100.0 * trade.initial_position_size
+    assert trade.status == "OPEN"
+    assert trade.initial_position_size == 0.01
+    assert realized_risk <= budget
+
+
+def test_option_c_wide_stop_rejected_with_affordability_hints(test_db_session, monkeypatch):
+    """A 20-point stop on $214.20 at 5% is rejected with both capital levers shown."""
+    from app.core.config import settings
+    from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
+
+    monkeypatch.setattr(settings, "MAX_RISK_PERCENT", 5.0)
+    _small_account(test_db_session, 214.20)
+    _seed_candle(test_db_session, symbol="XAU/USD", close=3592.79)
+
+    order = PaperOrderCreate(
+        symbol="XAU/USD", direction=SignalDirection.BUY, order_type="MARKET",
+        stop_loss=3572.79, take_profit_1=3632.79, risk_percent=5.0,
+    )
+    with pytest.raises(InsufficientRiskBudgetError) as exc:
+        PaperOrderExecutor().execute_order(
+            test_db_session, order, current_market_price=3592.79
+        )
+
+    message = str(exc.value)
+    assert "Max affordable stop" in message
+    assert "Balance needed for this stop" in message
+    assert "pips" in message
+    assert exc.value.max_affordable_points is not None
+    assert exc.value.required_balance > 214.20

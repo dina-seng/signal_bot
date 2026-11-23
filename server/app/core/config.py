@@ -52,6 +52,10 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MIN_RR_TP1", "MIN_RR"),
     )
     MIN_RR_TP2: float = Field(default=3.0, ge=1.0)
+    BROKER_SPEC: str = Field(
+        default="exness_standard_xauusd",
+        description="Paper-trading broker lot specification profile",
+    )
     MAX_RISK_PERCENT: float = Field(
         default=0.5,
         ge=0.1,

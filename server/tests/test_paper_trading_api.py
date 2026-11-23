@@ -21,6 +21,13 @@ def _seed_candle(db, symbol="EUR/USD", close=1.1000):
     db.commit()
 
 
+def test_config_exposes_chosen_risk_percent(client):
+    """The dashboard's single source of truth is the backend config endpoint."""
+    res = client.get("/api/v1/config")
+    assert res.status_code == 200
+    assert res.json()["risk_per_order_pct"] == 5.0
+
+
 def test_paper_account_api_endpoints(client, test_db_session):
     """Test GET /paper/account, POST /paper/account/deposit, and POST /paper/account/reset."""
     # 1. Get Account

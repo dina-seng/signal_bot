@@ -21,6 +21,7 @@ from app.services.telegram.scheduler import (
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info(f"Starting {settings.PROJECT_NAME} in [{settings.APP_ENV}] mode (MODE={settings.MODE})...")
+    logger.info(f"Risk per order: MAX_RISK_PERCENT = {settings.MAX_RISK_PERCENT:.1f}% (source: settings/.env)")
     
     # Fail fast if MOCK provider is configured for LIVE mode
     if settings.MODE.lower() == "live" and settings.MARKET_DATA_PROVIDER.lower() == "mock":

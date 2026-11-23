@@ -1,11 +1,12 @@
 """Paper Trading Order Execution and Signal-to-Trade Converter."""
 
-import math
+from decimal import Decimal
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
+from app.core.config import settings
 from app.core.logging import logger
 from app.models.candle import Candle
 from app.models.paper import VirtualAccount, PaperTrade
@@ -13,6 +14,7 @@ from app.models.signal import Signal
 from app.schemas.paper_trading import AutoTradeSignalRequest, PaperOrderCreate
 from app.schemas.signal import SignalDirection
 from app.services.paper_trading.account_manager import VirtualAccountManager
+from app.services.paper_trading.broker_spec import BrokerSpec, get_broker_spec
 from app.services.signals import RiskManager, SignalGenerator
 
 
@@ -30,17 +32,97 @@ _TIMEFRAME_MINUTES: dict[str, float] = {
     "1d":  1440.0,
 }
 
-# Lot bounds enforced by the paper venue.
-MIN_LOT_SIZE: float = 0.01
+# Upper lot bound; the minimum and step come from the selected BrokerSpec.
 MAX_LOT_SIZE: float = 100.0
 
 
 class InsufficientRiskBudgetError(ValueError):
     """Raised when the configured risk budget cannot fund even the minimum lot.
 
-    Subclasses ValueError so existing caller-level error handling keeps working,
-    while giving dispatch code a specific type to recognise for sizing rejections.
+    Carries the affordability numbers so the Telegram rejection card can tell the
+    operator exactly which lever (balance or risk %) would make the setup tradable.
+    Subclasses ValueError so existing caller-level error handling keeps working.
     """
+
+    def __init__(
+        self,
+        raw_lots: Decimal,
+        min_lots: Decimal,
+        *,
+        contract_size: Optional[Decimal] = None,
+        stop_points: Optional[float] = None,
+        stop_pips: Optional[float] = None,
+        budget: Optional[float] = None,
+        per_point_risk: Optional[float] = None,
+        risk_percent: Optional[float] = None,
+        balance: Optional[float] = None,
+    ) -> None:
+        self.raw_lots = raw_lots
+        self.min_lots = min_lots
+        self.stop_points = stop_points
+        self.stop_pips = stop_pips
+        self.budget = budget
+        self.per_point_risk = per_point_risk
+        self.risk_percent = risk_percent
+        self.balance = balance
+        self.max_affordable_points = (
+            budget / per_point_risk
+            if budget is not None and per_point_risk and per_point_risk > 0
+            else None
+        )
+        self.required_balance = (
+            stop_points * per_point_risk / (risk_percent / 100.0)
+            if stop_points is not None and per_point_risk and risk_percent and risk_percent > 0
+            else None
+        )
+        # What the minimum lot would actually cost at this stop distance.
+        self.min_lot_risk_usd = (
+            float(min_lots * contract_size * Decimal(str(stop_points)))
+            if contract_size is not None and stop_points is not None
+            else None
+        )
+        self.min_lot_risk_pct = (
+            self.min_lot_risk_usd / balance * 100.0
+            if self.min_lot_risk_usd is not None and balance
+            else None
+        )
+
+        hints: Dict[str, str] = {
+            "lots": f"required {raw_lots:.6f} vs min {min_lots:.2f}"
+        }
+        if stop_points is not None:
+            hints["stop"] = (
+                f"{stop_points:.2f} points / {stop_pips:.1f} pips"
+                if stop_pips is not None
+                else f"{stop_points:.2f} points"
+            )
+        if self.max_affordable_points is not None:
+            hints["max_stop"] = f"{self.max_affordable_points:.2f} points"
+        if self.required_balance is not None:
+            hints["required_balance"] = f"${self.required_balance:,.2f}"
+        if self.min_lot_risk_usd is not None:
+            pct = f" ({self.min_lot_risk_pct:.2f}%)" if self.min_lot_risk_pct is not None else ""
+            hints["min_lot_risk"] = f"${self.min_lot_risk_usd:,.2f}{pct}"
+        if balance is not None and risk_percent is not None:
+            hints["budget_context"] = f"balance ${balance:,.2f} @ {risk_percent:.1f}%"
+        self.hints = hints
+
+        labels = {
+            "stop": "Stop",
+            "max_stop": "Max affordable stop",
+            "required_balance": "Balance needed for this stop",
+            "min_lot_risk": "Min lot would risk",
+        }
+        detail = " | ".join(
+            f"{labels.get(k, k)}: {v}"
+            for k, v in hints.items()
+            if k not in ("budget_context", "lots")
+        )
+        message = (
+            f"Trade rejected: Risk budget insufficient for minimum lot size. "
+            f"Required lots: {raw_lots:.6f}, Min lots: {min_lots:.2f} | {detail}"
+        )
+        super().__init__(message)
 
 
 class PaperOrderExecutor:
@@ -55,6 +137,7 @@ class PaperOrderExecutor:
         self.account_manager = account_manager or VirtualAccountManager()
         self.risk_manager = risk_manager or RiskManager()
         self.signal_generator = signal_generator or SignalGenerator()
+        self.broker_spec: BrokerSpec = get_broker_spec(settings.BROKER_SPEC)
 
     def get_latest_market_price(self, db: Session, symbol: str) -> float:
         """Fetch the most recent closing price for a symbol from database."""
@@ -223,23 +306,45 @@ class PaperOrderExecutor:
                 logger.warning(msg)
                 raise ValueError(msg)
 
-    def _lots_for_risk_budget(self, raw_lots: float, symbol: str) -> float:
-        """Return a risk-compliant lot size, or reject if the min lot is unaffordable.
+    def _lots_for_risk_budget(
+        self,
+        raw_lots: Decimal,
+        symbol: str,
+        *,
+        stop_points: Optional[float] = None,
+        pip_size: Optional[float] = None,
+        budget: Optional[float] = None,
+        risk_percent: Optional[float] = None,
+        balance: Optional[float] = None,
+        contract_size: Optional[Decimal] = None,
+    ) -> float:
+        """Floor raw lots onto the broker grid; reject if below the broker min lot.
 
-        Clamping a sub-minimum requirement up to 0.01 would silently convert a 0.5%
-        risk budget into a multi-percent account risk. Reject instead of opening.
+        Uses Decimal throughout — no float floor — so the invariant
+        lots * contract_size * distance <= risk_usd always holds.
         """
-        if raw_lots < MIN_LOT_SIZE:
-            msg = (
-                f"Trade rejected: Risk budget insufficient for minimum lot size. "
-                f"Required lots: {raw_lots:.6f}, Min lots: {MIN_LOT_SIZE:.2f}"
+        spec = self.broker_spec
+        lots = spec.floor_lots(min(raw_lots, Decimal(str(MAX_LOT_SIZE))))
+        if lots < spec.min_lot:
+            stop_pips = (
+                stop_points / pip_size
+                if stop_points is not None and pip_size and pip_size > 0
+                else None
             )
-            logger.warning(f"{msg} (symbol={symbol})")
-            raise InsufficientRiskBudgetError(msg)
-        # Floor (not round) to the 0.01 lot grid: rounding up would spend a few
-        # cents more than the configured risk budget.
-        compliant_lots = math.floor(min(raw_lots, MAX_LOT_SIZE) * 100) / 100.0
-        return round(max(MIN_LOT_SIZE, compliant_lots), 2)
+            error = InsufficientRiskBudgetError(
+                raw_lots,
+                spec.min_lot,
+                contract_size=contract_size or spec.contract_size,
+                stop_points=stop_points,
+                stop_pips=stop_pips,
+                budget=budget,
+                per_point_risk=float(spec.min_lot * (contract_size or spec.contract_size)),
+                risk_percent=risk_percent,
+                balance=balance,
+            )
+            logger.warning(f"{error} (symbol={symbol})")
+            raise error
+        return float(lots)
 
     def execute_order(
         self,
@@ -259,7 +364,15 @@ class PaperOrderExecutor:
         # 2. Resolve Market Price
         mkt_price = current_market_price or self.get_latest_market_price(db, order.symbol)
         pip_size = self.risk_manager.get_pip_size(order.symbol)
-        pip_val = self.risk_manager.get_pip_value_per_lot(order.symbol)
+        # BrokerSpec profiles are XAU/USD profiles. For any legacy non-XAU
+        # instrument, retain the instrument-derived contract (pip value / pip size)
+        # so existing behaviour is unchanged.
+        if order.symbol == "XAU/USD":
+            contract_size = self.broker_spec.contract_size
+        else:
+            contract_size = Decimal(
+                str(self.risk_manager.get_pip_value_per_lot(order.symbol) / pip_size)
+            )
         order_type = order.order_type.upper().strip()
 
         # 3. Determine Entry Price
@@ -297,26 +410,45 @@ class PaperOrderExecutor:
             sl = sl or risk_res.stop_loss
             tp1 = tp1 or risk_res.take_profit_1
             tp2 = tp2 or risk_res.take_profit_2
-            # RiskManager already clamps suggested_lot_size to the min lot, so
-            # recompute the raw requirement from the resolved SL for the budget check.
-            fallback_risk_pips = abs(exec_entry - sl) / pip_size
-            raw_lots = (
-                account.balance * ((order.risk_percent or 0.5) / 100.0)
-                / max(1e-6, fallback_risk_pips * pip_val)
-            )
-        else:
-            # Calculate the unclamped requirement from the signal SL.
-            risk_pips = abs(exec_entry - sl) / pip_size
-            risk_usd = account.balance * ((order.risk_percent or 0.5) / 100.0)
-            raw_lots = risk_usd / max(1e-6, risk_pips * pip_val)
+
+        # Broker-spec sizing from the resolved price distance (Decimal, no float floor).
+        risk_pct = order.risk_percent or 0.5
+        distance = abs(exec_entry - sl)
+        if distance <= 0:
+            raise ValueError("Invalid stop distance: entry and stop loss are equal.")
+        risk_usd = account.balance * (risk_pct / 100.0)
+        raw_lots = (
+            Decimal(str(account.balance))
+            * (Decimal(str(risk_pct)) / Decimal("100"))
+            / (Decimal(str(distance)) * contract_size)
+        )
 
         if order.position_size is not None:
-            # Explicit operator override (manual order) — honour it unchanged.
-            lots = round(order.position_size, 2)
+            # Explicit operator override (manual order) — honour it, floored to grid.
+            lots = float(self.broker_spec.floor_lots(Decimal(str(order.position_size))))
         else:
-            # Auto-sizing from the signal: reject rather than clamp to the min lot.
-            lots = self._lots_for_risk_budget(raw_lots, order.symbol)
-        lots = max(MIN_LOT_SIZE, min(MAX_LOT_SIZE, lots))
+            # Auto-sizing from the signal: reject rather than force the min lot.
+            lots = self._lots_for_risk_budget(
+                raw_lots,
+                order.symbol,
+                stop_points=distance,
+                pip_size=pip_size,
+                budget=risk_usd,
+                risk_percent=risk_pct,
+                balance=account.balance,
+                contract_size=contract_size,
+            )
+        lots = max(float(self.broker_spec.min_lot), min(MAX_LOT_SIZE, lots))
+
+        actual_risk_usd = float(
+            Decimal(str(lots)) * contract_size * Decimal(str(distance))
+        )
+        actual_risk_pct = (actual_risk_usd / account.balance * 100.0) if account.balance else 0.0
+        logger.info(
+            f"PAPER SIZING [{self.broker_spec.name}] {order.symbol}: "
+            f"distance={distance:.5f} lots={lots:.4f} "
+            f"risk=${actual_risk_usd:.2f} ({actual_risk_pct:.2f}%) budget=${risk_usd:.2f}"
+        )
 
         # 5. Margin Validation
         req_margin = self.account_manager.calculate_required_margin(
@@ -342,6 +474,7 @@ class PaperOrderExecutor:
             direction=order.direction.value,
             order_type=order_type,
             status=status,
+            broker_profile=self.broker_spec.name,
             target_entry_price=target_entry,
             entry_price=exec_entry,
             current_price=mkt_price,

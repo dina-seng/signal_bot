@@ -72,6 +72,7 @@ class PaperTradeResponse(BaseModel):
     direction: SignalDirection
     order_type: str
     status: str
+    broker_profile: Optional[str] = None
     target_entry_price: Optional[float] = None
     entry_price: float
     current_price: float

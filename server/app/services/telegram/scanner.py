@@ -469,6 +469,7 @@ class AutomatedMarketScanner:
                         and settings.SCANNER_AUTO_TRADE_PAPER
                     ):
                         rejection_reason: Optional[str] = None
+                        rejection_hints: Dict[str, str] = {}
                         try:
                             trade = self.paper_service.trade_from_signal(
                                 db=db,
@@ -485,6 +486,7 @@ class AutomatedMarketScanner:
                             )
                         except InsufficientRiskBudgetError as e:
                             rejection_reason = str(e)
+                            rejection_hints = getattr(e, "hints", {})
                             logger.warning(
                                 f"Paper trade REJECTED (risk budget) for {sig.symbol}: {e}"
                             )
@@ -502,7 +504,7 @@ class AutomatedMarketScanner:
                         if broadcast_to_telegram and rejection_reason:
                             try:
                                 rejection_msg = self.formatter.format_trade_rejection(
-                                    sig, rejection_reason
+                                    sig, rejection_reason, rejection_hints
                                 )
                                 await self.telegram_client.send_message(
                                     text=rejection_msg,
