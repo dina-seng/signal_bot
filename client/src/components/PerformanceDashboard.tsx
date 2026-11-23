@@ -350,7 +350,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
               <button
                 key={tf}
                 onClick={() => setActiveTimeframe(tf)}
-                className={`px-3 py-1 text-xs font-mono font-medium rounded-lg transition-all cursor-pointer ${
+                className={`min-h-[44px] sm:min-h-0 px-3 py-1 text-xs font-mono font-medium rounded-lg transition-all cursor-pointer ${
                   activeTimeframe === tf
                     ? 'bg-white/15 text-white shadow-sm border border-white/10'
                     : 'text-zinc-400 hover:text-white hover:bg-white/5'

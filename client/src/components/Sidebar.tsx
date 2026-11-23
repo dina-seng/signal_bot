@@ -126,7 +126,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onTabChange(item.id);
                     onCloseMobile();
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all duration-200 cursor-pointer ${
+                  className={`w-full flex min-h-[44px] items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all duration-200 cursor-pointer ${
                     isActive
                       ? 'bg-white/10 text-white border border-white/15 shadow-sm'
                       : 'text-zinc-400 hover:text-white hover:bg-white/5'

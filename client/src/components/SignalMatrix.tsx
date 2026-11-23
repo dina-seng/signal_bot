@@ -113,7 +113,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
   return (
     <div className="space-y-4 w-full min-w-0 overflow-hidden">
       {/* Sleek Glassmorphic Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-xl bg-white/[0.03] border border-white/10 min-w-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 sm:p-4 rounded-xl bg-white/[0.03] border border-white/10 min-w-0">
         <div className="flex items-center gap-3 flex-wrap min-w-0">
           <div className="flex items-center gap-2 shrink-0">
             <Layers className="w-4 h-4 text-emerald-400" />
@@ -145,7 +145,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
             <button
               onClick={onTriggerScan}
               disabled={isScanning}
-              className={`px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center gap-2 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer ${
+              className={`min-h-[44px] sm:min-h-0 w-full sm:w-auto justify-center px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center gap-2 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer ${
                 isScanning ? 'opacity-70 cursor-wait' : ''
               }`}
               title="Run on-demand market scan across XAU/USD via GET /api/v1/signals/scan"
@@ -173,7 +173,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
           </p>
         </div>
       ) : (
-        <div className={activeSignals.length === 1 ? "w-full min-w-0" : "grid grid-cols-1 xl:grid-cols-2 gap-6 w-full min-w-0"}>
+        <div className={activeSignals.length === 1 ? "w-full min-w-0" : "grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6 w-full min-w-0"}>
           {activeSignals.map((sig) => (
             <ConfluenceCard
               key={sig.id}

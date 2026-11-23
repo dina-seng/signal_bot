@@ -48,7 +48,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
           <div className="flex items-center p-0.5 rounded bg-[#0a0b10] border border-[#1d2230]">
             <button
               onClick={() => setActiveTab('open')}
-              className={`px-2.5 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer ${
+              className={`min-h-[44px] md:min-h-0 px-2.5 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'open'
                   ? 'bg-[#161922] text-cyan-400 border border-[#1d2230]'
                   : 'text-slate-500 hover:text-slate-300'
@@ -59,7 +59,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('closed')}
-              className={`px-2.5 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer ${
+              className={`min-h-[44px] md:min-h-0 px-2.5 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'closed'
                   ? 'bg-[#161922] text-[#00e676] border border-[#1d2230]'
                   : 'text-slate-500 hover:text-slate-300'
@@ -101,12 +101,12 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
       <div className="overflow-x-auto rounded-2xl border border-white/10 bg-zinc-900/40 backdrop-blur-md min-w-0 w-full shadow-xl">
         {activeTab === 'open' ? (
           /* OPEN POSITIONS TABLE */
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[640px] text-left text-xs">
             <thead className="bg-[#0c0d12] text-slate-500 uppercase text-[10px] tracking-wider border-b border-[#1d2230]">
               <tr>
                 <th scope="col" className="py-2.5 px-3.5">Pair</th>
                 <th scope="col" className="py-2.5 px-3.5">Side</th>
-                <th scope="col" className="py-2.5 px-3.5 text-right">Size</th>
+                <th scope="col" className="hidden md:table-cell py-2.5 px-3.5 text-right">Size</th>
                 <th scope="col" className="py-2.5 px-3.5 text-right">Entry</th>
                 <th scope="col" className="py-2.5 px-3.5 text-right">Current</th>
                 <th scope="col" className="py-2.5 px-3.5 text-right">SL</th>
@@ -159,7 +159,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
                       </td>
 
                       {/* Size */}
-                      <td className="py-2.5 px-3.5 text-right text-slate-200">
+                      <td className="hidden md:table-cell py-2.5 px-3.5 text-right text-slate-200">
                         {pos.size.toFixed(2)}L
                       </td>
 
@@ -202,7 +202,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
                       <td className="py-2.5 px-3.5 text-center">
                         <button
                           onClick={() => onClosePosition(pos.id, pos.symbol)}
-                          className="p-1 rounded bg-[#161922] hover:bg-[#ff3366]/20 text-slate-400 hover:text-[#ff3366] border border-[#1d2230] hover:border-[#ff3366]/40 transition-colors cursor-pointer"
+                          className="flex min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 items-center justify-center p-1 rounded bg-[#161922] hover:bg-[#ff3366]/20 text-slate-400 hover:text-[#ff3366] border border-[#1d2230] hover:border-[#ff3366]/40 transition-colors cursor-pointer"
                           title={`Close ${pos.symbol} position #${pos.id}`}
                         >
                           <XCircle className="w-3.5 h-3.5" />
@@ -216,12 +216,12 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
           </table>
         ) : (
           /* CLOSED TRADES HISTORY TABLE */
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[640px] text-left text-xs">
             <thead className="bg-[#0c0d12] text-slate-500 uppercase text-[10px] tracking-wider border-b border-[#1d2230]">
               <tr>
                 <th scope="col" className="py-2.5 px-3.5">ID / Pair</th>
                 <th scope="col" className="py-2.5 px-3.5">Side</th>
-                <th scope="col" className="py-2.5 px-3.5 text-right">Size</th>
+                <th scope="col" className="hidden md:table-cell py-2.5 px-3.5 text-right">Size</th>
                 <th scope="col" className="py-2.5 px-3.5 text-right">Entry</th>
                 <th scope="col" className="py-2.5 px-3.5 text-right">Exit</th>
                 <th scope="col" className="py-2.5 px-3.5 text-right">Realized P&L</th>
@@ -268,7 +268,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
                       </td>
 
                       {/* Size */}
-                      <td className="py-2.5 px-3.5 text-right text-slate-300">
+                      <td className="hidden md:table-cell py-2.5 px-3.5 text-right text-slate-300">
                         {trade.size.toFixed(2)}L
                       </td>
 

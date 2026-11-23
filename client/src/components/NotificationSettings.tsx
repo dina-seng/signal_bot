@@ -388,7 +388,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
             <button
               onClick={onTriggerScanner}
               disabled={isTriggeringScanner}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold font-sans flex items-center gap-2 transition-all duration-300 cursor-pointer border ${
+              className={`min-h-[44px] sm:min-h-0 px-3.5 py-1.5 rounded-xl text-xs font-semibold font-sans flex items-center gap-2 transition-all duration-300 cursor-pointer border ${
                 isTriggeringScanner
                   ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border-white/10'
                   : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white border-violet-400/30 shadow-[0_0_15px_rgba(124,58,237,0.35)] hover:shadow-[0_0_20px_rgba(124,58,237,0.55)]'

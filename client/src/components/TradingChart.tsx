@@ -880,7 +880,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       </div>
 
       {/* TradingView Lightweight Charts Viewport */}
-      <div className="relative w-full h-[400px] bg-[#090a0f] rounded-xl border border-white/10 overflow-hidden shadow-inner">
+      <div className="relative w-full h-[300px] sm:h-[400px] lg:h-[500px] bg-[#090a0f] rounded-xl border border-white/10 overflow-hidden shadow-inner">
         {candles.length === 0 && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-zinc-950/80 text-zinc-500 font-mono text-xs">
             <Activity className="w-6 h-6 animate-pulse text-cyan-400 mb-2" />

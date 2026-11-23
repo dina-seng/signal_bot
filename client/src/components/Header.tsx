@@ -91,7 +91,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={onToggleMobileSidebar}
-            className="lg:hidden p-2 rounded-xl bg-white/5 text-zinc-400 hover:text-white border border-white/10 transition-colors cursor-pointer"
+            className="lg:hidden flex min-h-[44px] min-w-[44px] items-center justify-center p-2 rounded-xl bg-white/5 text-zinc-400 hover:text-white border border-white/10 transition-colors cursor-pointer"
             aria-label="Toggle navigation menu"
           >
             <Menu className="w-4 h-4" />
@@ -118,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setIsStatusDropdownOpen((prev) => !prev)}
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-medium border transition-all duration-300 cursor-pointer ${
+              className={`flex min-h-[44px] md:min-h-0 items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-medium border transition-all duration-300 cursor-pointer ${
                 riskStatus.isBlackout
                   ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
                   : isApiConnected
@@ -160,7 +160,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* De-cluttered Interactive Telemetry Popover */}
             {isStatusDropdownOpen && (
-              <div className="absolute left-0 mt-2 w-72 rounded-2xl bg-zinc-950/95 backdrop-blur-xl border border-white/15 p-3.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 font-mono text-xs">
+              <div className="absolute left-0 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl bg-zinc-950/95 backdrop-blur-xl border border-white/15 p-3.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 font-mono text-xs">
                 <div className="flex items-center justify-between pb-2.5 border-b border-white/10">
                   <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
                     System Telemetry

@@ -147,7 +147,7 @@ export const SystemTelemetry: React.FC<SystemTelemetryProps> = ({
       </div>
 
       {/* 4 Core Telemetry Metrics Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {/* Metric 1: Unrealized P&L (with 500ms Flashing effect) */}
         <div className="p-3 rounded-xl bg-zinc-950/80 border border-white/10 flex flex-col justify-between relative overflow-hidden transition-all duration-200">
           <div className="flex items-center justify-between text-[10px] text-zinc-400 pb-1">

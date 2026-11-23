@@ -983,7 +983,7 @@ export const Dashboard: React.FC = () => {
         )}
 
         {/* Main Content Body - Responsive Padding & Overflow Boundary */}
-        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-hidden relative z-10">
+        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-x-hidden relative z-10">
           {/* 1. UNIFIED DASHBOARD TAB - BENTO GRID LAYOUT */}
           {currentTab === 'dashboard' && (
             <div className="grid grid-cols-12 gap-4 w-full">

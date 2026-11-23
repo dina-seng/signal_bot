@@ -345,7 +345,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
             {hasSetup && onTradeFromSignal && (
               <button
                 onClick={() => onTradeFromSignal(signal)}
-                className={`flex w-full items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-mono text-xs font-semibold tracking-wide border transition-all duration-200 cursor-pointer ${
+                className={`flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-mono text-xs font-semibold tracking-wide border transition-all duration-200 cursor-pointer ${
                   isBuy
                     ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40 hover:shadow-[0_0_15px_rgba(16,185,129,0.25)]'
                     : 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border-rose-500/40 hover:shadow-[0_0_15px_rgba(244,63,94,0.25)]'
@@ -364,7 +364,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
         {onToggleNotify && (
           <button
             onClick={() => onToggleNotify(signal.id, signal.symbol, signal.notifyEnabled)}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+            className={`inline-flex min-h-[44px] md:min-h-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
               signal.notifyEnabled
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                 : 'bg-white/[0.04] text-zinc-400 border-white/10 hover:text-white'
@@ -383,7 +383,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
         {onSelectSignalForChart && (
           <button
             onClick={() => onSelectSignalForChart(signal.symbol)}
-            className="inline-flex items-center gap-1 text-[11px] text-zinc-400 hover:text-indigo-300 transition-colors cursor-pointer"
+            className="inline-flex min-h-[44px] md:min-h-0 items-center gap-1 text-[11px] text-zinc-400 hover:text-indigo-300 transition-colors cursor-pointer"
           >
             <span>Inspect Chart</span>
             <ArrowRight className="h-3 w-3" />
