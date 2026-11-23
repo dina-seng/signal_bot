@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import logger
-from app.core.database import init_db
+from app.core.database import engine, init_db
+from sqlalchemy import inspect, text
 from app.api.v1.router import api_v1_router 
 from datetime import datetime, timezone 
 
@@ -15,6 +16,27 @@ from app.services.telegram.scheduler import (
     start_scanner_scheduler,
     stop_scanner_scheduler,
 )
+
+
+def _ensure_required_columns() -> None:
+    """Idempotent schema guard for columns added after the initial deployment.
+
+    Alembic remains the source of truth; this only heals a database that has not
+    yet received migration c7a4f2b19d30 (e.g. a deploy where build-time
+    migrations targeted a different DATABASE_URL).
+    """
+    required = {"paper_trades": ("broker_profile",)}
+    for table, columns in required.items():
+        if table not in inspect(engine).get_table_names():
+            continue
+        existing = {c["name"] for c in inspect(engine).get_columns(table)}
+        for column in columns:
+            if column not in existing:
+                logger.warning(f"[schema] Adding missing column {table}.{column}")
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR(64)")
+                    )
 
 
 @asynccontextmanager
@@ -28,6 +50,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("FATAL: Cannot run in LIVE mode with MOCK market data provider.")
         
     init_db()
+    _ensure_required_columns()
 
     # Persistent shared HTTP client — eliminates per-request TCP/TLS handshake overhead.
     # Providers receive this via dependency injection for high-frequency paths.
