@@ -97,7 +97,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
       {/* Main Content Area */}
       <div className="space-y-4">
         {/* 1. Header Row: Symbol, Timeframe & Direction Badge */}
-        <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-y-2 border-b border-white/[0.08] pb-3">
           <div className="flex items-center gap-2.5">
             <div className="flex items-baseline gap-1.5">
               <span className="font-mono text-base font-bold tracking-tight text-white">
@@ -113,7 +113,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
             {/* View Mode Toggle Button */}
             <button
               onClick={() => setViewMode(viewMode === 'ticker' ? 'tradingview' : 'ticker')}
-              className={`min-h-[44px] sm:min-h-0 flex items-center justify-center rounded-lg border px-2.5 py-1 sm:py-0.5 font-mono text-[10px] transition-colors cursor-pointer ${
+              className={`min-h-[44px] sm:min-h-0 flex items-center justify-center whitespace-nowrap rounded-lg border px-2.5 py-1 sm:py-0.5 font-mono text-[10px] transition-colors cursor-pointer touch-manipulation ${
                 viewMode === 'tradingview'
                   ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
                   : 'bg-white/[0.04] text-zinc-400 border-white/10 hover:text-white'
@@ -144,8 +144,8 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
           </div>
         </div>
 
-        {/* Responsive Body Layout: 1 col on mobile, 2 cols on tablet, 1 col inside 40% desktop card, 2 cols on 2xl */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-4">
+        {/* Responsive Body Layout: 2 cols when the card is wide (tablet / 2xl), single col in the narrow ~40% desktop column */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2 gap-4">
           {/* LEFT COLUMN: Price Ticker & AI Neural Intelligence */}
           <div className="space-y-3.5">
             {/* 2. Live Price Ticker or TradingView Mini Widget */}
@@ -173,7 +173,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
 
                   <div className="flex items-center gap-1.5">
                     <span
-                      className={`text-base sm:text-lg font-bold tracking-tight transition-all duration-300 ${
+                      className={`text-lg font-bold tracking-tight transition-all duration-300 ${
                         tickDirection === 'up'
                           ? 'animate-tick-up text-emerald-400'
                           : tickDirection === 'down'
@@ -215,7 +215,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
               <div className="mt-2.5">
                 <button
                   onClick={() => setIsAiExpanded(!isAiExpanded)}
-                  className="flex w-full min-h-[44px] sm:min-h-0 items-center justify-between text-[11px] font-medium text-indigo-300/80 hover:text-indigo-200 transition-colors cursor-pointer"
+                  className="flex w-full min-h-[44px] sm:min-h-0 items-center justify-between text-[11px] font-medium text-indigo-300/80 hover:text-indigo-200 transition-colors cursor-pointer touch-manipulation"
                 >
                   <span className="flex items-center gap-1">
                     <Sparkles className="h-3 w-3 text-indigo-400" />
@@ -238,14 +238,14 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
           {/* RIGHT COLUMN: Technical Confluence, Key Trade Levels & Execution */}
           <div className="space-y-3.5">
             {/* 4. Technical Confluence Score Strip */}
-            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3 space-y-2 font-mono text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-400 flex items-center gap-1.5 text-[11px]">
-                  <Layers className="h-3 w-3 text-zinc-400" />
-                  <span>Technical Confluence</span>
+            <div className="rounded-xl border border-white/[0.08] bg-zinc-950/50 p-3 space-y-2 font-mono text-xs min-w-0">
+              <div className="flex items-center justify-between gap-2 min-w-0">
+                <span className="text-zinc-400 flex items-center gap-1.5 text-[11px] min-w-0">
+                  <Layers className="h-3 w-3 text-zinc-400 shrink-0" />
+                  <span className="whitespace-normal leading-tight">Technical Confluence</span>
                 </span>
                 <span
-                  className={`font-semibold ${
+                  className={`font-semibold whitespace-nowrap shrink-0 ${
                     signal.confluenceScore >= 85
                       ? 'text-emerald-400'
                       : minScore !== undefined && signal.confluenceScore >= minScore
@@ -257,7 +257,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                 </span>
               </div>
 
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+              <div className="h-1.5 w-full min-w-0 overflow-hidden rounded-full bg-zinc-800">
                 <div
                   className={`h-full transition-all duration-300 ${
                     hasSetup
@@ -270,13 +270,13 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                 />
               </div>
 
-              {/* Pillars tags with balanced 2-column spacing */}
-              <div className="grid grid-cols-2 gap-2.5 pt-1 text-[11px] text-zinc-400">
-                <div className="flex items-center justify-between rounded-lg bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04]">
+              {/* Pillars as wrapping pill badges — never collide or clip */}
+              <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-zinc-400">
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
                   <span>Structure:</span>
                   <span className="text-zinc-200 font-semibold">{hasSetup ? 'Confirmed' : 'Validating'}</span>
                 </div>
-                <div className="flex items-center justify-between rounded-lg bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04]">
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
                   <span>Liquidity:</span>
                   <span className="text-zinc-200 font-semibold">{hasSetup ? 'Swept' : 'Building'}</span>
                 </div>
@@ -285,7 +285,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
 
             {/* 5. Key Trade Levels (Entry, SL, TP1, TP2) */}
             {hasSetup ? (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-xs w-full min-w-0">
+              <div className="grid grid-cols-2 gap-2.5 font-mono text-xs w-full min-w-0">
                 {/* Entry */}
                 <div className="rounded-xl border border-white/[0.08] bg-zinc-950/60 p-2.5 min-w-0 flex flex-col justify-between">
                   <span className="block text-[10px] uppercase font-medium tracking-wider text-zinc-400">Entry</span>
@@ -351,7 +351,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
             {hasSetup && onTradeFromSignal && (
               <button
                 onClick={() => onTradeFromSignal(signal)}
-                className={`flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-mono text-xs font-semibold tracking-wide border transition-all duration-200 cursor-pointer ${
+                className={`flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-mono text-xs font-semibold tracking-wide border transition-all duration-200 cursor-pointer touch-manipulation ${
                   isBuy
                     ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40 hover:shadow-[0_0_15px_rgba(16,185,129,0.25)]'
                     : 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border-rose-500/40 hover:shadow-[0_0_15px_rgba(244,63,94,0.25)]'
@@ -370,7 +370,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
         {onToggleNotify && (
           <button
             onClick={() => onToggleNotify(signal.id, signal.symbol, signal.notifyEnabled)}
-            className={`inline-flex min-h-[44px] md:min-h-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+            className={`inline-flex min-h-[44px] md:min-h-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer touch-manipulation ${
               signal.notifyEnabled
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                 : 'bg-white/[0.04] text-zinc-400 border-white/10 hover:text-white'
@@ -389,7 +389,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
         {onSelectSignalForChart && (
           <button
             onClick={() => onSelectSignalForChart(signal.symbol)}
-            className="inline-flex min-h-[44px] md:min-h-0 items-center gap-1 text-[11px] text-zinc-400 hover:text-indigo-300 transition-colors cursor-pointer"
+            className="inline-flex min-h-[44px] md:min-h-0 items-center gap-1 text-[11px] text-zinc-400 hover:text-indigo-300 transition-colors cursor-pointer touch-manipulation"
           >
             <span>Inspect Chart</span>
             <ArrowRight className="h-3 w-3" />

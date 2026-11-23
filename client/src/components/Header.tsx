@@ -12,6 +12,8 @@ import {
   Zap,
   Activity,
   CheckCircle2,
+  Send,
+  Cpu,
 } from 'lucide-react';
 import { AccountSummary, RiskStatus } from '../types';
 import { formatCurrency, formatPnL } from '../utils/formatters';
@@ -24,6 +26,7 @@ interface HeaderProps {
   isRefreshing?: boolean;
   lastUpdatedSecondsAgo?: number;
   apiEndpoint?: string;
+  isScannerRunning?: boolean;
   onRefresh: () => void;
   onToggleMobileSidebar: () => void;
   onToggleBlackout: () => void;
@@ -37,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   isRefreshing = false,
   lastUpdatedSecondsAgo = 0,
   apiEndpoint = 'http://localhost:8000',
+  isScannerRunning = false,
   onRefresh,
   onToggleMobileSidebar,
   onToggleBlackout,
@@ -83,15 +87,20 @@ export const Header: React.FC<HeaderProps> = ({
     : isApiConnected
     ? 'System Operational'
     : 'Simulation Active';
+  const statusLabelShort = riskStatus.isBlackout
+    ? 'Blackout'
+    : isApiConnected
+    ? 'Operational'
+    : 'Simulation';
 
   return (
     <header className="sticky top-0 z-30 w-full bg-[#030014]/80 backdrop-blur-xl border-b border-white/10 px-4 sm:px-6 lg:px-8 py-2.5 transition-colors">
-      <div className="flex items-center justify-between gap-3 flex-wrap lg:flex-nowrap min-w-0">
-        {/* Left: Terminal Branding & Unified System Status Pill */}
-        <div className="flex items-center gap-3 shrink-0">
+      <div className="flex items-center justify-between gap-2 sm:gap-3 flex-wrap lg:flex-nowrap min-w-0">
+        {/* Row 1 (mobile): hamburger + branding + status pill */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 lg:flex-none">
           <button
             onClick={onToggleMobileSidebar}
-            className="lg:hidden flex min-h-[44px] min-w-[44px] items-center justify-center p-2 rounded-xl bg-white/5 text-zinc-400 hover:text-white border border-white/10 transition-colors cursor-pointer"
+            className="md:hidden flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center p-2 rounded-xl bg-white/5 text-zinc-400 hover:text-white border border-white/10 transition-colors cursor-pointer touch-manipulation"
             aria-label="Toggle navigation menu"
           >
             <Menu className="w-4 h-4" />
@@ -101,12 +110,12 @@ export const Header: React.FC<HeaderProps> = ({
           <Link
             to="/"
             title="Return to QuantView Home"
-            className="group flex items-center gap-2 hover:opacity-90 transition-opacity"
+            className="group flex shrink-0 items-center gap-1.5 sm:gap-2 hover:opacity-90 transition-opacity"
           >
             <div className="w-5 h-5 rounded overflow-hidden flex items-center justify-center transition-all duration-300 drop-shadow-[0_0_6px_rgba(168,85,247,0.35)] group-hover:drop-shadow-[0_0_12px_rgba(168,85,247,0.8)]">
               <img src={logoImg} alt="QuantView" className="w-full h-full object-contain" />
             </div>
-            <span className="text-xs font-mono font-bold tracking-widest text-white uppercase group-hover:text-purple-300 transition-colors">
+            <span className="text-xs font-mono font-bold tracking-wide sm:tracking-widest text-white uppercase whitespace-nowrap group-hover:text-purple-300 transition-colors">
               QUANT<span className="text-emerald-400">VIEW</span>
             </span>
             <span className="text-[10px] font-mono text-zinc-500 uppercase px-1 py-0.5 rounded bg-white/5 border border-white/10 group-hover:border-purple-500/30">
@@ -115,10 +124,10 @@ export const Header: React.FC<HeaderProps> = ({
           </Link>
 
           {/* Unified System Status Dropdown Pill (Consolidates LIVE DATA, BROKER, RISK SAFE) */}
-          <div className="relative" ref={dropdownRef}>
+          <div className="relative min-w-0 xs:shrink-0" ref={dropdownRef}>
             <button
               onClick={() => setIsStatusDropdownOpen((prev) => !prev)}
-              className={`flex min-h-[44px] md:min-h-0 items-center gap-2 px-3 py-1 rounded-full text-xs font-mono font-medium border transition-all duration-300 cursor-pointer ${
+              className={`flex min-h-[44px] md:min-h-0 items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1 rounded-full text-[11px] sm:text-xs font-mono font-medium border transition-all duration-300 cursor-pointer touch-manipulation max-w-full ${
                 riskStatus.isBlackout
                   ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
                   : isApiConnected
@@ -149,7 +158,8 @@ export const Header: React.FC<HeaderProps> = ({
                 />
               </span>
 
-              <span>{statusLabel}</span>
+              <span className="hidden xs:inline truncate">{statusLabel}</span>
+              <span className="xs:hidden truncate">{statusLabelShort}</span>
 
               <ChevronDown
                 className={`w-3.5 h-3.5 transition-transform duration-200 ${
@@ -251,20 +261,38 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Right: Glassmorphic Financial Metrics & Synchronization Controls */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 flex-wrap sm:flex-nowrap max-w-full py-0.5 justify-end">
+        {/* Right: Glassmorphic Financial Metrics & Synchronization Controls (row 2 on mobile) */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 flex-wrap w-full lg:w-auto justify-between lg:justify-end max-w-full py-0.5">
+          {/* Mobile system telemetry chip — replaces the old fixed bottom panel */}
+          <div
+            className="md:hidden inline-flex items-center gap-1.5 rounded-xl bg-white/5 border border-white/10 px-2 py-1.5 font-mono text-[9px] text-zinc-300 shrink-0"
+            title={`Telegram Bot ${isApiConnected ? 'online' : 'standby'} · SMC Scanner ${isScannerRunning ? 'active' : isApiConnected ? 'ready' : 'offline'}`}
+          >
+            <span className="flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${isApiConnected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              <Send className="hidden xs:block w-3 h-3 text-cyan-400" />
+              <span className="hidden xs:inline">Bot</span>
+            </span>
+            <span className="text-zinc-600">&middot;</span>
+            <span className="flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${isScannerRunning ? 'bg-cyan-400 animate-pulse' : isApiConnected ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
+              <Cpu className="hidden xs:block w-3 h-3 text-zinc-400" />
+              <span className="hidden xs:inline">Scanner</span>
+            </span>
+          </div>
+
           {/* Account Balance */}
           <div className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
-            <span className="text-[9px] sm:text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">BAL:</span>
-            <span className="text-xs sm:text-sm font-semibold text-white">
+            <span className="hidden md:inline text-[9px] sm:text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">BAL:</span>
+            <span className="text-xs md:text-sm font-semibold text-white">
               {formatCurrency(account.balance)}
             </span>
           </div>
 
           {/* Equity */}
           <div className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
-            <span className="text-[9px] sm:text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">EQ:</span>
-            <span className="text-xs sm:text-sm font-semibold text-white">
+            <span className="hidden md:inline text-[9px] sm:text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">EQ:</span>
+            <span className="text-xs md:text-sm font-semibold text-white">
               {formatCurrency(account.equity)}
             </span>
           </div>
@@ -277,11 +305,11 @@ export const Header: React.FC<HeaderProps> = ({
                 : 'bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500/15'
             }`}
           >
-            <span className="text-[9px] sm:text-[10px] uppercase opacity-75 font-semibold tracking-wider">P&amp;L:</span>
-            <span className="text-xs sm:text-sm font-semibold">
+            <span className="hidden md:inline text-[9px] sm:text-[10px] uppercase opacity-75 font-semibold tracking-wider">P&amp;L:</span>
+            <span className="text-xs md:text-sm font-semibold">
               {pnlMeta.formatted}
             </span>
-            <span className="text-[9px] sm:text-[10px] opacity-80 hidden xs:inline sm:inline">
+            <span className="text-[9px] sm:text-[10px] opacity-80 hidden lg:inline">
               ({pnlMeta.isPositive ? '+' : ''}{account.unrealizedPnlPercent.toFixed(2)}%)
             </span>
           </div>
@@ -303,7 +331,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onRefresh}
             disabled={isRefreshing}
-            className={`min-h-[44px] min-w-[44px] px-3 sm:px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center justify-center gap-1.5 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer shrink-0 ${
+            className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center justify-center gap-1.5 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer touch-manipulation shrink-0 ${
               isRefreshing ? 'opacity-70 cursor-wait' : ''
             }`}
             title="Trigger manual sync across all API endpoints"
@@ -314,7 +342,7 @@ export const Header: React.FC<HeaderProps> = ({
                 isRefreshing ? 'animate-spin' : ''
               }`}
             />
-            <span className="text-xs">Sync</span>
+            <span className="hidden xs:inline text-xs">Sync</span>
           </button>
         </div>
       </div>

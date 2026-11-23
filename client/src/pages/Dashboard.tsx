@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from '../components/Sidebar';
+import { MobileMenu } from '../components/MobileMenu';
 import { Header } from '../components/Header';
 import { PerformanceDashboard } from '../components/PerformanceDashboard';
 import { SignalMatrix } from '../components/SignalMatrix';
@@ -43,7 +44,7 @@ import {
   AppConfig,
 } from '../services/api';
 import { formatPrice, getTimeUntil } from '../utils/formatters';
-import { AlertTriangle, RefreshCw, Send, Cpu, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD'];
 
@@ -90,7 +91,6 @@ export const Dashboard: React.FC = () => {
 
   // UI interaction states
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
-  const [isMobileTelemetryOpen, setIsMobileTelemetryOpen] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isSendingTestTelegram, setIsSendingTestTelegram] = useState<boolean>(false);
   const [testNotificationResult, setTestNotificationResult] = useState<{
@@ -800,6 +800,17 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  // Shared navigation props for the persistent sidebar and the mobile drawer
+  const sidebarProps = {
+    currentTab,
+    onTabChange: setCurrentTab,
+    signalsCount: signals.filter((s) => s.hasActiveSignal).length,
+    positionsCount: positions.length,
+    isBlackout: riskStatus.isBlackout,
+    isApiConnected,
+    isScannerRunning: scannerStatus?.is_running,
+  };
+
   return (
     <div className="relative min-h-screen bg-[#030014] text-slate-100 flex flex-col font-sans selection:bg-violet-500/30 selection:text-white overflow-x-hidden">
       {/* ZaqriraAI Global Atmosphere Background: 3 Large, Fixed, Heavily Blurred Floating Orbs */}
@@ -829,21 +840,18 @@ export const Dashboard: React.FC = () => {
       {/* Toast notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      {/* Sidebar Navigation */}
-      <Sidebar
-        currentTab={currentTab}
-        onTabChange={(tab) => setCurrentTab(tab)}
-        signalsCount={signals.filter((s) => s.hasActiveSignal).length}
-        positionsCount={positions.length}
-        isBlackout={riskStatus.isBlackout}
-        isOpenMobile={isMobileSidebarOpen}
-        onCloseMobile={() => setIsMobileSidebarOpen(false)}
-        isApiConnected={isApiConnected}
-        isScannerRunning={scannerStatus?.is_running}
+      {/* Sidebar Navigation — persistent rail on tablet/desktop */}
+      <Sidebar {...sidebarProps} />
+
+      {/* Mobile slide-in navigation drawer (< md) */}
+      <MobileMenu
+        {...sidebarProps}
+        isOpen={isMobileSidebarOpen}
+        onClose={() => setIsMobileSidebarOpen(false)}
       />
 
       {/* Main Content Wrapper (Elevated above background mesh) */}
-      <div className="relative z-10 lg:pl-[240px] flex flex-col min-h-screen">
+      <div className="relative z-10 md:pl-16 lg:pl-[240px] flex flex-col min-h-screen">
         {/* Top Header with Real Balance, LIVE DATA badge, and Refresh Data button */}
         <Header
           account={account}
@@ -853,6 +861,7 @@ export const Dashboard: React.FC = () => {
           isRefreshing={isRefreshing}
           lastUpdatedSecondsAgo={lastUpdatedSecondsAgo}
           apiEndpoint="http://localhost:8000"
+          isScannerRunning={scannerStatus?.is_running}
           onRefresh={handleManualRefresh}
           onToggleMobileSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
           onToggleBlackout={handleToggleBlackout}
@@ -877,11 +886,11 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {/* Workspace Context Bar */}
-        <div className="px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 text-xs font-sans bg-[#030014]/60 backdrop-blur-xl min-w-0">
+        {/* Workspace Context Bar — stacks into two rows on mobile */}
+        <div className="px-4 sm:px-6 lg:px-8 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 border-b border-white/10 text-xs font-sans bg-[#030014]/60 backdrop-blur-xl min-w-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-zinc-500 uppercase text-[10px] tracking-wider shrink-0">Workspace:</span>
-            <span className="font-semibold text-zinc-200 uppercase text-xs truncate">
+            <span className="font-semibold text-zinc-200 uppercase text-xs truncate min-w-0">
               {currentTab === 'dashboard' && 'Unified Trading Desk'}
               {currentTab === 'signals' && 'Multi-Timeframe Confluence Matrix'}
               {currentTab === 'positions' && 'Position & Order Management'}
@@ -890,10 +899,10 @@ export const Dashboard: React.FC = () => {
             </span>
           </div>
 
-          <div className="flex items-center gap-3 text-[11px] shrink-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[11px] w-full sm:w-auto min-w-0">
             <button
               onClick={() => setShowQuoteDebug((prev) => !prev)}
-              className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer ${
+              className={`min-h-[44px] md:min-h-0 px-2 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer touch-manipulation ${
                 showQuoteDebug
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                   : 'bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 border-white/10'
@@ -902,10 +911,10 @@ export const Dashboard: React.FC = () => {
             >
               Dev: Quote Diagnostics
             </button>
-            <span className="hidden sm:inline text-zinc-400">
+            <span className="hidden xl:inline text-zinc-400">
               Active Instrument: <strong className="text-zinc-200">XAU/USD (Gold Focus)</strong>
             </span>
-            <span className="text-zinc-700 hidden sm:inline">|</span>
+            <span className="text-zinc-700 hidden xl:inline">|</span>
             <span
               className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${
                 isApiConnected
@@ -988,7 +997,7 @@ export const Dashboard: React.FC = () => {
         )}
 
         {/* Main Content Body - Responsive Padding & Overflow Boundary */}
-        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-16 md:pb-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-x-hidden relative z-10">
+        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-[1600px] w-full mx-auto min-w-0 overflow-x-hidden relative z-10">
           {/* 1. UNIFIED DASHBOARD TAB - BENTO GRID LAYOUT */}
           {currentTab === 'dashboard' && (
             <div className="grid grid-cols-12 gap-4 w-full">
@@ -1013,10 +1022,10 @@ export const Dashboard: React.FC = () => {
                 />
               </GlassCard>
 
-              {/* 2-Column Core Trading Desk Grid: Desktop (Confluence 40% | Chart 60%), Tablet/Mobile (Confluence on top, Chart below) */}
-              <div className="col-span-12 grid grid-cols-1 lg:grid-cols-5 gap-4 w-full min-w-0">
-                {/* Left Column (Desktop 40%): Confluence Matrix Card */}
-                <GlassCard className="col-span-1 lg:col-span-2 order-1 w-full min-w-0" glowColor="green">
+              {/* 2-Column Core Trading Desk Grid: Desktop 1fr/1.5fr (~40/60), Tablet/Mobile single column (Confluence on top, Chart below) */}
+              <div className="col-span-12 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-4 lg:gap-6 w-full min-w-0">
+                {/* Left Column (Desktop ~40%): Confluence Matrix Card */}
+                <GlassCard className="order-1 w-full min-w-0" glowColor="green">
                   <SignalMatrix
                     signals={signals}
                     livePrices={livePrices}
@@ -1031,8 +1040,8 @@ export const Dashboard: React.FC = () => {
                   />
                 </GlassCard>
 
-                {/* Right Column (Desktop 60%): XAU/USD Chart with Lightweight Charts */}
-                <GlassCard id="chart-section" className="col-span-1 lg:col-span-3 order-2 w-full min-w-0" glowColor="cyan">
+                {/* Right Column (Desktop ~60%): XAU/USD Chart with Lightweight Charts */}
+                <GlassCard id="chart-section" className="order-2 w-full min-w-0" glowColor="cyan">
                   <TradingChart
                     selectedSymbol={selectedChartSymbol}
                     onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
@@ -1086,8 +1095,8 @@ export const Dashboard: React.FC = () => {
 
           {/* 2. DEDICATED SIGNALS TAB */}
           {currentTab === 'signals' && (
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 w-full min-w-0">
-              <GlassCard className="col-span-1 lg:col-span-2 order-1 w-full min-w-0" glowColor="green">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-4 lg:gap-6 w-full min-w-0">
+              <GlassCard className="order-1 w-full min-w-0" glowColor="green">
                 <SignalMatrix
                   signals={signals}
                   livePrices={livePrices}
@@ -1101,7 +1110,7 @@ export const Dashboard: React.FC = () => {
                   onTradeFromSignal={handleTradeFromSignal}
                 />
               </GlassCard>
-              <GlassCard id="chart-section" className="col-span-1 lg:col-span-3 order-2 w-full min-w-0" glowColor="cyan">
+              <GlassCard id="chart-section" className="order-2 w-full min-w-0" glowColor="cyan">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
@@ -1207,67 +1216,6 @@ export const Dashboard: React.FC = () => {
           </div>
         </footer>
 
-        {/* Mobile-Only Collapsible System Telemetry Panel (< md) */}
-        <div className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#030014]/95 backdrop-blur-xl border-t border-white/10 shadow-[0_-8px_30px_rgba(0,0,0,0.8)]">
-          <button
-            onClick={() => setIsMobileTelemetryOpen(!isMobileTelemetryOpen)}
-            className="w-full flex min-h-[44px] items-center justify-between px-4 py-2.5 text-xs font-mono text-zinc-300 hover:text-white transition-colors cursor-pointer"
-            aria-label="Toggle Mobile System Telemetry Panel"
-          >
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${isApiConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              <span className="font-semibold text-white">System Telemetry</span>
-              <span className="text-[10px] text-zinc-500">
-                &bull; {isApiConnected ? 'ONLINE' : 'STANDBY'}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
-              <span>{isMobileTelemetryOpen ? 'Collapse' : 'Details'}</span>
-              {isMobileTelemetryOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-            </div>
-          </button>
-
-          {isMobileTelemetryOpen && (
-            <div className="px-4 pb-4 pt-1 border-t border-white/5 space-y-2.5 max-h-[50vh] overflow-y-auto">
-              {/* Telegram status */}
-              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 font-mono text-xs">
-                <span className="text-zinc-300 flex items-center gap-2">
-                  <Send className="w-3.5 h-3.5 text-cyan-400" />
-                  Telegram Bot
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-zinc-500">@signalTheBEST_bot</span>
-                  <span className={`font-bold text-[10px] ${isApiConnected ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {isApiConnected ? 'ONLINE' : 'STANDBY'}
-                  </span>
-                </div>
-              </div>
-
-              {/* SMC Scanner status */}
-              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 font-mono text-xs">
-                <span className="text-zinc-300 flex items-center gap-2">
-                  <Cpu className="w-3.5 h-3.5 text-zinc-400" />
-                  SMC Scanner
-                </span>
-                <span className={`font-bold text-[10px] ${scannerStatus?.is_running ? 'text-cyan-400' : isApiConnected ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                  {scannerStatus?.is_running ? 'ACTIVE SCAN' : isApiConnected ? 'READY' : 'OFFLINE'}
-                </span>
-              </div>
-
-              {/* Latency & Feed */}
-              <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-                <div className="p-2 rounded-xl bg-white/5 border border-white/10">
-                  <span className="text-zinc-500 block text-[9px] uppercase">API Latency</span>
-                  <span className="font-bold text-cyan-400">{apiResponseTimeMs}ms</span>
-                </div>
-                <div className="p-2 rounded-xl bg-white/5 border border-white/10">
-                  <span className="text-zinc-500 block text-[9px] uppercase">Quote Age</span>
-                  <span className="font-bold text-zinc-200">{latestQuote?.age_seconds != null ? `${latestQuote.age_seconds.toFixed(1)}s` : 'Fresh'}</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

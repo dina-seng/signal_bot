@@ -685,7 +685,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               <button
                 key={sym}
                 onClick={() => onSymbolChange(sym)}
-                className={`min-h-[44px] sm:min-h-[32px] md:min-h-0 px-2.5 py-1 text-xs font-bold rounded flex items-center justify-center transition-colors cursor-pointer ${
+                className={`min-h-[44px] sm:min-h-[32px] md:min-h-0 px-2.5 py-1 text-xs font-bold rounded flex items-center justify-center transition-colors cursor-pointer touch-manipulation ${
                   selectedSymbol === sym
                     ? 'bg-[#161922] text-[#00e676] border border-[#1d2230]'
                     : 'text-slate-400 hover:text-slate-200'
@@ -697,12 +697,12 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           </div>
 
           {/* Timeframe Select (Supports 1m, 5m, 15m, 1h, 4h, 1D) - Horizontally Scrollable on Mobile */}
-          <div className="flex items-center p-0.5 rounded-lg bg-[#0a0b10] border border-[#1d2230] overflow-x-auto max-w-full scrollbar-none touch-pan-x">
+          <div className="flex items-center p-0.5 rounded-lg bg-[#0a0b10] border border-[#1d2230] overflow-x-auto max-w-full snap-x scrollbar-none touch-pan-x">
             {['1m', '5m', '15m', '1h', '4h', '1D'].map((tf) => (
               <button
                 key={tf}
                 onClick={() => setSelectedTimeframe(tf)}
-                className={`min-h-[44px] sm:min-h-[32px] md:min-h-0 min-w-[38px] sm:min-w-0 px-2.5 py-1 text-xs font-semibold rounded flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
+                className={`min-h-[44px] sm:min-h-[32px] md:min-h-0 min-w-[38px] sm:min-w-0 snap-start px-2.5 py-1 text-xs font-semibold rounded flex items-center justify-center transition-colors cursor-pointer touch-manipulation shrink-0 ${
                   selectedTimeframe === tf
                     ? 'bg-[#161922] text-cyan-400 border border-[#1d2230]'
                     : 'text-slate-500 hover:text-slate-300'
@@ -743,7 +743,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
           <button
             onClick={() => setShowEMA(!showEMA)}
-            className={`min-h-[44px] md:min-h-0 px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer ${
+            className={`min-h-[44px] md:min-h-0 px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer touch-manipulation ${
               showEMA
                 ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
                 : 'bg-[#0a0b10] text-slate-500 border-[#1d2230]'
@@ -755,7 +755,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
           <button
             onClick={() => setShowSR(!showSR)}
-            className={`min-h-[44px] md:min-h-0 px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer ${
+            className={`min-h-[44px] md:min-h-0 px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer touch-manipulation ${
               showSR
                 ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
                 : 'bg-[#0a0b10] text-slate-500 border-[#1d2230]'
@@ -768,7 +768,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
           <button
             onClick={loadChartData}
             title="Reload Chart Data"
-            className="min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center p-2 md:p-1 rounded-lg bg-[#0a0b10] hover:bg-zinc-800 text-slate-400 hover:text-white border border-[#1d2230] transition-colors cursor-pointer shrink-0"
+            className="min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center p-2 md:p-1 rounded-lg bg-[#0a0b10] hover:bg-zinc-800 text-slate-400 hover:text-white border border-[#1d2230] transition-colors cursor-pointer touch-manipulation shrink-0"
           >
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
@@ -777,8 +777,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
       {/* Technical Indicators & Macro Bias Bar */}
       {indicatorData && (
-        <div className="flex items-center justify-between gap-3 text-[11px] px-2.5 py-1 rounded bg-[#0a0b10] border border-[#1d2230] flex-wrap">
-          <div className="flex items-center gap-3.5 flex-wrap">
+        <div className="flex items-center justify-between gap-x-4 gap-y-2 text-[11px] px-2.5 py-1 rounded bg-[#0a0b10] border border-[#1d2230] flex-wrap">
+          <div className="flex items-center gap-x-4 gap-y-2 flex-wrap">
             {/* RSI */}
             <div className="flex items-center gap-1">
               <span className="text-slate-500">RSI (14):</span>
@@ -861,32 +861,36 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         </div>
       )}
 
-      {/* OHLCV Bar: Real-time Forming Candle Feed */}
-      <div className="flex items-center justify-between gap-3 text-[11px] px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 overflow-x-auto font-mono">
-        <div className="flex items-center gap-3.5 text-slate-400">
+      {/* OHLCV Bar: Real-time Forming Candle Feed (labels hidden on mobile) */}
+      <div className="flex items-center justify-between gap-3 text-xs md:text-[11px] px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 overflow-x-auto font-mono">
+        <div className="flex items-center gap-3.5 text-slate-400 whitespace-nowrap">
           <span>
-            O: <strong className="text-slate-200">{displayCandle ? formatPrice(selectedSymbol, displayCandle.open) : '--'}</strong>
+            <span className="hidden md:inline">O: </span>
+            <strong className="text-slate-200">{displayCandle ? formatPrice(selectedSymbol, displayCandle.open) : '--'}</strong>
           </span>
           <span>
-            H: <strong className="text-[#00e676]">{displayCandle ? formatPrice(selectedSymbol, displayCandle.high) : '--'}</strong>
+            <span className="hidden md:inline">H: </span>
+            <strong className="text-[#00e676]">{displayCandle ? formatPrice(selectedSymbol, displayCandle.high) : '--'}</strong>
           </span>
           <span>
-            L: <strong className="text-[#ff3366]">{displayCandle ? formatPrice(selectedSymbol, displayCandle.low) : '--'}</strong>
+            <span className="hidden md:inline">L: </span>
+            <strong className="text-[#ff3366]">{displayCandle ? formatPrice(selectedSymbol, displayCandle.low) : '--'}</strong>
           </span>
           <span>
-            C:{' '}
+            <span className="hidden md:inline">C: </span>
             <strong className={isDisplayGreen ? 'text-[#00e676]' : 'text-[#ff3366]'}>
               {displayCandle ? formatPrice(selectedSymbol, displayCandle.close) : '--'}
             </strong>
           </span>
           {displayCandle?.volume != null && displayCandle.volume > 0 && (
             <span>
-              Vol: <strong className="text-slate-200">{displayCandle.volume.toLocaleString()}</strong>
+              <span className="hidden md:inline">Vol: </span>
+              <strong className="text-slate-200">{displayCandle.volume.toLocaleString()}</strong>
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
+        <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
           <span className="flex items-center gap-1 text-[#00e676]">
             <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
             <span>Forming Candle (15s Tick)</span>
@@ -895,7 +899,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       </div>
 
       {/* TradingView Lightweight Charts Viewport */}
-      <div className="relative w-full h-[320px] sm:h-[400px] md:h-[460px] lg:h-[500px] min-w-0 bg-[#090a0f] rounded-xl border border-white/10 overflow-hidden shadow-inner">
+      <div className="relative w-full h-[400px] md:h-[500px] lg:h-[600px] min-w-0 bg-[#090a0f] rounded-xl border border-white/10 overflow-hidden shadow-inner touch-manipulation">
         {candles.length === 0 && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-zinc-950/80 text-zinc-500 font-mono text-xs">
             <Activity className="w-6 h-6 animate-pulse text-cyan-400 mb-2" />

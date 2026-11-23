@@ -114,41 +114,45 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
 
   return (
     <div className="space-y-4 w-full min-w-0 overflow-hidden">
-      {/* Sleek Glassmorphic Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 sm:p-4 rounded-xl bg-white/[0.03] border border-white/10 min-w-0">
-        <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap min-w-0">
-          <div className="flex items-center gap-2 shrink-0">
-            <Layers className="w-4 h-4 text-emerald-400" />
-            <h2 className="text-sm font-semibold text-white tracking-wide uppercase font-sans truncate">
-              Confluence Matrix
-            </h2>
-          </div>
-
-          {/* Honest quote provenance / staleness badge (wrapped properly) */}
-          {quote?.is_stale ? (
-            <span className="px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center gap-1.5 shrink-0 max-w-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
-              <span className="break-words">STALE &bull; no price change &gt;{staleAfterLabel ?? <span className="animate-pulse" aria-busy="true">—</span>}</span>
-            </span>
-          ) : (
-            <span className="px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)] max-w-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-              <span className="break-words">1-min aggregated &middot; {providerLabel} &middot; updated {quoteAgeSeconds != null ? `${quoteAgeSeconds}s` : '--'} ago</span>
-            </span>
-          )}
-
-          <span className="px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono bg-white/5 text-zinc-400 border border-white/10 flex items-center gap-1.5 shrink-0">
-            Single-Asset Focus &bull; XAU/USD
-          </span>
+      {/* Sleek Glassmorphic Header Bar — single wrapping flex row so controls can never overlap */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5 p-3 sm:p-4 rounded-xl bg-white/[0.03] border border-white/10 min-w-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <Layers className="w-4 h-4 text-emerald-400" />
+          <h2 className="text-sm font-semibold text-white tracking-wide uppercase font-sans truncate">
+            Confluence Matrix
+          </h2>
         </div>
 
-        {/* Scan Markets & Threshold: Stacks vertically on mobile (< sm:), row on tablet & desktop */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full sm:w-auto shrink-0">
+        {/* Honest quote provenance / staleness badge — wraps instead of truncating */}
+        {quote?.is_stale ? (
+          <span
+            title={`STALE • no price change in over ${staleAfterLabel ?? 'the staleness window'}`}
+            className="min-w-0 max-w-full px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-start gap-1.5"
+          >
+            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+            <span className="break-words">STALE &bull; no price change &gt;{staleAfterLabel ?? <span className="animate-pulse" aria-busy="true">—</span>}</span>
+          </span>
+        ) : (
+          <span
+            title={`1-min aggregated · ${providerLabel} · updated ${quoteAgeSeconds != null ? `${quoteAgeSeconds}s` : '--'} ago`}
+            className="min-w-0 max-w-full px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-start gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)]"
+          >
+            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="break-words">1-min aggregated &middot; {providerLabel} &middot; updated {quoteAgeSeconds != null ? `${quoteAgeSeconds}s` : '--'} ago</span>
+          </span>
+        )}
+
+        <span className="flex-shrink-0 px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono bg-white/5 text-zinc-400 border border-white/10 flex items-center gap-1.5">
+          Single-Asset Focus &bull; XAU/USD
+        </span>
+
+        {/* Scan Markets & Threshold flow inline (badge → button → threshold) and wrap as a group */}
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto sm:ml-auto min-w-0">
           {onTriggerScan && (
             <button
               onClick={onTriggerScan}
               disabled={isScanning}
-              className={`min-h-[44px] sm:min-h-0 w-full sm:w-auto justify-center px-4 py-2 sm:py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center gap-2 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer ${
+              className={`min-h-[44px] sm:min-h-0 justify-center px-4 py-2 sm:py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-sans text-xs font-semibold flex items-center gap-2 border border-violet-400/30 shadow-[0_0_20px_rgba(124,58,237,0.35)] hover:shadow-[0_0_25px_rgba(124,58,237,0.55)] transition-all duration-300 cursor-pointer touch-manipulation shrink-0 ${
                 isScanning ? 'opacity-70 cursor-wait' : ''
               }`}
               title="Run on-demand market scan across XAU/USD via GET /api/v1/signals/scan"
@@ -158,9 +162,9 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
             </button>
           )}
 
-          <div className="text-xs font-mono text-zinc-400 flex items-center justify-between sm:justify-start gap-2 bg-white/[0.02] sm:bg-transparent p-2 sm:p-0 rounded-xl sm:rounded-none border sm:border-0 border-white/5">
+          <div className="text-xs font-mono text-zinc-400 flex items-center gap-2 bg-white/[0.02] sm:bg-transparent p-2 sm:p-0 rounded-xl sm:rounded-none border sm:border-0 border-white/5 shrink-0">
             <span className="text-zinc-500">Threshold:</span>
-            <span className="font-semibold text-zinc-200 bg-white/5 px-2.5 py-1 sm:py-0.5 rounded-lg border border-white/10 text-center">
+            <span className="font-semibold text-zinc-200 bg-white/5 px-2.5 py-1 sm:py-0.5 rounded-lg border border-white/10 text-center whitespace-nowrap">
               &ge;{' '}
               {appConfig ? (
                 appConfig.min_confluence_score
