@@ -35,7 +35,8 @@ class Settings(BaseSettings):
 
     # Scoring & Risk Parameters
     MIN_SETUP_SCORE: float = Field(
-        default=75.0,
+        # Aligned with the canonical Baseline v2 strategy floor (60.0).
+        default=60.0,
         ge=0.0,
         le=100.0,
         validation_alias=AliasChoices("MIN_SETUP_SCORE", "MIN_CONFLUENCE_SCORE"),

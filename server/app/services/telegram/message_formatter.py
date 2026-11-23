@@ -78,7 +78,7 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
     setup_state_str = meta.get("setup_state") if isinstance(meta, dict) else None
 
     # Do not print "STRONG BUY" unless setup_state is CONFIRMED_SETUP and score is >= threshold
-    min_score = getattr(settings, "MIN_SETUP_SCORE", 75.0)
+    min_score = getattr(settings, "MIN_SETUP_SCORE", 60.0)
     is_confirmed_strong = (
         (setup_state_str == "CONFIRMED_SETUP" or setup_state_str is None)
         and score_val is not None

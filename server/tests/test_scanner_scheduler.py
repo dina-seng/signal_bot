@@ -524,6 +524,112 @@ async def test_paper_trading_when_enabled(test_db_session):
     assert res.paper_trades_opened_count == 1
 
 
+@pytest.mark.asyncio
+async def test_paper_trade_not_gated_by_telegram_cooldown_or_dedup(test_db_session):
+    """A suppressed Telegram alert must not suppress the paper trade."""
+    _seed_candles(test_db_session, "EUR/USD", 40)
+    settings.PAPER_TRADING = True
+    settings.SCANNER_AUTO_TRADE_PAPER = True
+
+    now = datetime.now(timezone.utc)
+    # Prior same-direction signal puts this symbol inside the alert cooldown.
+    prior = Signal(
+        symbol="EUR/USD", timeframe="30m", direction="BUY", setup_score=69.0,
+        entry_price=1.1200, stop_loss=1.1050, take_profit_1=1.1350,
+        take_profit_2=1.1400, risk_reward=1.0, status="ACTIVE",
+        fingerprint="prior_cooldown_fp", reasons=[], timestamp=now,
+    )
+    candidate = Signal(
+        symbol="EUR/USD", timeframe="30m", direction="BUY", setup_score=69.0,
+        entry_price=1.1200, stop_loss=1.1050, take_profit_1=1.1350,
+        take_profit_2=1.1400, risk_reward=1.0, status="ACTIVE",
+        fingerprint="candidate_69_fp", reasons=[], timestamp=now,
+    )
+    test_db_session.add_all([prior, candidate])
+    test_db_session.commit()
+    test_db_session.refresh(candidate)
+
+    scanner = AutomatedMarketScanner(
+        telegram_client=MockTelegramClient(),
+        market_provider=MockMarketDataProvider(base_price=1.1200),
+        news_provider=MockNewsProvider(),
+    )
+    # Both alert-suppression gates are active.
+    scanner._broadcasted_fingerprints = {"candidate_69_fp"}
+
+    from unittest.mock import MagicMock
+    from app.schemas.signal import MarketScanResponse, MarketScanSymbolResult
+
+    sig_resp = SignalResponse.model_validate(candidate)
+    sig_resp.score_breakdown = None  # legacy signals have no breakdown
+    mock_scan_res = MarketScanResponse(
+        timestamp=now, scanned_count=1, actionable_count=1,
+        results=[MarketScanSymbolResult(
+            symbol="EUR/USD", timeframe="30m", direction=SignalDirection.BUY,
+            setup_score=69.0, is_actionable=True, signal=sig_resp,
+            blackout_blocked=False, reasons=[],
+        )],
+    )
+    scanner.signal_generator.scan_all_symbols = MagicMock(return_value=mock_scan_res)
+
+    res = await scanner.run_scan_cycle(
+        db=test_db_session, symbols=["EUR/USD"], timeframes=["30m"],
+        broadcast_to_telegram=True, auto_paper_trade=True,
+    )
+
+    assert res.signals_broadcast_count == 0
+    assert res.paper_trades_opened_count == 1
+    trade = test_db_session.query(PaperTrade).filter_by(signal_id=candidate.id).first()
+    assert trade is not None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_signal_below_60(test_db_session):
+    """Score 59 / unqualified must not reach either dispatch path."""
+    _seed_candles(test_db_session, "EUR/USD", 40)
+    now = datetime.now(timezone.utc)
+    candidate = Signal(
+        symbol="EUR/USD", timeframe="30m", direction="BUY", setup_score=59.0,
+        entry_price=1.1200, stop_loss=1.1050, take_profit_1=1.1350,
+        take_profit_2=1.1400, risk_reward=1.0, status="ACTIVE",
+        fingerprint="below_60_fp", reasons=[], timestamp=now,
+    )
+    test_db_session.add(candidate)
+    test_db_session.commit()
+
+    scanner = AutomatedMarketScanner(
+        telegram_client=MockTelegramClient(),
+        market_provider=MockMarketDataProvider(base_price=1.1200),
+        news_provider=MockNewsProvider(),
+    )
+
+    from unittest.mock import MagicMock
+    from app.schemas.signal import MarketScanResponse, MarketScanSymbolResult, ScoreBreakdown
+
+    sig_resp = SignalResponse.model_validate(candidate)
+    sig_resp.score_breakdown = ScoreBreakdown(
+        structure_score=30.0, liquidity_score=29.0, indicators_score=0.0,
+        price_action_score=0.0, total_score=59.0, is_qualified=False,
+    )
+    mock_scan_res = MarketScanResponse(
+        timestamp=now, scanned_count=1, actionable_count=1,
+        results=[MarketScanSymbolResult(
+            symbol="EUR/USD", timeframe="30m", direction=SignalDirection.BUY,
+            setup_score=59.0, is_actionable=True, signal=sig_resp,
+            blackout_blocked=False, reasons=[],
+        )],
+    )
+    scanner.signal_generator.scan_all_symbols = MagicMock(return_value=mock_scan_res)
+
+    res = await scanner.run_scan_cycle(
+        db=test_db_session, symbols=["EUR/USD"], timeframes=["30m"],
+        broadcast_to_telegram=True, auto_paper_trade=True,
+    )
+
+    assert res.signals_broadcast_count == 0
+    assert res.paper_trades_opened_count == 0
+
+
 # =====================================================================
 # 7. Duplicate Signal Suppression & Cooldown Tests
 # =====================================================================

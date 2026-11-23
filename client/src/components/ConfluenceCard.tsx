@@ -37,7 +37,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   onToggleNotify,
   onSelectSignalForChart,
   onTradeFromSignal,
-  minScore = 75,
+  minScore = 60,
 }) => {
   const [isAiExpanded, setIsAiExpanded] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<'ticker' | 'tradingview'>('ticker');

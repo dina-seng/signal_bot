@@ -400,50 +400,68 @@ class AutomatedMarketScanner:
 
                     signals_found += 1
 
-                    # 1. Active Position Check: Skip if position is already open/active for this symbol
+                    # 1. Active Position Check: applies to BOTH dispatch paths.
                     if self.has_active_position(db, sig.symbol):
                         logger.info(f"Skipping signal alert for {sig.symbol}: Position already active.")
                         continue
 
-                    # 2. Signal Cooldown Period Check (Deduping)
-                    if self.is_signal_in_cooldown(db, sig):
+                    # 2. Qualification gate — live dispatch floor matches Baseline v2.
+                    breakdown = getattr(sig, "score_breakdown", None)
+                    is_qualified = (
+                        bool(getattr(breakdown, "is_qualified", True))
+                        if breakdown is not None
+                        else True
+                    )
+                    if sig.setup_score < settings.MIN_SETUP_SCORE or not is_qualified:
+                        logger.info(
+                            f"Skipping dispatch for {sig.symbol} [{sig.timeframe}]: "
+                            f"score={sig.setup_score:.1f} (min={settings.MIN_SETUP_SCORE:.1f}), "
+                            f"is_qualified={is_qualified}."
+                        )
                         continue
 
-                    # 3. In-memory Fingerprint Deduplication Check
-                    if sig.fingerprint in self._broadcasted_fingerprints:
-                        logger.debug(f"Skipping signal alert for {sig.symbol}: Fingerprint already broadcasted.")
-                        continue
-
-                    self._broadcasted_fingerprints.add(sig.fingerprint)
-
-                    # 4. Standalone Broadcast to Telegram
+                    # 3. Telegram broadcast. Cooldown / fingerprint dedup are
+                    #    ALERT-ONLY concerns and must NOT gate paper trading.
                     if broadcast_to_telegram:
-                        try:
-                            msg_text = self.formatter.format_signal_alert(sig)
-                            send_res = await self.telegram_client.send_message(
-                                text=msg_text,
-                                parse_mode="HTML",
-                                signal_id=sig.id or sig.fingerprint,
+                        if self.is_signal_in_cooldown(db, sig):
+                            logger.debug(
+                                f"Skipping Telegram broadcast for {sig.symbol}: signal in cooldown."
                             )
-                            if send_res.success:
-                                signals_broadcast += 1
-                                if sig.id:
-                                    db_sig = db.get(Signal, sig.id)
-                                    if db_sig:
-                                        db_sig.is_broadcasted = True
-                                        db.commit()
-                                logger.info(
-                                    f"BROADCASTED NEW SIGNAL: [{sig.direction.value}] {sig.symbol} "
-                                    f"[{sig.timeframe}] (Score: {sig.setup_score:.1f})"
+                        elif sig.fingerprint in self._broadcasted_fingerprints:
+                            logger.debug(
+                                f"Skipping Telegram broadcast for {sig.symbol}: "
+                                "fingerprint already broadcasted."
+                            )
+                        else:
+                            self._broadcasted_fingerprints.add(sig.fingerprint)
+                            try:
+                                msg_text = self.formatter.format_signal_alert(sig)
+                                send_res = await self.telegram_client.send_message(
+                                    text=msg_text,
+                                    parse_mode="HTML",
+                                    signal_id=sig.id or sig.fingerprint,
                                 )
-                            else:
-                                logger.error(
-                                    f"Telegram delivery failed for {sig.symbol}: {send_res.error}"
-                                )
-                        except Exception as e:
-                            logger.error(f"Telegram delivery failed for {sig.symbol}: {e}")
+                                if send_res.success:
+                                    signals_broadcast += 1
+                                    if sig.id:
+                                        db_sig = db.get(Signal, sig.id)
+                                        if db_sig:
+                                            db_sig.is_broadcasted = True
+                                            db.commit()
+                                    logger.info(
+                                        f"BROADCASTED NEW SIGNAL: [{sig.direction.value}] {sig.symbol} "
+                                        f"[{sig.timeframe}] (Score: {sig.setup_score:.1f})"
+                                    )
+                                else:
+                                    logger.error(
+                                        f"Telegram delivery failed for {sig.symbol}: {send_res.error}"
+                                    )
+                            except Exception as e:
+                                logger.error(f"Telegram delivery failed for {sig.symbol}: {e}")
 
-                    # 5. Paper Trading Safety Check & Auto-execution
+                    # 4. Paper Trading Safety Check & Auto-execution. Independent of
+                    #    Telegram delivery/cooldown/dedup: the order executor already
+                    #    has its own idempotency guard per signal.
                     if (
                         auto_paper_trade
                         and settings.PAPER_TRADING
@@ -472,7 +490,7 @@ class AutomatedMarketScanner:
                             f"SCANNER_AUTO_TRADE_PAPER={settings.SCANNER_AUTO_TRADE_PAPER})"
                         )
 
-            # 4. Synchronize Open Paper Trading Positions & Trigger TP/SL Alerts
+            # 5. Synchronize Open Paper Trading Positions & Trigger TP/SL Alerts
             updated_pos_count = 0
             try:
                 sync_report = self.paper_service.sync_prices(db=db)
@@ -536,7 +554,7 @@ class AutomatedMarketScanner:
                 logger.error(f"Paper position sync failed: {e}")
                 db.rollback()
 
-            # 5. Update internal metrics & logging
+            # 6. Update internal metrics & logging
             elapsed = round(time.time() - start_time, 2)
             self._total_scans_completed += 1
             self._last_scan_at = now

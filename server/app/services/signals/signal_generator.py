@@ -352,14 +352,14 @@ class SignalGenerator:
           - Analyzes 1H trend (BULLISH / BEARISH / RANGING).
           - Evaluates 15m and 30m setups.
           - If 1H trend is BULLISH:
-              * BUY signals (score >= 75) are returned as TREND FOLLOWING.
+              * BUY signals (score >= settings.MIN_SETUP_SCORE) are TREND FOLLOWING.
               * SELL signals (score > 80) are returned as COUNTER-TREND SCALP.
           - If 1H trend is BEARISH:
-              * SELL signals (score >= 75) are returned as TREND FOLLOWING.
+              * SELL signals (score >= settings.MIN_SETUP_SCORE) are TREND FOLLOWING.
               * BUY signals (score > 80) are returned as COUNTER-TREND SCALP.
           - If 1H trend is RANGING:
-              * Any qualified signal (score >= 75) is returned as TREND FOLLOWING.
-          - If no high-confluence setup (>75 score) is found on 15m/30m, falls back to 1H.
+              * Any qualified signal (score >= settings.MIN_SETUP_SCORE) is TREND FOLLOWING.
+          - If no qualified setup (>= settings.MIN_SETUP_SCORE) is found on 15m/30m, falls back to 1H.
           - Returns the single "Best" signal for that symbol, clearly labeling the timeframe.
         """
         clean_sym = symbol.replace("%2F", "/").strip().upper()
@@ -524,17 +524,17 @@ class SignalGenerator:
             align = None
 
             if htf_trend == "BULLISH":
-                if dir_val == SignalDirection.BUY and score >= 75.0:
+                if dir_val == SignalDirection.BUY and score >= settings.MIN_SETUP_SCORE:
                     align = "TREND FOLLOWING"
                 elif dir_val == SignalDirection.SELL and score > 80.0:
                     align = "COUNTER-TREND SCALP"
             elif htf_trend == "BEARISH":
-                if dir_val == SignalDirection.SELL and score >= 75.0:
+                if dir_val == SignalDirection.SELL and score >= settings.MIN_SETUP_SCORE:
                     align = "TREND FOLLOWING"
                 elif dir_val == SignalDirection.BUY and score > 80.0:
                     align = "COUNTER-TREND SCALP"
             else:  # RANGING
-                if score >= 75.0:
+                if score >= settings.MIN_SETUP_SCORE:
                     align = "TREND FOLLOWING"
 
             if align:
@@ -566,7 +566,7 @@ class SignalGenerator:
             best_sig = sig_1h
             best_sig.htf_trend = htf_trend
 
-            if best_sig.direction in (SignalDirection.BUY, SignalDirection.SELL) and best_sig.setup_score >= 75.0:
+            if best_sig.direction in (SignalDirection.BUY, SignalDirection.SELL) and best_sig.setup_score >= settings.MIN_SETUP_SCORE:
                 trend_alignment = "TREND FOLLOWING"
                 best_sig.trend_alignment = trend_alignment
                 label_prefix = f"[TREND FOLLOWING] 1H Primary Trend Setup • Score: {best_sig.setup_score:.1f}/100"
@@ -576,7 +576,8 @@ class SignalGenerator:
                 trend_alignment = None
                 best_sig.trend_alignment = None
                 wait_reason = (
-                    f"1H Trend: {htf_trend} • No high-confluence setup (>75 score) on 15m/30m/1H. "
+                    f"1H Trend: {htf_trend} • No qualified setup "
+                    f"(>={settings.MIN_SETUP_SCORE:.0f} score) on 15m/30m/1H. "
                     "Awaiting structural confirmation."
                 )
                 if not any("1H Trend:" in r for r in best_sig.reasons):

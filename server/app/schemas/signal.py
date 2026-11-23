@@ -31,7 +31,7 @@ class ScoreBreakdown(BaseModel):
     indicators_score: float = Field(default=0.0, ge=0.0, le=25.0, description="Legacy score from EMAs, RSI, ATR (Max 25)")
     price_action_score: float = Field(..., ge=0.0, le=25.0, description="Score from Pin Bars & Engulfing (Max 25)")
     total_score: float = Field(..., ge=0.0, le=100.0, description="Composite score (0 to 100)")
-    is_qualified: bool = Field(..., description="True if total_score >= MIN_SETUP_SCORE (e.g. 75)")
+    is_qualified: bool = Field(..., description="True if total_score >= MIN_SETUP_SCORE (e.g. 60)")
 
 
 class RiskParameters(BaseModel):

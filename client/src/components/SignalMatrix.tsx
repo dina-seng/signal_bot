@@ -158,7 +158,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
           <div className="text-xs font-mono text-zinc-400 flex items-center gap-1.5">
             <span className="text-zinc-500">Threshold:</span>
             <span className="font-semibold text-zinc-200 bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/10">
-              &ge; {appConfig?.min_confluence_score ?? 75} / 100
+              &ge; {appConfig?.min_confluence_score ?? 60} / 100
             </span>
           </div>
         </div>
@@ -183,7 +183,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
               onToggleNotify={onToggleNotify}
               onSelectSignalForChart={onSelectSignalForChart}
               onTradeFromSignal={onTradeFromSignal}
-              minScore={appConfig?.min_confluence_score ?? 75}
+              minScore={appConfig?.min_confluence_score ?? 60}
             />
           ))}
         </div>

@@ -180,7 +180,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
                 New Signal Alerts
               </span>
               <p className="text-[10px] text-slate-500">
-                Dispatches actionable alerts when confluence engine scores &ge; {appConfig?.min_confluence_score ?? 75}%
+                Dispatches actionable alerts when confluence engine scores &ge; {appConfig?.min_confluence_score ?? 60}%
               </p>
             </div>
             <button
