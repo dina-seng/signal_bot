@@ -226,3 +226,55 @@ def test_price_sync_sl_and_tp_monitoring(test_db_session):
     assert perf.winning_trades == 1
     assert perf.win_rate == 100.0
     assert perf.total_realized_pnl > 0.0
+
+
+# -------------------------------------------------------------
+# 7. Strict risk-budget enforcement (reject instead of min-lot clamp)
+# -------------------------------------------------------------
+def _small_account(db, balance=214.20):
+    account = VirtualAccountManager().get_or_create_default_account(db)
+    account.balance = balance
+    account.equity = balance
+    account.margin_used = 0.0
+    account.free_margin = balance
+    db.commit()
+    return account
+
+
+def test_wide_stop_is_rejected_when_risk_budget_cannot_fund_min_lot(test_db_session):
+    """$214.20 / 0.5% / 77-point stop -> raw lots ~0.0001 -> REJECT, no position."""
+    from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
+
+    _small_account(test_db_session)
+    _seed_candle(test_db_session, symbol="XAU/USD", close=3592.79)
+
+    order = PaperOrderCreate(
+        symbol="XAU/USD", direction=SignalDirection.BUY, order_type="MARKET",
+        stop_loss=3515.43, take_profit_1=3633.89, risk_percent=0.5,
+    )
+    with pytest.raises(InsufficientRiskBudgetError, match="Risk budget insufficient"):
+        PaperOrderExecutor().execute_order(
+            test_db_session, order, current_market_price=3592.79
+        )
+
+    assert test_db_session.query(PaperTrade).filter_by(symbol="XAU/USD").count() == 0
+
+
+def test_small_stop_is_accepted_with_risk_compliant_lot(test_db_session):
+    """5 XAU pips (0.10/pip -> $0.50) on $214.20 -> raw lots >= 0.01 -> ACCEPT."""
+    _small_account(test_db_session)
+    _seed_candle(test_db_session, symbol="XAU/USD", close=3592.79)
+
+    order = PaperOrderCreate(
+        symbol="XAU/USD", direction=SignalDirection.BUY, order_type="MARKET",
+        stop_loss=3592.29, take_profit_1=3593.29, risk_percent=0.5,
+    )
+    trade = PaperOrderExecutor().execute_order(
+        test_db_session, order, current_market_price=3592.79
+    )
+
+    assert trade.status == "OPEN"
+    assert trade.initial_position_size >= 0.01
+    risk_distance = abs(trade.entry_price - trade.stop_loss)
+    actual_risk = risk_distance * 100.0 * trade.initial_position_size
+    assert actual_risk <= 214.20 * 0.005 + 0.02

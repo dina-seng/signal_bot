@@ -1,5 +1,6 @@
 """Paper Trading Order Execution and Signal-to-Trade Converter."""
 
+import math
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -28,6 +29,18 @@ _TIMEFRAME_MINUTES: dict[str, float] = {
     "4h":  240.0,
     "1d":  1440.0,
 }
+
+# Lot bounds enforced by the paper venue.
+MIN_LOT_SIZE: float = 0.01
+MAX_LOT_SIZE: float = 100.0
+
+
+class InsufficientRiskBudgetError(ValueError):
+    """Raised when the configured risk budget cannot fund even the minimum lot.
+
+    Subclasses ValueError so existing caller-level error handling keeps working,
+    while giving dispatch code a specific type to recognise for sizing rejections.
+    """
 
 
 class PaperOrderExecutor:
@@ -210,6 +223,24 @@ class PaperOrderExecutor:
                 logger.warning(msg)
                 raise ValueError(msg)
 
+    def _lots_for_risk_budget(self, raw_lots: float, symbol: str) -> float:
+        """Return a risk-compliant lot size, or reject if the min lot is unaffordable.
+
+        Clamping a sub-minimum requirement up to 0.01 would silently convert a 0.5%
+        risk budget into a multi-percent account risk. Reject instead of opening.
+        """
+        if raw_lots < MIN_LOT_SIZE:
+            msg = (
+                f"Trade rejected: Risk budget insufficient for minimum lot size. "
+                f"Required lots: {raw_lots:.6f}, Min lots: {MIN_LOT_SIZE:.2f}"
+            )
+            logger.warning(f"{msg} (symbol={symbol})")
+            raise InsufficientRiskBudgetError(msg)
+        # Floor (not round) to the 0.01 lot grid: rounding up would spend a few
+        # cents more than the configured risk budget.
+        compliant_lots = math.floor(min(raw_lots, MAX_LOT_SIZE) * 100) / 100.0
+        return round(max(MIN_LOT_SIZE, compliant_lots), 2)
+
     def execute_order(
         self,
         db: Session,
@@ -228,6 +259,7 @@ class PaperOrderExecutor:
         # 2. Resolve Market Price
         mkt_price = current_market_price or self.get_latest_market_price(db, order.symbol)
         pip_size = self.risk_manager.get_pip_size(order.symbol)
+        pip_val = self.risk_manager.get_pip_value_per_lot(order.symbol)
         order_type = order.order_type.upper().strip()
 
         # 3. Determine Entry Price
@@ -265,16 +297,23 @@ class PaperOrderExecutor:
             sl = sl or risk_res.stop_loss
             tp1 = tp1 or risk_res.take_profit_1
             tp2 = tp2 or risk_res.take_profit_2
-            calculated_lots = risk_res.suggested_lot_size
+            # RiskManager already clamps suggested_lot_size to the min lot, so
+            # recompute the raw requirement from the resolved SL for the budget check.
+            fallback_risk_pips = abs(exec_entry - sl) / pip_size
+            fallback_raw_lots = (
+                account.balance * ((order.risk_percent or 0.5) / 100.0)
+                / max(1e-6, fallback_risk_pips * pip_val)
+            )
+            calculated_lots = self._lots_for_risk_budget(fallback_raw_lots, order.symbol)
         else:
-            # Calculate lots from user SL
+            # Calculate lots from user SL — reject instead of clamping up to min lot.
             risk_pips = abs(exec_entry - sl) / pip_size
-            pip_val = self.risk_manager.get_pip_value_per_lot(order.symbol)
             risk_usd = account.balance * ((order.risk_percent or 0.5) / 100.0)
-            calculated_lots = round(max(0.01, min(100.0, risk_usd / max(1e-6, risk_pips * pip_val))), 2)
+            raw_lots = risk_usd / max(1e-6, risk_pips * pip_val)
+            calculated_lots = self._lots_for_risk_budget(raw_lots, order.symbol)
 
         lots = round(order.position_size if order.position_size else calculated_lots, 2)
-        lots = max(0.01, min(100.0, lots))
+        lots = max(MIN_LOT_SIZE, min(MAX_LOT_SIZE, lots))
 
         # 5. Margin Validation
         req_margin = self.account_manager.calculate_required_margin(
