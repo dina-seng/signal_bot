@@ -47,7 +47,9 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
     : quote?.provider === 'mock'
       ? 'Mock'
       : (quote?.provider || 'provider');
-  const staleAfterSeconds = appConfig?.quote_stale_after_seconds ?? 180;
+  const staleAfterLabel = appConfig?.quote_stale_after_seconds != null
+    ? `${appConfig.quote_stale_after_seconds}s`
+    : null;
   // Tick directions for green/red flash effect on real price changes
   const [tickDirections, setTickDirections] = useState<Record<string, TickDirection>>({});
   const prevPricesRef = useRef<Record<string, number>>({});
@@ -126,7 +128,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
           {quote?.is_stale ? (
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center gap-1.5 shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
-              STALE &bull; no price change &gt;{staleAfterSeconds}s
+              STALE &bull; no price change &gt;{staleAfterLabel ?? <span className="animate-pulse" aria-busy="true">—</span>}
             </span>
           ) : (
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 shadow-[0_0_12px_rgba(16,185,129,0.15)] shrink-0">
@@ -158,7 +160,13 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
           <div className="text-xs font-mono text-zinc-400 flex items-center gap-1.5">
             <span className="text-zinc-500">Threshold:</span>
             <span className="font-semibold text-zinc-200 bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/10">
-              &ge; {appConfig?.min_confluence_score ?? 60} / 100
+              &ge;{' '}
+              {appConfig ? (
+                appConfig.min_confluence_score
+              ) : (
+                <span className="animate-pulse" aria-busy="true">—</span>
+              )}{' '}
+              / 100
             </span>
           </div>
         </div>
@@ -183,7 +191,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
               onToggleNotify={onToggleNotify}
               onSelectSignalForChart={onSelectSignalForChart}
               onTradeFromSignal={onTradeFromSignal}
-              minScore={appConfig?.min_confluence_score ?? 60}
+              minScore={appConfig?.min_confluence_score}
             />
           ))}
         </div>

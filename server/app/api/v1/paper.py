@@ -1,7 +1,9 @@
 """Paper Trading, Virtual Accounts, and Position Management API Endpoints."""
 
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select, desc
 from sqlalchemy.orm import Session
 
@@ -9,6 +11,7 @@ from app.core.database import get_db
 from app.core.config import settings
 from app.api.deps import get_paper_trading_service
 from app.models.candle import Candle
+from app.models.paper import PaperTrade, VirtualAccount
 from app.services.signals.risk_manager import RiskManager
 from app.schemas.paper_trading import (
     AccountDepositRequest,
@@ -26,6 +29,82 @@ from app.schemas.paper_trading import (
 from app.services.paper_trading import PaperTradingService
 
 router = APIRouter(prefix="/paper", tags=["Paper Trading & Virtual Accounts"])
+
+_OPEN_TRADE_STATUSES = {"OPEN", "PARTIALLY_CLOSED"}
+
+
+class PaperSummaryResponse(BaseModel):
+    """Account and open positions computed from one shared live price tick."""
+    account: VirtualAccountResponse
+    positions: List[PaperTradeResponse]
+    tick_price: Optional[float]
+    tick_source: str
+    as_of: datetime
+
+
+def _resolve_live_tick(db: Session) -> Tuple[Optional[float], str]:
+    """Resolve one price tick: live quote cache first, last closed candle as fallback."""
+    from app.api.v1.market import get_cached_quote
+
+    quote = get_cached_quote("XAU/USD")
+    if quote and quote.price and quote.price > 0 and not quote.is_stale:
+        return float(quote.price), "quote"
+
+    last_candle = db.scalars(
+        select(Candle)
+        .where(Candle.symbol == "XAU/USD")
+        .order_by(desc(Candle.timestamp))
+        .limit(1)
+    ).first()
+    if last_candle is not None and float(last_candle.close) > 0:
+        return float(last_candle.close), "candle"
+    return None, "stored"
+
+
+def _mark_trade_entities_to_tick(trades: List[PaperTrade], price: float) -> None:
+    """Write the shared tick into the ORM entities that feed account equity."""
+    pip_size = RiskManager.get_pip_size("XAU/USD")
+    pip_value = RiskManager.get_pip_value_per_lot("XAU/USD")
+    for t in trades:
+        if t.symbol != "XAU/USD" or t.status not in _OPEN_TRADE_STATUSES:
+            continue
+        t.current_price = price
+        direction = getattr(t.direction, "value", t.direction)
+        pips = (
+            (price - t.entry_price) / pip_size
+            if direction == "BUY"
+            else (t.entry_price - price) / pip_size
+        )
+        t.pnl_pips = round(pips, 1)
+        t.unrealized_pnl = round(pips * pip_value * t.remaining_position_size, 2)
+
+
+def _sync_paper_state_to_live_tick(
+    db: Session, service: PaperTradingService, account_id: Optional[int] = None
+) -> Tuple[VirtualAccount, List[PaperTrade], Optional[float], str]:
+    """Mark all open trades with one tick, persist it, then recompute account equity.
+
+    Both /paper/account and /paper/summary use this so equity and floating P&L can
+    never disagree with the positions list by a price tick.
+    """
+    if account_id:
+        account = service.account_manager.get_account(db, account_id)
+    else:
+        account = service.account_manager.get_or_create_default_account(db)
+
+    trades = list(
+        db.scalars(
+            select(PaperTrade).where(
+                PaperTrade.account_id == account.id,
+                PaperTrade.status.in_(_OPEN_TRADE_STATUSES),
+            )
+        ).all()
+    )
+    tick_price, tick_source = _resolve_live_tick(db)
+    if tick_price is not None:
+        _mark_trade_entities_to_tick(trades, tick_price)
+        db.commit()
+    return account, trades, tick_price, tick_source
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -45,9 +124,44 @@ def get_virtual_account(
     db: Session = Depends(get_db),
     service: PaperTradingService = Depends(get_paper_trading_service),
 ):
-    """Retrieve virtual trading account summary, balance, equity, and margin levels."""
+    """Retrieve virtual trading account summary, balance, equity, and margin levels.
+
+    Open positions are first re-marked with the shared live tick so equity and
+    floating P&L match the positions endpoint exactly.
+    """
     try:
+        _sync_paper_state_to_live_tick(db, service, account_id)
         return service.get_account_summary(db=db, account_id=account_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/summary", response_model=PaperSummaryResponse)
+def get_paper_summary(
+    account_id: Optional[int] = Query(None, description="Optional account ID (defaults to primary account)"),
+    db: Session = Depends(get_db),
+    service: PaperTradingService = Depends(get_paper_trading_service),
+):
+    """Atomic snapshot: account + open positions from ONE shared live price tick.
+
+    The dashboard uses this so the header (equity / floating P&L) and the position
+    ledger can never disagree due to fetch ordering or a price tick between calls.
+    """
+    try:
+        account, trades, tick_price, tick_source = _sync_paper_state_to_live_tick(
+            db, service, account_id
+        )
+        account_response = service.account_manager.get_account_response(db, account)
+        positions = [PaperTradeResponse.model_validate(t) for t in trades]
+        for pos in positions:
+            pos.price_source = tick_source
+        return PaperSummaryResponse(
+            account=account_response,
+            positions=positions,
+            tick_price=tick_price,
+            tick_source=tick_source,
+            as_of=datetime.now(timezone.utc),
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

@@ -103,3 +103,31 @@ def test_paper_orders_and_position_management_endpoints(client, test_db_session)
     perf_data = perf_res.json()
     assert "win_rate" in perf_data
     assert "profit_factor" in perf_data
+
+
+def test_paper_summary_is_atomic(client, test_db_session):
+    """Account equity and open-position P&L are derived from one shared tick."""
+    _seed_candle(test_db_session, symbol="XAU/USD", close=3592.79)
+    order_res = client.post("/api/v1/paper/orders", json={
+        "symbol": "XAU/USD",
+        "direction": "BUY",
+        "order_type": "MARKET",
+        "position_size": 0.01,
+        "stop_loss": 3515.43,
+        "take_profit_1": 3633.89,
+    })
+    assert order_res.status_code == 200
+
+    res = client.get("/api/v1/paper/summary")
+    assert res.status_code == 200
+    data = res.json()
+    account = data["account"]
+    positions = data["positions"]
+
+    assert len(positions) == 1
+    assert data["tick_price"] is not None
+    assert data["tick_source"] in ("quote", "candle")
+    assert all(p["price_source"] == data["tick_source"] for p in positions)
+    floating = round(sum(p["unrealized_pnl"] for p in positions), 2)
+    assert account["equity"] == round(account["balance"] + floating, 2)
+    assert account["floating_pnl"] == floating

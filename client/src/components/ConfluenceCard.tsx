@@ -37,7 +37,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   onToggleNotify,
   onSelectSignalForChart,
   onTradeFromSignal,
-  minScore = 60,
+  minScore,
 }) => {
   const [isAiExpanded, setIsAiExpanded] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<'ticker' | 'tradingview'>('ticker');
@@ -248,7 +248,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                   className={`font-semibold ${
                     signal.confluenceScore >= 85
                       ? 'text-emerald-400'
-                      : signal.confluenceScore >= minScore
+                      : minScore !== undefined && signal.confluenceScore >= minScore
                       ? 'text-indigo-300'
                       : 'text-zinc-400'
                   }`}
@@ -334,9 +334,15 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
             ) : (
               <div className="rounded-xl border border-white/[0.06] bg-zinc-950/40 p-3 text-center font-mono text-xs text-zinc-400">
                 <span>R:R Target: </span>
-                <strong className="text-white">{signal.riskRewardRatio && signal.riskRewardRatio !== '--' ? signal.riskRewardRatio : '1:2.0'}</strong>
+                {signal.riskRewardRatio && signal.riskRewardRatio !== '--' ? (
+                  <strong className="text-white">{signal.riskRewardRatio}</strong>
+                ) : (
+                  <span className="inline-block min-w-[3rem] animate-pulse rounded bg-white/10 align-middle" aria-busy="true" aria-label="Loading risk reward" />
+                )}
                 <span className="block text-[10px] text-zinc-500 mt-1">
-                  {signal.setupReason || `Awaiting institutional confirmation threshold (≥ ${minScore} pts)`}
+                  {signal.setupReason || (minScore !== undefined
+                    ? `Awaiting institutional confirmation threshold (≥ ${minScore} pts)`
+                    : 'Awaiting institutional confirmation threshold')}
                 </span>
               </div>
             )}

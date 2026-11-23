@@ -48,6 +48,14 @@ export interface AppConfig {
   active_symbols: string[];
 }
 
+export interface PaperSummary {
+  account: BackendAccount;
+  positions: BackendPosition[];
+  tick_price: number | null;
+  tick_source: string;
+  as_of: string;
+}
+
 export interface BackendQuote {
   symbol: string;
   price: number;
@@ -427,7 +435,13 @@ export const quantViewApi = {
     return fetchWithTiming<BackendAccount>(`${API_BASE}/paper/account`);
   },
 
-  // 3. Paper Trading Open Positions
+  // 3. Atomic paper snapshot (account + positions from one live price tick)
+  async getSummary(): Promise<{ data: PaperSummary; durationMs: number }> {
+    console.log('[API] GET /api/v1/paper/summary');
+    return fetchWithTiming<PaperSummary>(`${API_BASE}/paper/summary`);
+  },
+
+  // 3b. Paper Trading Open Positions
   async getPositions(): Promise<{ data: BackendPosition[]; durationMs: number }> {
     console.log('[API] GET /api/v1/paper/positions?status=OPEN');
     return fetchWithTiming<BackendPosition[]>(`${API_BASE}/paper/positions?status=OPEN`);
@@ -462,7 +476,7 @@ export const quantViewApi = {
     signal_id?: number | null;
     symbol: string;
     timeframe?: string;
-    risk_percent?: number;
+    risk_percent: number;
   }): Promise<{ data: BackendPaperTrade; durationMs: number }> {
     console.log('[API] POST /api/v1/paper/orders/from-signal', payload);
     return fetchWithTiming<BackendPaperTrade>(`${API_BASE}/paper/orders/from-signal`, {
@@ -471,7 +485,7 @@ export const quantViewApi = {
         signal_id: payload.signal_id ?? null,
         symbol: payload.symbol,
         timeframe: payload.timeframe || '1h',
-        risk_percent: payload.risk_percent ?? 0.5,
+        risk_percent: payload.risk_percent,
       }),
     });
   },

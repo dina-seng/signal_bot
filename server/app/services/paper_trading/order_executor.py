@@ -300,19 +300,22 @@ class PaperOrderExecutor:
             # RiskManager already clamps suggested_lot_size to the min lot, so
             # recompute the raw requirement from the resolved SL for the budget check.
             fallback_risk_pips = abs(exec_entry - sl) / pip_size
-            fallback_raw_lots = (
+            raw_lots = (
                 account.balance * ((order.risk_percent or 0.5) / 100.0)
                 / max(1e-6, fallback_risk_pips * pip_val)
             )
-            calculated_lots = self._lots_for_risk_budget(fallback_raw_lots, order.symbol)
         else:
-            # Calculate lots from user SL — reject instead of clamping up to min lot.
+            # Calculate the unclamped requirement from the signal SL.
             risk_pips = abs(exec_entry - sl) / pip_size
             risk_usd = account.balance * ((order.risk_percent or 0.5) / 100.0)
             raw_lots = risk_usd / max(1e-6, risk_pips * pip_val)
-            calculated_lots = self._lots_for_risk_budget(raw_lots, order.symbol)
 
-        lots = round(order.position_size if order.position_size else calculated_lots, 2)
+        if order.position_size is not None:
+            # Explicit operator override (manual order) — honour it unchanged.
+            lots = round(order.position_size, 2)
+        else:
+            # Auto-sizing from the signal: reject rather than clamp to the min lot.
+            lots = self._lots_for_risk_budget(raw_lots, order.symbol)
         lots = max(MIN_LOT_SIZE, min(MAX_LOT_SIZE, lots))
 
         # 5. Margin Validation

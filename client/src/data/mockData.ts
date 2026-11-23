@@ -156,7 +156,6 @@ export const initialNewsEvents: NewsEvent[] = [
 export const initialRiskStatus: RiskStatus = {
   isBlackout: false,
   statusText: 'SAFE TO TRADE — No immediate high-impact blackout in effect',
-  allowedRiskPercent: 0.5,
   activeEvent: 'USD Core CPI in 24m (Blackout window: -30m / +15m)',
   minutesRemaining: 24,
 };

@@ -40,7 +40,11 @@ def escape_html(text: Any) -> str:
     return html.escape(str(text), quote=False)
 
 
-def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
+def format_signal(
+    signal: Any,
+    ctx: Optional[SignalContext] = None,
+    risk_warning: Optional[str] = None,
+) -> str:
     """Pure, zero-I/O function that formats a trading signal for Telegram (HTML mode).
     
     Zero defaults for trading values, no datetime.now() inside signal timestamp formatting.
@@ -75,6 +79,9 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
     score_str = f"{score_val:.1f} / 100" if score_val is not None else "N/A"
 
     meta = getattr(signal, "metadata", {}) or {}
+    if risk_warning:
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        meta["risk_warning"] = risk_warning
     setup_state_str = meta.get("setup_state") if isinstance(meta, dict) else None
 
     # Do not print "STRONG BUY" unless setup_state is CONFIRMED_SETUP and score is >= threshold
@@ -219,13 +226,16 @@ def format_signal(signal: Any, ctx: Optional[SignalContext] = None) -> str:
     risk_pct_str = f"{risk_pct:.1f}%" if risk_pct is not None else "N/A"
     lines.append(f"💼 <b>Risk Management ({risk_pct_str} Rule):</b>")
 
-    if risk_warning and "RISK EXCEEDS LIMIT" in str(risk_warning):
-        lines.append(f"  ⚠️ <b>RISK EXCEEDS LIMIT:</b> <code>{escape_html(risk_warning)}</code>")
-        if risk_amount is not None:
-            lines.append(f"  • <b>Actual Risk (0.01 lot):</b> <code>${risk_amount:,.2f}</code>")
-        elif balance is not None and risk_pct is not None:
+    if risk_warning and (
+        "RISK EXCEEDS LIMIT" in str(risk_warning)
+        or "Risk budget insufficient" in str(risk_warning)
+    ):
+        # Formerly dead branch: now reachable via format_signal(risk_warning=...) and
+        # via signal.metadata["risk_warning"] set by the dispatcher on rejection.
+        lines.append(f"  ⚠️ <b>TRADE REJECTED — RISK BUDGET:</b> <code>{escape_html(risk_warning)}</code>")
+        if balance is not None and risk_pct is not None:
             budget = balance * (risk_pct / 100.0)
-            lines.append(f"  • <b>Risk Budget:</b> <code>${budget:,.2f}</code> (Min lot 0.01 exceeds budget)")
+            lines.append(f"  • <b>Risk Budget:</b> <code>${budget:,.2f}</code> (minimum lot cannot be funded)")
     else:
         lots_str = f"{suggested_lots:.2f} Standard Lots" if suggested_lots is not None else "N/A"
         lines.append(f"  • <b>Suggested Sizing:</b> <code>{lots_str}</code>")
@@ -338,6 +348,35 @@ class TelegramMessageFormatter:
     def format_signal_alert(cls, sig: SignalResponse) -> str:
         """Format signal alert via the pure format_signal engine."""
         return format_signal(sig)
+
+    @classmethod
+    def format_trade_rejection(cls, sig: SignalResponse, reason: str) -> str:
+        """Compact alert explaining why a qualified signal opened no paper trade."""
+        sym = getattr(sig, "symbol", "N/A")
+        try:
+            sym = normalize_symbol(sym)
+        except UnknownSymbolError:
+            pass
+        direction_val = getattr(sig, "direction", None)
+        dir_str = (
+            direction_val.value
+            if isinstance(direction_val, SignalDirection)
+            else str(direction_val or "N/A").upper()
+        )
+        score = getattr(sig, "setup_score", None)
+        score_str = f"{score:.1f} / 100" if score is not None else "N/A"
+        return "\n".join([
+            "⚠️ <b>TRADE REJECTED — RISK BUDGET</b> ⚠️",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"📊 <b>Instrument:</b> <code>{escape_html(sym)}</code>",
+            f"⏱ <b>Timeframe:</b> <code>{escape_html(getattr(sig, 'timeframe', None) or 'N/A')}</code>",
+            f"🎯 <b>Direction:</b> <code>{escape_html(dir_str)}</code>",
+            f"⭐ <b>Confluence Score:</b> <code>{score_str}</code>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"⚠️ <b>Trade Rejected:</b> <code>{escape_html(reason)}</code>",
+            "No paper position was opened — the per-trade risk budget cannot fund "
+            "the minimum lot at this stop distance.",
+        ])
 
     @classmethod
     def format_tp1_hit(

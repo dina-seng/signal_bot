@@ -264,3 +264,47 @@ async def test_automated_market_scanner_deduplication(test_db_session):
     # Check status
     status = scanner.get_status()
     assert status.total_scans_completed == 2
+
+
+def test_trade_rejection_alert_is_formatted():
+    """A rejected qualified signal produces a clean, explicit Telegram reason."""
+    formatter = TelegramMessageFormatter()
+    sig = SignalResponse(
+        symbol="XAU/USD",
+        timeframe="30m",
+        direction=SignalDirection.BUY,
+        setup_score=69.0,
+        fingerprint="reject_fp",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+    )
+    reason = (
+        "Trade rejected: Risk budget insufficient for minimum lot size. "
+        "Required lots: 0.000138, Min lots: 0.01"
+    )
+    msg = formatter.format_trade_rejection(sig, reason)
+
+    assert "TRADE REJECTED" in msg
+    assert "XAU/USD" in msg
+    assert "69.0 / 100" in msg
+    assert "Required lots: 0.000138" in msg
+    assert "Min lots: 0.01" in msg
+
+
+def test_risk_warning_branch_is_reachable():
+    """The formerly dead risk_warning formatter branch now renders a rejection."""
+    from app.services.telegram.message_formatter import format_signal
+
+    sig = SignalResponse(
+        symbol="XAU/USD",
+        timeframe="30m",
+        direction=SignalDirection.BUY,
+        setup_score=69.0,
+        fingerprint="warn_fp",
+        timestamp=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+    )
+    msg = format_signal(
+        sig,
+        risk_warning="RISK EXCEEDS LIMIT — min lot cannot be funded",
+    )
+    assert "TRADE REJECTED — RISK BUDGET" in msg
+    assert "min lot cannot be funded" in msg

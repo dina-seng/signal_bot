@@ -12,11 +12,13 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { NewsEvent, RiskStatus } from '../types';
+import { AppConfig } from '../services/api';
 import { formatTime, getTimeUntil } from '../utils/formatters';
 
 interface NewsRiskMonitorProps {
   news: NewsEvent[];
   riskStatus: RiskStatus;
+  appConfig?: AppConfig | null;
   isLoading?: boolean;
   isSyncingCalendar?: boolean;
   onToggleBlackout: () => void;
@@ -26,6 +28,7 @@ interface NewsRiskMonitorProps {
 export const NewsRiskMonitor: React.FC<NewsRiskMonitorProps> = ({
   news,
   riskStatus,
+  appConfig,
   isLoading = false,
   isSyncingCalendar = false,
   onToggleBlackout,
@@ -69,7 +72,12 @@ export const NewsRiskMonitor: React.FC<NewsRiskMonitorProps> = ({
                   {riskStatus.isBlackout ? '● BLACKOUT ACTIVE' : '○ SAFE TO TRADE'}
                 </span>
                 <span className="text-[11px] text-slate-400">
-                  Risk Per Order: <strong className="text-white">{riskStatus.allowedRiskPercent}%</strong>
+                  Risk Per Order:{' '}
+                  {appConfig ? (
+                    <strong className="text-white">{appConfig.risk_per_order_pct}%</strong>
+                  ) : (
+                    <span className="inline-block min-w-[2.5rem] animate-pulse rounded bg-white/10 align-middle" aria-busy="true" aria-label="Loading risk per order" />
+                  )}
                 </span>
                 <span className="text-slate-600 hidden sm:inline">|</span>
                 <span className="text-[10px] text-slate-500 hidden sm:inline">

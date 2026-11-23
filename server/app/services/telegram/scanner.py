@@ -33,6 +33,7 @@ from app.services.news import (
     get_news_provider,
 )
 from app.services.paper_trading import PaperTradingService
+from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
 from app.services.signals import SignalGenerator
 from app.services.telegram.client import BaseTelegramClient, get_telegram_client
 from app.services.telegram.message_formatter import TelegramMessageFormatter
@@ -467,6 +468,7 @@ class AutomatedMarketScanner:
                         and settings.PAPER_TRADING
                         and settings.SCANNER_AUTO_TRADE_PAPER
                     ):
+                        rejection_reason: Optional[str] = None
                         try:
                             trade = self.paper_service.trade_from_signal(
                                 db=db,
@@ -481,8 +483,36 @@ class AutomatedMarketScanner:
                             logger.info(
                                 f"AUTO-OPENED PAPER TRADE #{trade.id} on {trade.symbol} [{sig.timeframe}]"
                             )
+                        except InsufficientRiskBudgetError as e:
+                            rejection_reason = str(e)
+                            logger.warning(
+                                f"Paper trade REJECTED (risk budget) for {sig.symbol}: {e}"
+                            )
+                        except ValueError as e:
+                            rejection_reason = str(e)
+                            logger.error(
+                                f"Paper trade REJECTED (validation) for {sig.symbol}: {e}"
+                            )
                         except Exception as e:
+                            rejection_reason = str(e)
                             logger.error(f"Paper trading failed for {sig.symbol}: {e}")
+
+                        # Every qualified signal gets a Telegram outcome: either the
+                        # signal alert above, or this explicit rejection reason.
+                        if broadcast_to_telegram and rejection_reason:
+                            try:
+                                rejection_msg = self.formatter.format_trade_rejection(
+                                    sig, rejection_reason
+                                )
+                                await self.telegram_client.send_message(
+                                    text=rejection_msg,
+                                    parse_mode="HTML",
+                                    signal_id=sig.id or sig.fingerprint,
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to send rejection alert for {sig.symbol}: {e}"
+                                )
                     else:
                         logger.debug(
                             f"Paper trade skipped for {sig.symbol} (auto_trade={auto_paper_trade}, "

@@ -114,10 +114,12 @@ export const Dashboard: React.FC = () => {
     if (isFetchingAccountRef.current) return;
     isFetchingAccountRef.current = true;
     try {
-      // Fetch Account
-      const accRes = await quantViewApi.getAccount();
-      const bAcc: BackendAccount = accRes.data;
-      console.log('[QuantView API] Account response:', bAcc);
+      // Atomic snapshot — account + positions from ONE shared live price tick,
+      // so the header and the Position Ledger can never disagree by a tick.
+      const sumRes = await quantViewApi.getSummary();
+      const bAcc: BackendAccount = sumRes.data.account;
+      const bPositions: BackendPosition[] = sumRes.data.positions;
+      console.log('[QuantView API] Summary snapshot:', sumRes.data);
 
       const calculatedUnrealized = Number((bAcc.equity - bAcc.balance).toFixed(2));
       const calculatedUnrealizedPct = bAcc.balance > 0
@@ -135,14 +137,9 @@ export const Dashboard: React.FC = () => {
         activePositionsCount: bAcc.open_positions_count,
         todayPnl: calculatedUnrealized,
         brokerStatus: 'CONNECTED',
-        latencyMs: accRes.durationMs,
+        latencyMs: sumRes.durationMs,
         currency: bAcc.currency,
       });
-
-      // Fetch Positions
-      const posRes = await quantViewApi.getPositions();
-      const bPositions: BackendPosition[] = posRes.data;
-      console.log('[QuantView API] Positions response:', bPositions);
 
       if (Array.isArray(bPositions)) {
         const mappedPositions: Position[] = bPositions.map((p) => {
@@ -221,7 +218,7 @@ export const Dashboard: React.FC = () => {
       }
 
       setIsApiConnected(true);
-      setApiResponseTimeMs(accRes.durationMs);
+      setApiResponseTimeMs(sumRes.durationMs);
       setApiErrorMessage(null);
       lastFetchTimestampRef.current = Date.now();
       setLastUpdatedSecondsAgo(0);
@@ -429,7 +426,6 @@ export const Dashboard: React.FC = () => {
           setRiskStatus({
             isBlackout: bBlackout.in_blackout,
             statusText: bBlackout.reason || (bBlackout.in_blackout ? 'BLACKOUT ACTIVE: Macro event in blackout window' : 'SAFE TO TRADE — Normal trading conditions'),
-            allowedRiskPercent: bBlackout.in_blackout ? 0.0 : 0.5,
             activeEvent: bBlackout.event_title || (bBlackout.in_blackout ? 'High-Impact Red Folder Blackout Window Active' : undefined),
             minutesRemaining: bBlackout.minutes_to_next_event ?? 0,
           });
@@ -640,13 +636,17 @@ export const Dashboard: React.FC = () => {
 
   // Auto-execute paper trade directly from high-confluence signal
   const handleTradeFromSignal = async (sig: TradeSignal) => {
+    if (!appConfig) {
+      addToast('warning', 'Configuration loading', 'Risk-per-order is not available yet; retry in a moment.');
+      return;
+    }
     try {
       const numId = sig.id.startsWith('SIG-') ? parseInt(sig.id.replace('SIG-', ''), 10) : undefined;
       const res = await quantViewApi.tradeFromSignal({
         signal_id: isNaN(numId!) ? null : numId,
         symbol: sig.symbol,
         timeframe: sig.timeframe || '1h',
-        risk_percent: 0.5,
+        risk_percent: appConfig.risk_per_order_pct,
       });
 
       addToast(
@@ -770,7 +770,6 @@ export const Dashboard: React.FC = () => {
         return {
           isBlackout: true,
           statusText: 'BLACKOUT ACTIVE: High-Impact Macro Window. Automated entries paused.',
-          allowedRiskPercent: 0.0,
           activeEvent: 'USD Core CPI in 14m (Blackout window: -30m / +15m)',
           minutesRemaining: 14,
         };
@@ -783,8 +782,9 @@ export const Dashboard: React.FC = () => {
         return {
           isBlackout: false,
           statusText: 'SAFE TO TRADE — No immediate high-impact blackout in effect',
-          allowedRiskPercent: 0.5,
-          activeEvent: 'Normal volatility conditions (Risk cap: 0.5% per trade)',
+          activeEvent: appConfig
+            ? `Normal volatility conditions (Risk cap: ${appConfig.risk_per_order_pct}% per trade)`
+            : 'Loading risk configuration…',
           minutesRemaining: 0,
         };
       }
@@ -959,7 +959,11 @@ export const Dashboard: React.FC = () => {
               <div>
                 <span className="text-zinc-500 block text-[10px] uppercase">Staleness</span>
                 <span className={`font-semibold ${latestQuote?.is_stale ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {latestQuote?.is_stale ? `STALE (>${appConfig?.quote_stale_after_seconds ?? 180}s no change)` : 'FRESH'}
+                  {latestQuote?.is_stale
+                    ? (appConfig?.quote_stale_after_seconds != null
+                        ? `STALE (>${appConfig.quote_stale_after_seconds}s no change)`
+                        : <span className="animate-pulse" aria-busy="true">—</span>)
+                    : 'FRESH'}
                 </span>
               </div>
               <div>
@@ -1050,6 +1054,7 @@ export const Dashboard: React.FC = () => {
                 <NewsRiskMonitor
                   news={news}
                   riskStatus={riskStatus}
+                  appConfig={appConfig}
                   isLoading={isInitialLoading}
                   isSyncingCalendar={isSyncingCalendar}
                   onToggleBlackout={handleToggleBlackout}
@@ -1134,6 +1139,7 @@ export const Dashboard: React.FC = () => {
                 <NewsRiskMonitor
                   news={news}
                   riskStatus={riskStatus}
+                  appConfig={appConfig}
                   isLoading={isInitialLoading}
                   isSyncingCalendar={isSyncingCalendar}
                   onToggleBlackout={handleToggleBlackout}

@@ -81,7 +81,6 @@ export interface RiskStatus {
   statusText: string;
   activeEvent?: string;
   minutesRemaining?: number;
-  allowedRiskPercent: number;
 }
 
 export interface AlertConfiguration {
