@@ -20,10 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        'paper_trades',
-        sa.Column('broker_profile', sa.String(length=64), nullable=True),
-    )
+    # Idempotent: a manual hotfix may already have added the column on production.
+    inspector = sa.inspect(op.get_bind())
+    existing = {c["name"] for c in inspector.get_columns("paper_trades")}
+    if "broker_profile" not in existing:
+        op.add_column(
+            'paper_trades',
+            sa.Column('broker_profile', sa.String(length=64), nullable=True),
+        )
 
 
 def downgrade() -> None:
