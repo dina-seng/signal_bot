@@ -96,7 +96,7 @@ class SignalGenerator:
         candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
         news_check: Optional[NewsBlackoutCheckResponse] = None,
         account_balance: float = 10000.0,
-        risk_percent: float = 0.5,
+        risk_percent: Optional[float] = None,
         htf_trend: Optional[str] = None,
         as_of: Optional[datetime] = None,
         backtest_mode: bool = False,
@@ -125,7 +125,7 @@ class SignalGenerator:
         candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
         news_check: Optional[NewsBlackoutCheckResponse] = None,
         account_balance: float = 10000.0,
-        risk_percent: float = 0.5,
+        risk_percent: Optional[float] = None,
         htf_trend: Optional[str] = None,
         as_of: Optional[datetime] = None,
         backtest_mode: bool = False,
@@ -213,7 +213,7 @@ class SignalGenerator:
         symbols: Optional[List[str]] = None,
         timeframe: str = "1h",
         account_balance: float = 10000.0,
-        risk_percent: float = 0.5,
+        risk_percent: Optional[float] = None,
         persist_qualified: bool = True,
     ) -> MarketScanResponse:
         """Scan multiple currency pairs, evaluate setups, check news blackouts, and generate signals."""
@@ -343,7 +343,7 @@ class SignalGenerator:
         db: Session,
         symbol: str,
         account_balance: float = 10000.0,
-        risk_percent: float = 0.5,
+        risk_percent: Optional[float] = None,
         persist_qualified: bool = True,
     ) -> MarketScanSymbolResult:
         """Unified Multi-Timeframe Scanner evaluating 15m, 30m, and 1H for a single symbol.
@@ -608,7 +608,7 @@ class SignalGenerator:
         db: Session,
         symbols: Optional[List[str]] = None,
         account_balance: float = 10000.0,
-        risk_percent: float = 0.5,
+        risk_percent: Optional[float] = None,
         persist_qualified: bool = True,
     ) -> MarketScanResponse:
         """Execute unified multi-timeframe scan across all target symbols."""

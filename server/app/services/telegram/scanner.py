@@ -357,7 +357,16 @@ class AutomatedMarketScanner:
                 logger.error(f"News ingestion failed: {e}")
                 db.rollback()
 
-            # 3. Run Strategy Signal Evaluation across symbols
+            # 3. Run Strategy Signal Evaluation across symbols.
+            # Signal-level sizing must use the SAME balance and risk % as the
+            # paper executor, otherwise alerts show impossible lot sizes.
+            scan_account = self.paper_service.account_manager.get_or_create_default_account(db)
+            scan_balance = float(scan_account.balance)
+            scan_risk = float(settings.MAX_RISK_PERCENT)
+            logger.info(
+                f"[RISK] Signal sizing context: balance=${scan_balance:,.2f} "
+                f"risk={scan_risk:.1f}% (settings.MAX_RISK_PERCENT)"
+            )
             scan_batches = []
             if timeframes or timeframe:
                 for tf in target_timeframes:
@@ -367,8 +376,8 @@ class AutomatedMarketScanner:
                             db=db,
                             symbols=target_symbols,
                             timeframe=tf,
-                            account_balance=10000.0,
-                            risk_percent=0.5,
+                            account_balance=scan_balance,
+                            risk_percent=scan_risk,
                             persist_qualified=True,
                         )
                         scan_batches.append(batch_res)

@@ -56,9 +56,20 @@ class InsufficientRiskBudgetError(ValueError):
         per_point_risk: Optional[float] = None,
         risk_percent: Optional[float] = None,
         balance: Optional[float] = None,
+        symbol: Optional[str] = None,
+        entry: Optional[float] = None,
+        stop_loss: Optional[float] = None,
+        volume_step: Optional[Decimal] = None,
+        executable_lots: Optional[Decimal] = None,
     ) -> None:
         self.raw_lots = raw_lots
         self.min_lots = min_lots
+        self.symbol = symbol
+        self.entry = entry
+        self.stop_loss = stop_loss
+        self.volume_step = volume_step
+        self.executable_lots = executable_lots
+        self.contract_size = contract_size
         self.stop_points = stop_points
         self.stop_pips = stop_pips
         self.budget = budget
@@ -104,7 +115,14 @@ class InsufficientRiskBudgetError(ValueError):
             pct = f" ({self.min_lot_risk_pct:.2f}%)" if self.min_lot_risk_pct is not None else ""
             hints["min_lot_risk"] = f"${self.min_lot_risk_usd:,.2f}{pct}"
         if balance is not None and risk_percent is not None:
-            hints["budget_context"] = f"balance ${balance:,.2f} @ {risk_percent:.1f}%"
+            budget_txt = f", budget ${budget:,.2f}" if budget is not None else ""
+            hints["context"] = f"balance ${balance:,.2f} @ {risk_percent:.1f}%{budget_txt}"
+        if entry is not None and stop_loss is not None:
+            hints["levels"] = f"entry {entry:.5f} / SL {stop_loss:.5f}"
+        if contract_size is not None:
+            step_txt = f", step {volume_step}" if volume_step is not None else ""
+            exec_txt = f", executable {executable_lots}" if executable_lots is not None else ""
+            hints["broker"] = f"contract {contract_size}{step_txt}{exec_txt}"
         self.hints = hints
 
         labels = {
@@ -116,7 +134,7 @@ class InsufficientRiskBudgetError(ValueError):
         detail = " | ".join(
             f"{labels.get(k, k)}: {v}"
             for k, v in hints.items()
-            if k not in ("budget_context", "lots")
+            if k not in ("context", "levels", "broker", "lots", "budget_context")
         )
         message = (
             f"Trade rejected: Risk budget insufficient for minimum lot size. "
@@ -317,6 +335,8 @@ class PaperOrderExecutor:
         risk_percent: Optional[float] = None,
         balance: Optional[float] = None,
         contract_size: Optional[Decimal] = None,
+        entry: Optional[float] = None,
+        stop_loss: Optional[float] = None,
     ) -> float:
         """Floor raw lots onto the broker grid; reject if below the broker min lot.
 
@@ -341,8 +361,13 @@ class PaperOrderExecutor:
                 per_point_risk=float(spec.min_lot * (contract_size or spec.contract_size)),
                 risk_percent=risk_percent,
                 balance=balance,
+                symbol=symbol,
+                entry=entry,
+                stop_loss=stop_loss,
+                volume_step=spec.lot_step,
+                executable_lots=lots,
             )
-            logger.warning(f"{error} (symbol={symbol})")
+            logger.warning(f"{error}")
             raise error
         return float(lots)
 
@@ -405,14 +430,14 @@ class PaperOrderExecutor:
                 direction=order.direction,
                 entry_price=exec_entry,
                 account_balance=account.balance,
-                risk_percent=order.risk_percent or 0.5,
+                risk_percent=order.risk_percent or settings.MAX_RISK_PERCENT,
             )
             sl = sl or risk_res.stop_loss
             tp1 = tp1 or risk_res.take_profit_1
             tp2 = tp2 or risk_res.take_profit_2
 
         # Broker-spec sizing from the resolved price distance (Decimal, no float floor).
-        risk_pct = order.risk_percent or 0.5
+        risk_pct = order.risk_percent or settings.MAX_RISK_PERCENT
         distance = abs(exec_entry - sl)
         if distance <= 0:
             raise ValueError("Invalid stop distance: entry and stop loss are equal.")
@@ -437,6 +462,8 @@ class PaperOrderExecutor:
                 risk_percent=risk_pct,
                 balance=account.balance,
                 contract_size=contract_size,
+                entry=exec_entry,
+                stop_loss=sl,
             )
         lots = max(float(self.broker_spec.min_lot), min(MAX_LOT_SIZE, lots))
 

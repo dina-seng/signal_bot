@@ -46,9 +46,13 @@ class RiskParameters(BaseModel):
     risk_reward_tp1: float = Field(..., ge=0.0, description="R:R ratio for TP1")
     risk_reward_tp2: float = Field(..., ge=0.0, description="R:R ratio for TP2")
     account_balance: float = Field(default=10000.0, description="Account equity in USD")
-    risk_percent: float = Field(default=0.5, description="Risk per trade percentage")
+    risk_percent: float = Field(default=5.0, description="Risk per trade percentage")
     risk_amount_usd: float = Field(..., description="Dollar amount at risk")
-    suggested_lot_size: float = Field(..., ge=0.01, description="Calculated position size in standard lots")
+    suggested_lot_size: float = Field(..., ge=0.0, description="Executable volume floored to broker step (0.0 when below min)")
+    raw_lot_size: Optional[float] = Field(default=None, ge=0.0, description="Unrounded required volume")
+    is_executable: Optional[bool] = Field(default=None, description="False when raw volume is below broker minimum")
+    min_lot_risk_usd: Optional[float] = Field(default=None, ge=0.0, description="Loss at minimum lot for this stop")
+    volume_step: Optional[float] = Field(default=None, ge=0.0, description="Broker volume step used")
 
 
 class SignalBase(BaseModel):
@@ -111,5 +115,5 @@ class StatelessSignalRequest(BaseModel):
     symbol: Optional[str] = Field(default="XAU/USD")
     timeframe: Optional[str] = Field(default="1h")
     account_balance: Optional[float] = Field(default=10000.0)
-    risk_percent: Optional[float] = Field(default=0.5)
+    risk_percent: Optional[float] = Field(default=None)
     bypass_news_check: Optional[bool] = Field(default=False)

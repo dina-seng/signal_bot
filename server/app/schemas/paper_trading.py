@@ -56,7 +56,7 @@ class PaperOrderCreate(BaseModel):
     order_type: str = Field(default="MARKET", description="MARKET, LIMIT, or STOP")
     target_entry_price: Optional[float] = Field(default=None, description="Target price for LIMIT/STOP orders")
     position_size: Optional[float] = Field(default=None, ge=0.01, le=100.0, description="Lots. If None, auto-calculated via risk_percent")
-    risk_percent: Optional[float] = Field(default=0.5, ge=0.01, le=10.0, description="Risk % of account equity if lots is not specified")
+    risk_percent: Optional[float] = Field(default=None, ge=0.01, le=10.0, description="Risk % of account equity; defaults to settings.MAX_RISK_PERCENT")
     stop_loss: Optional[float] = Field(default=None, description="Stop loss price")
     take_profit_1: Optional[float] = Field(default=None, description="Take profit 1 price (2.0 R:R default)")
     take_profit_2: Optional[float] = Field(default=None, description="Take profit 2 price (3.0 R:R default)")
@@ -119,7 +119,7 @@ class AutoTradeSignalRequest(BaseModel):
     symbol: str = Field(default="XAU/USD")
     timeframe: str = Field(default="1h")
     account_id: Optional[int] = None
-    risk_percent: float = Field(default=0.5, ge=0.01, le=10.0)
+    risk_percent: Optional[float] = Field(default=None, ge=0.01, le=10.0)
 
 
 class PositionSyncReport(BaseModel):

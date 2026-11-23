@@ -247,6 +247,16 @@ def format_signal(
             lines.append("  • <b>Risk Allocation:</b> <code>N/A</code>")
         if risk_warning:
             lines.append(f"  ⚠️ <b>Risk Alert:</b> <code>{escape_html(risk_warning)}</code>")
+        is_executable = getattr(rp, "is_executable", None)
+        if is_executable is False:
+            raw_lots = getattr(rp, "raw_lot_size", None)
+            min_risk = getattr(rp, "min_lot_risk_usd", None)
+            raw_str = f", raw {raw_lots:.6f}" if raw_lots is not None else ""
+            min_str = f", min-lot loss ${min_risk:,.2f}" if min_risk is not None else ""
+            lines.append(
+                f"  ℹ️ <b>INFORMATIONAL ONLY</b> — volume below broker minimum"
+                f"{raw_str}{min_str}. No executable paper trade."
+            )
 
     # 6. Pillar Breakdown
     bd = getattr(signal, "score_breakdown", None)
@@ -396,6 +406,16 @@ class TelegramMessageFormatter:
                 f"💰 <b>Balance needed for this stop:</b> "
                 f"<code>{escape_html(hints['required_balance'])}</code>"
             )
+        if hints.get("min_lot_risk"):
+            hint_lines.append(
+                f"📉 <b>Min lot would risk:</b> <code>{escape_html(hints['min_lot_risk'])}</code>"
+            )
+        if hints.get("context"):
+            hint_lines.append(f"🧾 <b>Context:</b> <code>{escape_html(hints['context'])}</code>")
+        if hints.get("levels"):
+            hint_lines.append(f"📍 <b>Levels:</b> <code>{escape_html(hints['levels'])}</code>")
+        if hints.get("broker"):
+            hint_lines.append(f"🏦 <b>Broker:</b> <code>{escape_html(hints['broker'])}</code>")
         lines.extend(hint_lines)
         lines.extend([
             "━━━━━━━━━━━━━━━━━━━━",

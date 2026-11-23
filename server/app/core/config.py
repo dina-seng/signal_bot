@@ -46,8 +46,12 @@ class Settings(BaseSettings):
         ge=1.0,
         validation_alias=AliasChoices("MIN_RR", "MIN_RR_TP1"),
     )
+    PARTIAL_CLOSE_AT_TP1: bool = Field(
+        default=False,
+        description="Enable 50% scale-out at TP1 (legacy 2R/3R). Default: full 3R exit.",
+    )
     MIN_RR_TP1: float = Field(
-        default=2.0,
+        default=3.0,
         ge=1.0,
         validation_alias=AliasChoices("MIN_RR_TP1", "MIN_RR"),
     )
@@ -57,7 +61,7 @@ class Settings(BaseSettings):
         description="Paper-trading broker lot specification profile",
     )
     MAX_RISK_PERCENT: float = Field(
-        default=0.5,
+        default=5.0,
         ge=0.1,
         le=5.0,
         validation_alias=AliasChoices("MAX_RISK_PERCENT", "RISK_PER_ORDER_PCT"),

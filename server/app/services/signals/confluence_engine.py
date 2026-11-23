@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 import hashlib
 from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING, Tuple, Union
 
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
 
 from app.core.config import settings
 from app.core.logging import logger
+
 from app.schemas.candle import CandleBase
 from app.schemas.news import NewsBlackoutCheckResponse
 from app.schemas.signal import (
@@ -359,11 +361,28 @@ class ConfluenceEngine:
                 reward_pips_tp2 = round(abs(custom_tp2 - current_price) / pip_size, 1)
                 rr_tp2 = round(reward_pips_tp2 / max(1e-6, risk_pips), 2)
 
+                # Local import avoids a signals <-> paper_trading package import cycle.
+                from app.services.paper_trading.broker_spec import get_broker_spec
+
                 risk_pct = risk_percent or settings.MAX_RISK_PERCENT
                 risk_amount_usd = round(account_balance * (risk_pct / 100.0), 2)
                 pip_val = self.risk_manager.get_pip_value_per_lot(symbol)
-                raw_lots = risk_amount_usd / max(1e-6, risk_pips * pip_val)
-                suggested_lots = round(max(0.01, min(100.0, raw_lots)), 2)
+                spec = get_broker_spec(settings.BROKER_SPEC)
+                contract = (
+                    Decimal(str(spec.contract_size))
+                    if symbol.replace("%2F", "/").strip().upper() == "XAU/USD"
+                    else Decimal(str(pip_val / pip_size))
+                )
+                raw_lots = (
+                    Decimal(str(risk_amount_usd))
+                    / (Decimal(str(risk_price)) * contract)
+                    if risk_price > 0
+                    else Decimal("0")
+                )
+                executable = spec.floor_lots(raw_lots)
+                is_executable = executable >= spec.min_lot
+                suggested_lots = float(executable) if is_executable else 0.0
+                min_lot_risk_usd = float(spec.min_lot * contract * Decimal(str(risk_price)))
 
                 # Limit-zone setups are executable at the planned limit price,
                 # not at the current market price. Keep market-mode behaviour.
@@ -389,6 +408,10 @@ class ConfluenceEngine:
                     risk_percent=risk_pct,
                     risk_amount_usd=risk_amount_usd,
                     suggested_lot_size=suggested_lots,
+                    raw_lot_size=float(raw_lots),
+                    is_executable=is_executable,
+                    min_lot_risk_usd=min_lot_risk_usd,
+                    volume_step=float(spec.lot_step),
                 )
             else:
                 supp_low = structure_analysis.base_structure.key_support
@@ -408,7 +431,9 @@ class ConfluenceEngine:
 
 
             # B. Small Account Rejection Check
-            if risk_params.suggested_lot_size == 0.0:
+            if risk_params.is_executable is False or (
+                risk_params.is_executable is None and risk_params.suggested_lot_size <= 0
+            ):
                 logger.warning(f"Trade REJECTED for {symbol}: Insufficient balance for safe position sizing.")
                 direction = SignalDirection.WAIT
                 reasons = [
@@ -533,7 +558,7 @@ class ConfluenceEngine:
         candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
         news_check: Optional[NewsBlackoutCheckResponse] = None,
         account_balance: float = 10000.0,
-        risk_percent: float = 0.5,
+        risk_percent: Optional[float] = None,
         htf_trend: Optional[str] = None,
         as_of: Optional[datetime] = None,
         backtest_mode: bool = False,
@@ -578,7 +603,7 @@ class ConfluenceEngine:
         candles_15m: Optional[Sequence[Union[CandleBase, Any]]] = None,
         news_check: Optional[NewsBlackoutCheckResponse] = None,
         account_balance: float = 10000.0,
-        risk_percent: float = 0.5,
+        risk_percent: Optional[float] = None,
         htf_trend: Optional[str] = None,
         as_of: Optional[datetime] = None,
         backtest_mode: bool = False,
@@ -588,6 +613,13 @@ class ConfluenceEngine:
         Each strategy that scores ≥ threshold produces an independent signal.
         Strategies that score below threshold produce a WAIT signal.
         """
+        # Single authoritative risk % for the whole signal/execution pipeline.
+        risk_percent = risk_percent or settings.MAX_RISK_PERCENT
+        logger.info(
+            f"[RISK] {symbol}: signal sizing uses risk={risk_percent:.1f}% "
+            f"balance=${account_balance:,.2f} (settings.MAX_RISK_PERCENT)"
+        )
+
         # Pre-flight checks
         early_exit, c_prim, c_4h, c_15m = self._preflight(
             symbol=symbol,

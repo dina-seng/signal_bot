@@ -1,5 +1,6 @@
 """Risk Management and Position Sizing Calculator."""
 
+from decimal import Decimal
 from typing import Optional
 from app.core.config import settings
 from app.core.logging import logger
@@ -9,6 +10,7 @@ from app.services.market_data.symbols import (
     get_instrument_spec,
     normalize_symbol,
 )
+
 
 
 class RiskManager:
@@ -118,11 +120,28 @@ class RiskManager:
         rr_tp1 = round(reward_pips_tp1 / max(1e-6, risk_pips), 2)
         rr_tp2 = round(reward_pips_tp2 / max(1e-6, risk_pips), 2)
 
-        # Position Sizing
+        # Local import avoids a signals <-> paper_trading package import cycle.
+        from app.services.paper_trading.broker_spec import get_broker_spec
+
+        # Position Sizing: raw volume is separate from executable volume.
         risk_amount_usd = round(balance * (risk_pct / 100.0), 2)
         pip_val = self.get_pip_value_per_lot(symbol)
-        raw_lots = risk_amount_usd / max(1e-6, risk_pips * pip_val)
-        suggested_lots = round(max(0.01, min(100.0, raw_lots)), 2)
+        spec = get_broker_spec(settings.BROKER_SPEC)
+        contract = (
+            Decimal(str(spec.contract_size))
+            if canonical == "XAU/USD"
+            else Decimal(str(pip_val / pip_size))
+        )
+        raw_lots = (
+            Decimal(str(risk_amount_usd))
+            / (Decimal(str(risk_price)) * contract)
+            if risk_price > 0
+            else Decimal("0")
+        )
+        executable = spec.floor_lots(raw_lots)
+        is_executable = executable >= spec.min_lot
+        suggested_lots = float(executable) if is_executable else 0.0
+        min_lot_risk_usd = float(spec.min_lot * contract * Decimal(str(risk_price)))
 
         return RiskParameters(
             entry_price=round(entry_price, 5),
@@ -138,4 +157,8 @@ class RiskManager:
             risk_percent=risk_pct,
             risk_amount_usd=risk_amount_usd,
             suggested_lot_size=suggested_lots,
+            raw_lot_size=float(raw_lots),
+            is_executable=is_executable,
+            min_lot_risk_usd=min_lot_risk_usd,
+            volume_step=float(spec.lot_step),
         )

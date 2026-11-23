@@ -114,7 +114,7 @@ EMA_SLOW=200
 RSI_PERIOD=14
 ATR_PERIOD=14
 MIN_SETUP_SCORE=60.0
-MIN_RR=2.0
+MIN_RR=3.0
 MAX_RISK_PERCENT=5.0   # config max (ge=0.1, le=5.0). Keep Render env var in sync.
 
 # Affordability math (XAU/USD, 0.01 min lot ≈ $1 per 1.00 price point of stop):

@@ -185,8 +185,10 @@ def test_partial_close_and_full_close(test_db_session):
     assert trade_closed.margin_used == 0.0
 
 
-def test_price_sync_sl_and_tp_monitoring(test_db_session):
-    """Test that price synchronization triggers TP1 partial close with Break-Even move, and TP2 runner hit."""
+def test_price_sync_sl_and_tp_monitoring(test_db_session, monkeypatch):
+    """Legacy 2R/3R scale-out mode (explicit opt-in) still closes 50% at TP1."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "PARTIAL_CLOSE_AT_TP1", True)
     _seed_candle(test_db_session, symbol="EUR/USD", close=1.1000)
     service = PaperTradingService()
 

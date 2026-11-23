@@ -96,7 +96,7 @@ def scan_markets(
     unified: bool = Query(True, description="Whether to use Unified Multi-Timeframe Scanner"),
     timeframe: str = Query("1h", description="Timeframe to scan if unified is False (e.g. 15m, 1h, 4h)"),
     account_balance: float = Query(10000.0, ge=100.0),
-    risk_percent: float = Query(0.5, ge=0.1, le=5.0),
+    risk_percent: float = Query(settings.MAX_RISK_PERCENT, ge=0.1, le=5.0),
     persist_qualified: bool = Query(True, description="Whether to persist qualified signals to DB"),
     db: Session = Depends(get_db),
     generator: SignalGenerator = Depends(get_signal_generator),
@@ -124,7 +124,7 @@ def scan_markets(
 @router.get("/unified", response_model=MarketScanResponse)
 def get_unified_signals(
     account_balance: float = Query(10000.0, ge=100.0),
-    risk_percent: float = Query(0.5, ge=0.1, le=5.0),
+    risk_percent: float = Query(settings.MAX_RISK_PERCENT, ge=0.1, le=5.0),
     persist_qualified: bool = Query(True, description="Whether to persist qualified signals to DB"),
     db: Session = Depends(get_db),
     generator: SignalGenerator = Depends(get_signal_generator),
@@ -156,5 +156,5 @@ def evaluate_stateless_signal(
         symbol=request.symbol or "XAU/USD",
         timeframe=request.timeframe or "1h",
         account_balance=request.account_balance or 10000.0,
-        risk_percent=request.risk_percent or 0.5,
+        risk_percent=request.risk_percent or settings.MAX_RISK_PERCENT,
     )

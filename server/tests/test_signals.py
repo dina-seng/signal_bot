@@ -62,9 +62,11 @@ def test_risk_manager_buy_and_sell_calculations():
     )
     assert risk_sell.entry_price == 1.1000
     assert risk_sell.stop_loss == 1.1050
-    assert risk_sell.take_profit_1 == 1.0900
+    # Default full-3R mode: both targets at 3R (legacy 2R/3R is opt-in via
+    # PARTIAL_CLOSE_AT_TP1 / explicit min_rr).
+    assert risk_sell.take_profit_1 == 1.0850
     assert risk_sell.take_profit_2 == 1.0850
-    assert risk_sell.risk_reward_tp1 == 2.0
+    assert risk_sell.risk_reward_tp1 == 3.0
     assert risk_sell.suggested_lot_size == 0.10
 
 

@@ -1,16 +1,19 @@
 """Paper Position Management, SL/TP Auto-monitoring, and Price Synchronization."""
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
+from app.core.config import settings
 from app.core.logging import logger
 from app.models.candle import Candle
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
 from app.schemas.paper_trading import PositionSyncReport
 from app.schemas.signal import SignalDirection
 from app.services.paper_trading.account_manager import VirtualAccountManager
+from app.services.paper_trading.broker_spec import get_broker_spec
 from app.services.signals import RiskManager
 
 
@@ -24,6 +27,7 @@ class PaperPositionManager:
     ):
         self.account_manager = account_manager or VirtualAccountManager()
         self.risk_manager = risk_manager or RiskManager()
+        self.broker_spec = get_broker_spec(settings.BROKER_SPEC)
 
     def modify_position(
         self,
@@ -81,8 +85,16 @@ class PaperPositionManager:
 
         # Calculate lots to close
         close_ratio = max(0.01, min(1.0, close_ratio))
-        close_lots = round(trade.remaining_position_size * close_ratio, 2)
-        close_lots = max(0.01, min(trade.remaining_position_size, close_lots))
+        # Floor onto the broker volume grid; never create an invalid partial lot.
+        close_lots = float(
+            self.broker_spec.floor_lots(
+                Decimal(str(trade.remaining_position_size * close_ratio))
+            )
+        )
+        close_lots = max(
+            float(self.broker_spec.min_lot),
+            min(trade.remaining_position_size, close_lots),
+        )
         new_rem_lots = round(trade.remaining_position_size - close_lots, 2)
 
         # Calculate realized PnL
@@ -274,7 +286,12 @@ class PaperPositionManager:
                     continue
 
                 # 3. Take Profit 1 Check (Partial close 50% + Move SL to BE)
-                elif price >= t.take_profit_1 and not t.tp1_hit:
+                elif (
+                    settings.PARTIAL_CLOSE_AT_TP1
+                    and t.remaining_position_size > float(self.broker_spec.min_lot) + 1e-9
+                    and price >= t.take_profit_1
+                    and not t.tp1_hit
+                ):
                     self.close_position(db, t.id, current_price=t.take_profit_1, close_ratio=0.5, exit_reason="TP1_HIT")
                     t.tp1_hit = True
                     # Auto move SL to entry price
@@ -304,7 +321,12 @@ class PaperPositionManager:
                     continue
 
                 # 3. Take Profit 1 Check
-                elif price <= t.take_profit_1 and not t.tp1_hit:
+                elif (
+                    settings.PARTIAL_CLOSE_AT_TP1
+                    and t.remaining_position_size > float(self.broker_spec.min_lot) + 1e-9
+                    and price <= t.take_profit_1
+                    and not t.tp1_hit
+                ):
                     self.close_position(db, t.id, current_price=t.take_profit_1, close_ratio=0.5, exit_reason="TP1_HIT")
                     t.tp1_hit = True
                     t.stop_loss = t.entry_price
