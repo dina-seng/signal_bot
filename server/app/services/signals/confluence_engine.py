@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 import hashlib
 from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING, Tuple, Union
 
@@ -42,8 +41,8 @@ from app.services.signals.evaluators import (
     StructureConsensusEvaluator,
 )
 from app.services.signals.path_validator import PathValidator
+from app.services.signals.risk_engine import RiskEngine
 from app.services.signals.risk_manager import RiskManager
-from app.services.signals.structural_levels import StructuralLevelEngine
 from app.services.structure import MultiTimeframeStructureEngine
 from app.services.strategies.base import StrategyResult
 
@@ -78,7 +77,8 @@ class ConfluenceEngine:
         self.indicator_service = indicator_service or IndicatorService()
         self.news_filter = news_filter or NewsFilterEngine()
         self.risk_manager = risk_manager or RiskManager()
-        self.structural_level_engine = StructuralLevelEngine()
+        # The Risk Engine is the only SL/TP/lot calculator in the pipeline.
+        self.risk_engine = RiskEngine()
         self.path_validator = PathValidator()
         self.min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
 
@@ -335,22 +335,28 @@ class ConfluenceEngine:
         account_balance: float,
         risk_percent: float,
         htf_trend: Optional[str] = None,
+        candles_15m: Optional[Sequence[Any]] = None,
     ) -> SignalResponse:
-        """Convert a ``StrategyResult`` into a full ``SignalResponse`` with risk management."""
+        """Convert a ``StrategyResult`` into a ``SignalResponse``.
+
+        The Signal Engine contributes the entry only; SL/TP/lot come from the
+        Risk Engine actor below.
+        """
         current_price = indicator_analysis.current_price
         latest_ts = indicator_analysis.timestamp
         direction = result.direction
         reasons = list(result.reasons)  # Mutable copy for path validation notes
         warnings: List[str] = []
 
-        # 7. Risk Management — ENTRY-TIMEFRAME-LOCKED structural SL + dynamic 1:3 TP
+        # 7. RISK ENGINE ACTOR — entry-only hand-off.
+        # The Signal Engine has found `resolved_entry`; everything below is
+        # calculated by the Risk Engine, never by the Signal Engine.
         risk_params: Optional[RiskParameters] = None
 
         if direction in (SignalDirection.BUY, SignalDirection.SELL):
             # Local import avoids a signals <-> paper_trading package import cycle.
             from app.services.paper_trading.broker_spec import get_broker_spec
 
-            pip_size = self.risk_manager.get_pip_size(symbol)
             result_meta = result.metadata or {}
             limit_entry = result_meta.get("ideal_entry")
             resolved_entry = (
@@ -359,39 +365,24 @@ class ConfluenceEngine:
                 else current_price
             )
 
-            # `structure_analysis` is computed from candles_primary — the SAME
-            # timeframe as the signal. 1H/4H data is never consulted here.
-            base_structure = getattr(structure_analysis, "base_structure", None)
-            levels = self.structural_level_engine.resolve(
-                candles=[],
-                swings=getattr(base_structure, "swing_points", None) or [],
+            levels = self.risk_engine.resolve_levels(
+                symbol=symbol,
                 direction=direction,
                 entry_price=resolved_entry,
-                timeframe=timeframe,
-                pip_size=pip_size,
+                timeframe="15m",
+                candles=candles_15m,
+                balance=account_balance,
+                risk_percent=risk_percent,
             )
 
-            risk_pct = risk_percent or settings.MAX_RISK_PERCENT
-            risk_amount_usd = round(account_balance * (risk_pct / 100.0), 2)
-            pip_val = self.risk_manager.get_pip_value_per_lot(symbol)
-            spec = get_broker_spec(settings.BROKER_SPEC)
-            contract = (
-                Decimal(str(spec.contract_size))
-                if symbol.replace("%2F", "/").strip().upper() == "XAU/USD"
-                else Decimal(str(pip_val / pip_size))
-            )
-            risk_price = levels.sl_distance
-            risk_pips = round(risk_price / pip_size, 1)
-            reward_pips_tp1 = round(abs(levels.take_profit_1 - resolved_entry) / pip_size, 1)
+            pip_size = self.risk_manager.get_pip_size(symbol)
+            risk_pips = round(levels.sl_distance / pip_size, 1)
+            reward_pips_tp1 = round(levels.tp_distance / pip_size, 1)
             rr_tp1 = round(levels.rr_multiple, 2)
-
-            # Fixed lot from the dynamic profile; never derived from SL distance
-            # and never a reason to reject a signal.
-            fixed_lot = float(spec.min_lot)
-            min_lot_risk_usd = float(spec.min_lot * contract * Decimal(str(risk_price)))
+            spec = get_broker_spec(settings.BROKER_SPEC)
 
             risk_params = RiskParameters(
-                entry_price=round(resolved_entry, 5),
+                entry_price=levels.entry_price,
                 stop_loss=levels.stop_loss,
                 take_profit_1=levels.take_profit_1,
                 take_profit_2=levels.take_profit_2,
@@ -401,12 +392,12 @@ class ConfluenceEngine:
                 risk_reward_tp1=rr_tp1,
                 risk_reward_tp2=rr_tp1,
                 account_balance=account_balance,
-                risk_percent=risk_pct,
-                risk_amount_usd=risk_amount_usd,
-                suggested_lot_size=fixed_lot,
-                raw_lot_size=fixed_lot,
+                risk_percent=levels.risk_percent,
+                risk_amount_usd=levels.risk_amount_usd,
+                suggested_lot_size=levels.lot_size,
+                raw_lot_size=levels.lot_size,
                 is_executable=True,
-                min_lot_risk_usd=min_lot_risk_usd,
+                min_lot_risk_usd=levels.min_lot_risk_usd,
                 volume_step=float(spec.lot_step),
             )
 
@@ -643,6 +634,9 @@ class ConfluenceEngine:
             htf_trend=current_htf_trend,
         )
 
+        # 15m candles are the Risk Engine's sole source for structural SL.
+        risk_candles = c_15m if c_15m else (c_prim if timeframe == "15m" else None)
+
         # Build a SignalResponse per strategy result
         signals: List[SignalResponse] = []
         for result in strategy_results:
@@ -655,6 +649,7 @@ class ConfluenceEngine:
                 account_balance=account_balance,
                 risk_percent=risk_percent,
                 htf_trend=current_htf_trend,
+                candles_15m=risk_candles,
             )
             signals.append(sig)
 

@@ -17,7 +17,7 @@ from app.schemas.signal import SignalDirection
 from app.services.market_data.freshness import filter_closed_candles
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import BrokerSpec, get_broker_spec
-from app.services.signals import RiskManager, SignalGenerator, StructuralLevelEngine, StructuralLevels
+from app.services.signals import RiskEngine, RiskLevels, RiskManager, SignalGenerator
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +178,12 @@ class PaperOrderExecutor:
         account_manager: Optional[VirtualAccountManager] = None,
         risk_manager: Optional[RiskManager] = None,
         signal_generator: Optional[SignalGenerator] = None,
-        structural_level_engine: Optional[StructuralLevelEngine] = None,
+        risk_engine: Optional[RiskEngine] = None,
     ):
         self.account_manager = account_manager or VirtualAccountManager()
         self.risk_manager = risk_manager or RiskManager()
         self.signal_generator = signal_generator or SignalGenerator()
-        self.structural_level_engine = structural_level_engine or StructuralLevelEngine()
+        self.risk_engine = risk_engine or RiskEngine()
         self.broker_spec: BrokerSpec = get_broker_spec(settings.BROKER_SPEC)
 
     # ------------------------------------------------------------------
@@ -244,22 +244,26 @@ class PaperOrderExecutor:
         entry_price: float,
         timeframe: str,
         pip_size: float,
-    ) -> StructuralLevels:
-        """Resolve SL/TP from the signal's own timeframe candles only."""
+    ) -> RiskLevels:
+        """Let the Risk Engine place the 15m SL/TP from the signal's entry.
+
+        The entry supplied by the Signal Engine is used verbatim; the live
+        ``entry_price`` argument is retained only for backwards compatibility.
+        """
         candles = self._load_entry_timeframe_candles(
-            db, symbol=signal.symbol, timeframe=timeframe
+            db, symbol=signal.symbol, timeframe="15m"
         )
-        if not candles:
-            raise ValueError(
-                f"No closed {timeframe} candles available for {signal.symbol}; "
-                "cannot place a timeframe-locked structural stop."
-            )
-        return self.structural_level_engine.resolve(
-            candles=candles,
+        return self.risk_engine.resolve_levels(
+            symbol=signal.symbol,
             direction=signal.direction,
-            entry_price=entry_price,
-            timeframe=timeframe,
-            pip_size=pip_size,
+            entry_price=signal.entry_price or entry_price,
+            timeframe="15m",
+            candles=candles,
+            balance=self.resolve_user_risk_profile(
+                db,
+                self.account_manager.get_or_create_default_account(db),
+                signal.symbol,
+            ).balance,
         )
 
     def get_latest_market_price(self, db: Session, symbol: str) -> float:
@@ -657,21 +661,13 @@ class PaperOrderExecutor:
             f"TP={levels.take_profit_1:.5f} RR={levels.rr_multiple}"
         )
 
-        # Provisional TP for the live-price gate. execute_order re-derives the
-        # final TP from the exact fill price so the 1:3 distance is exact.
-        rr = float(settings.MIN_RR_TP1)
-        provisional_tp = round(
-            live_price + levels.sl_distance * rr
-            if levels.direction == "BUY"
-            else live_price - levels.sl_distance * rr,
-            5,
-        )
+        # The live-price gate validates the exact levels the Risk Engine placed.
         self.validate_signal_before_execution(
             db=db,
             signal=target_signal,
             current_price=live_price,
             stop_loss=levels.stop_loss,
-            take_profit_1=provisional_tp,
+            take_profit_1=levels.take_profit_1,
         )
 
         # Log advisory warning if present on the signal without raising an exception
@@ -684,6 +680,8 @@ class PaperOrderExecutor:
                 )
                 break
 
+        # The Risk Engine already produced the final SL and 3R TP. Execution
+        # must use those levels verbatim — no second derivation from the fill.
         order = PaperOrderCreate(
             account_id=request.account_id,
             symbol=target_signal.symbol,
@@ -691,7 +689,9 @@ class PaperOrderExecutor:
             order_type="MARKET",
             risk_percent=request.risk_percent,
             stop_loss=levels.stop_loss,
-            dynamic_tp_from_sl=True,
+            take_profit_1=levels.take_profit_1,
+            take_profit_2=levels.take_profit_2,
+            dynamic_tp_from_sl=False,
             signal_id=target_signal.id,
         )
 

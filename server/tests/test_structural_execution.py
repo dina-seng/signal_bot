@@ -81,8 +81,10 @@ def test_15m_signal_uses_only_15m_swing_high(client, test_db_session):
     trade = res.json()
     assert trade["stop_loss"] == pytest.approx(3600.0)  # NOT 3650 (1H)
     assert trade["initial_position_size"] == pytest.approx(0.01)
-    sl_distance = abs(trade["entry_price"] - trade["stop_loss"])
-    assert abs(trade["take_profit_1"] - trade["entry_price"]) == pytest.approx(
+    # Risk Engine anchors SL/TP to the Signal Engine's entry (3590), not to the
+    # spread-adjusted fill price. The 3R distance is exact from that entry.
+    sl_distance = abs(3590.0 - trade["stop_loss"])
+    assert abs(trade["take_profit_1"] - 3590.0) == pytest.approx(
         sl_distance * 3, abs=1e-5
     )
     assert test_db_session.query(PaperTrade).count() == 1

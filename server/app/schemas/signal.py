@@ -39,7 +39,7 @@ class RiskParameters(BaseModel):
     entry_price: float = Field(..., description="Suggested entry price")
     stop_loss: float = Field(..., description="Protective Stop Loss price")
     take_profit_1: float = Field(..., description="Target 1 (Min 2.0 R:R)")
-    take_profit_2: float = Field(..., description="Target 2 (Extended 3.0 R:R)")
+    take_profit_2: Optional[float] = Field(default=None, description="Target 2 (None under the single full 3R exit policy)")
     risk_pips: float = Field(..., ge=0.0, description="Stop loss risk distance in pips")
     reward_pips_tp1: float = Field(..., ge=0.0, description="Reward distance to TP1 in pips")
     reward_pips_tp2: float = Field(..., ge=0.0, description="Reward distance to TP2 in pips")

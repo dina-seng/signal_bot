@@ -8,7 +8,7 @@ Self-hosted, single-asset (**XAU/USD**) market-analysis system. It ingests 15m c
 
 - **One asset, one strategy.** XAU/USD only; SMC-only since PR #16 (CRT/Range removed).
 - **Qualification floor 60/100.** PA and confluence floors are hard filters.
-- **Strict risk (execution).** 15m entry = 15m structural SL; TP is placed dynamically at 1:3 from the fill price. Lot size is fixed at the profile minimum (0.01 on the default broker profile), read dynamically from the broker/user risk profile — wide structural stops are **never** a rejection reason.
+- **Strict risk (execution).** The Signal Engine finds the entry only; the Risk Engine places the 15m structural SL and a single 1:3 TP anchored to that entry, at a fixed 0.01 lot. No ATR or candle-extreme fallback stops; when no 15m swing exists a fixed 10-price-unit gap is used. Wide structural stops are **never** a rejection reason.
 - **Fully automatic paper trading.** The scheduler creates paper trades directly in the database for qualified 15m signals (15m SL ≤ `AUTO_EXEC_MAX_SL_POINTS`), capped globally by `MAX_OPEN_POSITIONS` and idempotent per signal. The dashboard is read-only; Telegram sends an immediate `AUTO-EXECUTED` alert.
 - **Frozen execution contract.** `optionB-v1` simulator rules (fills, gaps, voids, R denominator, costs) are unchanged by strategy work.
 - **Truthful state.** Dashboard reads one atomic `/paper/summary` snapshot so equity, P&L and the position ledger always agree.

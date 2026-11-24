@@ -92,8 +92,9 @@ def test_auto_execution_creates_trade_and_notifies_telegram(test_db_session):
     assert trade is not None
     assert test_db_session.query(PaperTrade).count() == 1
     assert trade.initial_position_size == pytest.approx(0.01)
-    sl_distance = abs(trade.entry_price - trade.stop_loss)
-    assert abs(trade.take_profit_1 - trade.entry_price) == pytest.approx(sl_distance * 3, abs=1e-5)
+    # Risk Engine anchors levels to the Signal Engine entry (3590), not the fill.
+    sl_distance = abs(3590.0 - trade.stop_loss)
+    assert abs(trade.take_profit_1 - 3590.0) == pytest.approx(sl_distance * 3, abs=1e-5)
     assert len(tg.sent_messages) >= 1
     assert "AUTO-EXECUTED: SELL XAU/USD" in tg.sent_messages[-1]["text"]
     assert "Lot: 0.01" in tg.sent_messages[-1]["text"]

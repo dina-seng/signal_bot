@@ -140,12 +140,12 @@ def test_paper_trade_from_signal(test_db_session):
         (1.3000, 1.3008, 1.2992),
         (1.3005, 1.3010, 1.2998),
         (1.3000, 1.3006, 1.2995),
-    ])
+    ], timeframe="15m")
     service = PaperTradingService()
 
     sig = Signal(
         symbol="GBP/USD",
-        timeframe="1h",
+        timeframe="15m",
         direction="BUY",
         setup_score=85.0,
         entry_price=1.3000,
@@ -167,11 +167,11 @@ def test_paper_trade_from_signal(test_db_session):
     assert trade.direction == SignalDirection.BUY
     assert trade.signal_id == sig.id
     assert trade.status == "OPEN"
-    # SL comes from the closed 1h swing low, never the persisted signal SL.
+    # Risk Engine uses the 15m swing low and anchors TP to the signal entry.
     assert trade.stop_loss == pytest.approx(1.2975)
     assert trade.initial_position_size == pytest.approx(0.01)
-    sl_distance = abs(trade.entry_price - trade.stop_loss)
-    assert abs(trade.take_profit_1 - trade.entry_price) == pytest.approx(sl_distance * 3, abs=1e-5)
+    sl_distance = abs(1.3000 - trade.stop_loss)
+    assert abs(trade.take_profit_1 - 1.3000) == pytest.approx(sl_distance * 3, abs=1e-5)
 
 
 # -------------------------------------------------------------
