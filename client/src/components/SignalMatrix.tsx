@@ -18,7 +18,7 @@ interface SignalMatrixProps {
   onToggleNotify: (id: string, symbol: PairSymbol, currentNotify: boolean) => void;
   onSelectSignalForChart?: (symbol: PairSymbol) => void;
   onTriggerScan?: () => void;
-  onTradeFromSignal?: (signal: TradeSignal) => void;
+  executedSymbols?: string[];
   appConfig?: AppConfig | null;
   quote?: BackendQuote | null;
 }
@@ -33,7 +33,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
   onToggleNotify,
   onSelectSignalForChart,
   onTriggerScan,
-  onTradeFromSignal,
+  executedSymbols = [],
   appConfig,
   quote,
 }) => {
@@ -195,7 +195,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
               tickDirection={tickDirections[sig.symbol]}
               onToggleNotify={onToggleNotify}
               onSelectSignalForChart={onSelectSignalForChart}
-              onTradeFromSignal={onTradeFromSignal}
+              autoExecuted={executedSymbols.includes(sig.symbol)}
               minScore={appConfig?.min_confluence_score}
             />
           ))}

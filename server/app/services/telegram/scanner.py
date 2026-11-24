@@ -3,7 +3,7 @@
 import asyncio
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Set, Union
+from typing import List, Optional, Set, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
@@ -14,7 +14,7 @@ from app.models.candle import Candle
 from app.models.paper import PaperTrade
 from app.models.signal import Signal
 from app.models.structure import StructureEvent
-from app.schemas.paper_trading import AutoTradeSignalRequest
+from app.schemas.paper_trading import AutoTradeSignalRequest, PaperTradeResponse
 from app.schemas.signal import SignalDirection, SignalResponse
 from app.schemas.telegram import ScannerStatusResponse, ScannerTriggerResponse
 from app.services.market_data import (
@@ -97,6 +97,138 @@ class AutomatedMarketScanner:
             .limit(1)
         )
         return db.scalars(stmt).first() is not None
+
+    def open_position_count(self, db: Session) -> int:
+        """Count all open/pending paper positions across symbols (global cap gate)."""
+        stmt = select(PaperTrade.id).where(
+            PaperTrade.status.in_(["OPEN", "PARTIALLY_CLOSED", "PENDING"])
+        )
+        return len(db.scalars(stmt).all())
+
+    def has_trade_for_signal(self, db: Session, signal_id: Optional[int]) -> bool:
+        """Idempotency guard: one paper trade per signal, even across scan cycles."""
+        if not signal_id:
+            return False
+        stmt = select(PaperTrade.id).where(PaperTrade.signal_id == signal_id).limit(1)
+        return db.scalars(stmt).first() is not None
+
+    async def _auto_execute_signal(
+        self,
+        db: Session,
+        sig: SignalResponse,
+        broadcast_to_telegram: bool,
+    ) -> Optional[PaperTradeResponse]:
+        """Auto-create a paper trade for a qualified 15m signal.
+
+        Safety gates (all applied before any DB write):
+          1. Strict 15m timeframe lock.
+          2. One trade per signal (idempotency across repeated scan cycles).
+          3. Global open-position cap.
+          4. 15m structural SL must be within AUTO_EXEC_MAX_SL_POINTS.
+        Execution reuses the same fixed-lot / structural-SL / 1:3 TP path as manual
+        execution. Returns the created trade, or None when skipped/rejected.
+        """
+        timeframe = str(getattr(sig, "timeframe", "") or "").lower().strip()
+        if timeframe != "15m":
+            logger.info(
+                f"Auto-execution skipped: not a 15m signal ({sig.symbol} [{sig.timeframe}])."
+            )
+            return None
+
+        if sig.id and self.has_trade_for_signal(db, sig.id):
+            logger.info(
+                f"Auto-execution skipped: trade already exists for Signal #{sig.id} ({sig.symbol})."
+            )
+            return None
+
+        if self.open_position_count(db) >= settings.MAX_OPEN_POSITIONS:
+            logger.warning("Auto-execution skipped: Position cap reached.")
+            return None
+
+        db_signal: Optional[Signal] = db.get(Signal, sig.id) if sig.id else None
+        if db_signal is None:
+            db_signal = db.scalars(
+                select(Signal).where(Signal.fingerprint == sig.fingerprint).limit(1)
+            ).first()
+        if db_signal is None:
+            logger.warning(
+                f"Auto-execution skipped: signal not persisted for {sig.symbol} "
+                f"(fingerprint={sig.fingerprint})."
+            )
+            return None
+
+        live_price = self.paper_service.order_executor.get_latest_market_price(
+            db, db_signal.symbol
+        )
+        levels = self.paper_service.resolve_signal_levels(
+            db=db,
+            signal=db_signal,
+            entry_price=live_price,
+            timeframe="15m",
+        )
+        if levels.sl_distance > settings.AUTO_EXEC_MAX_SL_POINTS:
+            logger.info(
+                f"Auto-execution skipped: 15m structural SL {levels.sl_distance:.2f} points "
+                f"exceeds cap {settings.AUTO_EXEC_MAX_SL_POINTS:.2f} for {sig.symbol}."
+            )
+            return None
+
+        rejection_reason: Optional[str] = None
+        try:
+            trade = self.paper_service.trade_from_signal(
+                db=db,
+                request=AutoTradeSignalRequest(
+                    signal_id=db_signal.id,
+                    symbol=sig.symbol,
+                    timeframe="15m",
+                    risk_percent=settings.MAX_RISK_PERCENT,
+                ),
+            )
+        except InsufficientRiskBudgetError as e:
+            rejection_reason = str(e)
+            logger.warning(f"Auto-execution rejected (risk budget) for {sig.symbol}: {e}")
+            if broadcast_to_telegram:
+                try:
+                    await self.telegram_client.send_message(
+                        text=self.formatter.format_trade_rejection(
+                            sig, rejection_reason, getattr(e, "hints", {})
+                        ),
+                        parse_mode="HTML",
+                        signal_id=sig.id or sig.fingerprint,
+                    )
+                except Exception as send_err:
+                    logger.error(f"Failed to send rejection alert for {sig.symbol}: {send_err}")
+        except Exception as e:
+            rejection_reason = str(e)
+            logger.error(f"Auto-execution rejected for {sig.symbol}: {e}")
+            if broadcast_to_telegram:
+                try:
+                    await self.telegram_client.send_message(
+                        text=self.formatter.format_trade_rejection(sig, rejection_reason, {}),
+                        parse_mode="HTML",
+                        signal_id=sig.id or sig.fingerprint,
+                    )
+                except Exception as send_err:
+                    logger.error(f"Failed to send rejection alert for {sig.symbol}: {send_err}")
+
+        if rejection_reason is not None:
+            return None
+
+        logger.info(
+            f"AUTO-EXECUTED PAPER TRADE #{trade.id} on {trade.symbol} [15m]: "
+            f"entry={trade.entry_price} SL={trade.stop_loss} TP={trade.take_profit_1} "
+            f"lot={trade.initial_position_size}"
+        )
+        if broadcast_to_telegram:
+            try:
+                await self.telegram_client.send_message(
+                    text=self.formatter.format_auto_execution(trade),
+                    parse_mode="HTML",
+                    signal_id=sig.id or sig.fingerprint,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send auto-execution alert for {sig.symbol}: {e}")
+        return trade
 
     def has_opposing_structural_break(
         self,
@@ -415,10 +547,12 @@ class AutomatedMarketScanner:
 
                     signals_found += 1
 
-                    # 1. Active Position Check: applies to BOTH dispatch paths.
-                    if self.has_active_position(db, sig.symbol):
+                    # 1. Active position is an ALERT-ONLY suppression. Auto-execution
+                    #    uses the global MAX_OPEN_POSITIONS cap plus per-signal
+                    #    idempotency, so one open position cannot block the next setup.
+                    position_active = self.has_active_position(db, sig.symbol)
+                    if position_active:
                         logger.info(f"Skipping signal alert for {sig.symbol}: Position already active.")
-                        continue
 
                     # 2. Qualification gate — live dispatch floor matches Baseline v2.
                     breakdown = getattr(sig, "score_breakdown", None)
@@ -437,7 +571,7 @@ class AutomatedMarketScanner:
 
                     # 3. Telegram broadcast. Cooldown / fingerprint dedup are
                     #    ALERT-ONLY concerns and must NOT gate paper trading.
-                    if broadcast_to_telegram:
+                    if broadcast_to_telegram and not position_active:
                         if self.is_signal_in_cooldown(db, sig):
                             logger.debug(
                                 f"Skipping Telegram broadcast for {sig.symbol}: signal in cooldown."
@@ -474,61 +608,18 @@ class AutomatedMarketScanner:
                             except Exception as e:
                                 logger.error(f"Telegram delivery failed for {sig.symbol}: {e}")
 
-                    # 4. Paper Trading Safety Check & Auto-execution. Independent of
-                    #    Telegram delivery/cooldown/dedup: the order executor already
-                    #    has its own idempotency guard per signal.
+                    # 4. Fully automatic paper execution. No frontend POST required:
+                    #    all safety gates, DB write, and Telegram alert live here.
                     if (
                         auto_paper_trade
                         and settings.PAPER_TRADING
                         and settings.SCANNER_AUTO_TRADE_PAPER
                     ):
-                        rejection_reason: Optional[str] = None
-                        rejection_hints: Dict[str, str] = {}
-                        try:
-                            trade = self.paper_service.trade_from_signal(
-                                db=db,
-                                request=AutoTradeSignalRequest(
-                                    signal_id=sig.id,
-                                    symbol=sig.symbol,
-                                    timeframe=sig.timeframe,
-                                    risk_percent=settings.MAX_RISK_PERCENT,
-                                ),
-                            )
+                        auto_trade = await self._auto_execute_signal(
+                            db=db, sig=sig, broadcast_to_telegram=broadcast_to_telegram
+                        )
+                        if auto_trade is not None:
                             paper_trades_opened += 1
-                            logger.info(
-                                f"AUTO-OPENED PAPER TRADE #{trade.id} on {trade.symbol} [{sig.timeframe}]"
-                            )
-                        except InsufficientRiskBudgetError as e:
-                            rejection_reason = str(e)
-                            rejection_hints = getattr(e, "hints", {})
-                            logger.warning(
-                                f"Paper trade REJECTED (risk budget) for {sig.symbol}: {e}"
-                            )
-                        except ValueError as e:
-                            rejection_reason = str(e)
-                            logger.error(
-                                f"Paper trade REJECTED (validation) for {sig.symbol}: {e}"
-                            )
-                        except Exception as e:
-                            rejection_reason = str(e)
-                            logger.error(f"Paper trading failed for {sig.symbol}: {e}")
-
-                        # Every qualified signal gets a Telegram outcome: either the
-                        # signal alert above, or this explicit rejection reason.
-                        if broadcast_to_telegram and rejection_reason:
-                            try:
-                                rejection_msg = self.formatter.format_trade_rejection(
-                                    sig, rejection_reason, rejection_hints
-                                )
-                                await self.telegram_client.send_message(
-                                    text=rejection_msg,
-                                    parse_mode="HTML",
-                                    signal_id=sig.id or sig.fingerprint,
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to send rejection alert for {sig.symbol}: {e}"
-                                )
                     else:
                         logger.debug(
                             f"Paper trade skipped for {sig.symbol} (auto_trade={auto_paper_trade}, "

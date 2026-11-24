@@ -74,6 +74,8 @@ def test_api_signals_unified(client, test_db_session):
 
 def test_api_signals_scan_unified(client, test_db_session):
     """Verify /api/v1/signals/scan uses unified scanner by default."""
+    from app.services.paper_trading import PaperTradingService
+    PaperTradingService().account_manager.get_or_create_default_account(test_db_session)
     seed_candles_multi_tf(test_db_session, "XAU/USD")
     res = client.get("/api/v1/signals/scan")
     assert res.status_code == 200

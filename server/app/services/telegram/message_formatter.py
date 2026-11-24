@@ -14,7 +14,11 @@ from app.services.market_data.symbols import (
     normalize_symbol,
 )
 from app.schemas.news import NewsEventResponse
-from app.schemas.paper_trading import PaperPortfolioPerformance, VirtualAccountResponse
+from app.schemas.paper_trading import (
+    PaperPortfolioPerformance,
+    PaperTradeResponse,
+    VirtualAccountResponse,
+)
 from app.schemas.signal import MarketScanResponse, SignalDirection, SignalResponse
 
 
@@ -358,6 +362,25 @@ class TelegramMessageFormatter:
     def format_signal_alert(cls, sig: SignalResponse) -> str:
         """Format signal alert via the pure format_signal engine."""
         return format_signal(sig)
+
+    @classmethod
+    def format_auto_execution(cls, trade: PaperTradeResponse) -> str:
+        """Immediate notification for a scanner-created paper position.
+
+        Values are read from the executed trade / live config — no hardcoded
+        price, lot, or R:R literals.
+        """
+        direction = getattr(trade.direction, "value", trade.direction)
+        symbol = str(trade.symbol)
+        lot = float(trade.initial_position_size)
+        rr = f"{float(settings.MIN_RR_TP1):g}"
+        return (
+            f"🤖 AUTO-EXECUTED: {escape_html(direction)} {escape_html(symbol)} "
+            f"@ {cls.format_price(trade.entry_price, symbol)} "
+            f"| SL: {cls.format_price(trade.stop_loss, symbol)} "
+            f"| TP: {cls.format_price(trade.take_profit_1, symbol)} "
+            f"| Lot: {lot:.2f} | R:R 1:{rr}"
+        )
 
     @classmethod
     def format_trade_rejection(

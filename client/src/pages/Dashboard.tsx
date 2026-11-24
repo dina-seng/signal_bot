@@ -635,34 +635,6 @@ export const Dashboard: React.FC = () => {
     setTimeout(fetchAccountAndPositions, 500);
   };
 
-  // Auto-execute paper trade directly from high-confluence signal
-  const handleTradeFromSignal = async (sig: TradeSignal) => {
-    if (!appConfig) {
-      addToast('warning', 'Configuration loading', 'Risk-per-order is not available yet; retry in a moment.');
-      return;
-    }
-    try {
-      const numId = sig.id.startsWith('SIG-') ? parseInt(sig.id.replace('SIG-', ''), 10) : undefined;
-      const res = await quantViewApi.tradeFromSignal({
-        signal_id: isNaN(numId!) ? null : numId,
-        symbol: sig.symbol,
-        timeframe: sig.timeframe || '1h',
-        risk_percent: appConfig.risk_per_order_pct,
-      });
-
-      addToast(
-        'success',
-        'Order Placed',
-        `Opened ${sig.direction} position on ${sig.symbol} (Order #${res.data.id}) via /api/v1/paper/orders/from-signal.`
-      );
-
-      // Instantly refresh account and open positions
-      await fetchAccountAndPositions();
-    } catch (err: any) {
-      addToast('warning', 'Order Failed', err.message || 'Could not place paper trade');
-    }
-  };
-
   // On-demand market scan across all symbols
   const handleScanMarkets = async () => {
     setIsScanningMarkets(true);
@@ -1036,7 +1008,7 @@ export const Dashboard: React.FC = () => {
                     onToggleNotify={handleToggleNotify}
                     onSelectSignalForChart={handleSelectSignalForChart}
                     onTriggerScan={handleScanMarkets}
-                    onTradeFromSignal={handleTradeFromSignal}
+                    executedSymbols={positions.map((p) => p.symbol)}
                   />
                 </GlassCard>
 
@@ -1107,7 +1079,7 @@ export const Dashboard: React.FC = () => {
                   onToggleNotify={handleToggleNotify}
                   onSelectSignalForChart={handleSelectSignalForChart}
                   onTriggerScan={handleScanMarkets}
-                  onTradeFromSignal={handleTradeFromSignal}
+                  executedSymbols={positions.map((p) => p.symbol)}
                 />
               </GlassCard>
               <GlassCard id="chart-section" className="order-2 w-full min-w-0" glowColor="cyan">

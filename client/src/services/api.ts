@@ -480,25 +480,6 @@ export const quantViewApi = {
     return fetchWithTiming<BackendPaperTrade[]>(`${API_BASE}/paper/trades?limit=${limit}`);
   },
 
-  // 7. Auto-Execute Paper Trade directly from Signal
-  async tradeFromSignal(payload: {
-    signal_id?: number | null;
-    symbol: string;
-    timeframe?: string;
-    risk_percent: number;
-  }): Promise<{ data: BackendPaperTrade; durationMs: number }> {
-    console.log('[API] POST /api/v1/paper/orders/from-signal', payload);
-    return fetchWithTiming<BackendPaperTrade>(`${API_BASE}/paper/orders/from-signal`, {
-      method: 'POST',
-      body: JSON.stringify({
-        signal_id: payload.signal_id ?? null,
-        symbol: payload.symbol,
-        timeframe: payload.timeframe || '1h',
-        risk_percent: payload.risk_percent,
-      }),
-    });
-  },
-
   // 8. Signals (Default unified=true for multi-timeframe consensus)
   // Balance and risk % are resolved server-side from the active paper account.
   async getSignals(limit = 20, unified = true): Promise<{ data: BackendSignal[]; durationMs: number }> {

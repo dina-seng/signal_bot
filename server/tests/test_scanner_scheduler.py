@@ -55,6 +55,31 @@ class FailingMarketDataProvider(BaseMarketDataProvider):
         raise ConnectionError("Simulated remote provider connection outage!")
 
 
+def _ensure_paper_account(db):
+    """Scanner requires an active account for authoritative sizing context."""
+    return PaperTradingService().account_manager.get_or_create_default_account(db)
+
+
+def _seed_15m_bars(db, symbol="EUR/USD"):
+    """Recent closed 15m bars with a swing low for structural SL derivation."""
+    now = datetime.now(timezone.utc)
+    bars = [
+        (1.1190, 1.1200, 1.1185),
+        (1.1195, 1.1202, 1.1188),
+        (1.1180, 1.1195, 1.1175),  # structural swing low
+        (1.1190, 1.1200, 1.1182),
+        (1.1200, 1.1208, 1.1192),
+        (1.1200, 1.1206, 1.1194),
+    ]
+    for i, (close, high, low) in enumerate(bars):
+        db.add(Candle(
+            symbol=symbol, timeframe="15m",
+            timestamp=now - timedelta(minutes=15 * (len(bars) - i)),
+            open=close, high=high, low=low, close=close, volume=100.0,
+        ))
+    db.commit()
+
+
 def _seed_candles(db, symbol="EUR/USD", count=40):
     """Seed test candles."""
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -263,6 +288,7 @@ async def test_error_isolation_telegram_failure(test_db_session):
 @pytest.mark.asyncio
 async def test_telegram_signal_deduplication(test_db_session):
     """Verify that identical signal fingerprints are not broadcast repeatedly."""
+    _ensure_paper_account(test_db_session)
     mock_tg = MockTelegramClient()
     scanner = AutomatedMarketScanner(telegram_client=mock_tg)
 
@@ -456,7 +482,9 @@ async def test_paper_trading_safety_when_auto_trade_disabled(test_db_session):
 @pytest.mark.asyncio
 async def test_paper_trading_when_enabled(test_db_session):
     """Verify paper trading executes and logs properly when auto paper trading is enabled."""
+    _ensure_paper_account(test_db_session)
     _seed_candles(test_db_session, "EUR/USD", 40)
+    _seed_15m_bars(test_db_session, "EUR/USD")
     settings.PAPER_TRADING = True
     settings.SCANNER_AUTO_TRADE_PAPER = True
 
@@ -472,7 +500,7 @@ async def test_paper_trading_when_enabled(test_db_session):
 
     db_sig = Signal(
         symbol="EUR/USD",
-        timeframe="1h",
+        timeframe="15m",
         direction="BUY",
         setup_score=95.0,
         entry_price=1.1200,
@@ -501,7 +529,7 @@ async def test_paper_trading_when_enabled(test_db_session):
         results=[
             MarketScanSymbolResult(
                 symbol="EUR/USD",
-                timeframe="1h",
+                timeframe="15m",
                 direction=SignalDirection.BUY,
                 setup_score=95.0,
                 is_actionable=True,
@@ -516,7 +544,7 @@ async def test_paper_trading_when_enabled(test_db_session):
     res = await scanner.run_scan_cycle(
         db=test_db_session,
         symbols=["EUR/USD"],
-        timeframes=["1h"],
+        timeframes=["15m"],
         broadcast_to_telegram=True,
         auto_paper_trade=True,
     )
@@ -527,20 +555,22 @@ async def test_paper_trading_when_enabled(test_db_session):
 @pytest.mark.asyncio
 async def test_paper_trade_not_gated_by_telegram_cooldown_or_dedup(test_db_session):
     """A suppressed Telegram alert must not suppress the paper trade."""
+    _ensure_paper_account(test_db_session)
     _seed_candles(test_db_session, "EUR/USD", 40)
+    _seed_15m_bars(test_db_session, "EUR/USD")
     settings.PAPER_TRADING = True
     settings.SCANNER_AUTO_TRADE_PAPER = True
 
     now = datetime.now(timezone.utc)
     # Prior same-direction signal puts this symbol inside the alert cooldown.
     prior = Signal(
-        symbol="EUR/USD", timeframe="30m", direction="BUY", setup_score=69.0,
+        symbol="EUR/USD", timeframe="15m", direction="BUY", setup_score=69.0,
         entry_price=1.1200, stop_loss=1.1050, take_profit_1=1.1350,
         take_profit_2=1.1400, risk_reward=1.0, status="ACTIVE",
         fingerprint="prior_cooldown_fp", reasons=[], timestamp=now,
     )
     candidate = Signal(
-        symbol="EUR/USD", timeframe="30m", direction="BUY", setup_score=69.0,
+        symbol="EUR/USD", timeframe="15m", direction="BUY", setup_score=69.0,
         entry_price=1.1200, stop_loss=1.1050, take_profit_1=1.1350,
         take_profit_2=1.1400, risk_reward=1.0, status="ACTIVE",
         fingerprint="candidate_69_fp", reasons=[], timestamp=now,
@@ -565,7 +595,7 @@ async def test_paper_trade_not_gated_by_telegram_cooldown_or_dedup(test_db_sessi
     mock_scan_res = MarketScanResponse(
         timestamp=now, scanned_count=1, actionable_count=1,
         results=[MarketScanSymbolResult(
-            symbol="EUR/USD", timeframe="30m", direction=SignalDirection.BUY,
+            symbol="EUR/USD", timeframe="15m", direction=SignalDirection.BUY,
             setup_score=69.0, is_actionable=True, signal=sig_resp,
             blackout_blocked=False, reasons=[],
         )],
@@ -573,7 +603,7 @@ async def test_paper_trade_not_gated_by_telegram_cooldown_or_dedup(test_db_sessi
     scanner.signal_generator.scan_all_symbols = MagicMock(return_value=mock_scan_res)
 
     res = await scanner.run_scan_cycle(
-        db=test_db_session, symbols=["EUR/USD"], timeframes=["30m"],
+        db=test_db_session, symbols=["EUR/USD"], timeframes=["15m"],
         broadcast_to_telegram=True, auto_paper_trade=True,
     )
 
@@ -812,6 +842,7 @@ async def test_signal_cooldown_suppresses_duplicate_alert(test_db_session):
 @pytest.mark.asyncio
 async def test_signal_cooldown_expired_allows_broadcast(test_db_session):
     """Verify that a signal generated after cooldown window (e.g. 3 hours > 2h) is allowed."""
+    _ensure_paper_account(test_db_session)
     mock_tg = MockTelegramClient()
     mock_market = MockMarketDataProvider(base_price=1.1200)
     mock_news = MockNewsProvider()
@@ -899,6 +930,7 @@ async def test_signal_cooldown_expired_allows_broadcast(test_db_session):
 @pytest.mark.asyncio
 async def test_opposing_structural_break_resets_cooldown(test_db_session):
     """Verify that an opposing structural break (BEARISH_CHOCH) resets the BUY signal cooldown."""
+    _ensure_paper_account(test_db_session)
     mock_tg = MockTelegramClient()
     mock_market = MockMarketDataProvider(base_price=1.1200)
     mock_news = MockNewsProvider()

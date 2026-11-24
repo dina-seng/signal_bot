@@ -26,7 +26,7 @@ interface ConfluenceCardProps {
   tickDirection?: 'up' | 'down' | null;
   onToggleNotify?: (id: string, symbol: PairSymbol, currentNotify: boolean) => void;
   onSelectSignalForChart?: (symbol: PairSymbol) => void;
-  onTradeFromSignal?: (signal: TradeSignal) => void;
+  autoExecuted?: boolean;
   minScore?: number;
 }
 
@@ -36,7 +36,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   tickDirection,
   onToggleNotify,
   onSelectSignalForChart,
-  onTradeFromSignal,
+  autoExecuted = false,
   minScore,
 }) => {
   const [isAiExpanded, setIsAiExpanded] = useState<boolean>(true);
@@ -347,19 +347,19 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
               </div>
             )}
 
-            {/* 6. Action Execution Button */}
-            {hasSetup && onTradeFromSignal && (
-              <button
-                onClick={() => onTradeFromSignal(signal)}
-                className={`flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-mono text-xs font-semibold tracking-wide border transition-all duration-200 cursor-pointer touch-manipulation ${
-                  isBuy
-                    ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40 hover:shadow-[0_0_15px_rgba(16,185,129,0.25)]'
-                    : 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border-rose-500/40 hover:shadow-[0_0_15px_rgba(244,63,94,0.25)]'
+            {/* 6. Read-only auto-execution state (no manual action) */}
+            {hasSetup && (
+              <div
+                role="status"
+                className={`flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl py-2.5 px-3 font-mono text-xs font-semibold tracking-wide border ${
+                  autoExecuted
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                    : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
                 }`}
               >
-                <span>Execute Paper {signal.direction}</span>
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
+                <Bot className="h-3.5 w-3.5" />
+                <span>{autoExecuted ? 'AUTO-EXECUTED' : 'PENDING FILL'}</span>
+              </div>
             )}
           </div>
         </div>

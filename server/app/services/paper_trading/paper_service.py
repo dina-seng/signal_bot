@@ -8,6 +8,7 @@ from sqlalchemy import select, desc
 from app.core.config import settings
 from app.core.logging import logger
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
+from app.models.signal import Signal
 from app.schemas.paper_trading import (
     AccountDepositRequest,
     AccountResetRequest,
@@ -100,6 +101,23 @@ class PaperTradingService:
         """Auto-execute trade position directly from a signal."""
         trade = self.order_executor.open_trade_from_signal(db=db, request=request)
         return PaperTradeResponse.model_validate(trade)
+
+    def resolve_signal_levels(
+        self, db: Session, signal: Signal, entry_price: float, timeframe: str
+    ):
+        """Resolve the entry-timeframe structural SL/TP without placing an order.
+
+        Used by the scanner's pre-execution safety gates so eligibility is based
+        on the exact same 15m structural stop that execution will apply.
+        """
+        pip_size = self.order_executor.risk_manager.get_pip_size(signal.symbol)
+        return self.order_executor.resolve_signal_levels(
+            db=db,
+            signal=signal,
+            entry_price=entry_price,
+            timeframe=timeframe,
+            pip_size=pip_size,
+        )
 
     def get_positions(
         self,

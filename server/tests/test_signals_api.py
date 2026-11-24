@@ -67,6 +67,8 @@ def test_get_signals_empty_and_populated(client, test_db_session):
 
 def test_scan_markets_endpoint(client, test_db_session):
     """Test GET /api/v1/signals/scan endpoint."""
+    from app.services.paper_trading import PaperTradingService
+    PaperTradingService().account_manager.get_or_create_default_account(test_db_session)
     seed_candles(test_db_session, symbol="XAU/USD", count=50)
 
     response = client.get("/api/v1/signals/scan?timeframe=1h&account_balance=10000&risk_percent=0.5")

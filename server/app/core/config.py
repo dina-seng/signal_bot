@@ -65,6 +65,16 @@ class Settings(BaseSettings):
         ge=0.01,
         description="Upper lot bound for paper execution (config-driven, never hardcoded at call sites)",
     )
+    MAX_OPEN_POSITIONS: int = Field(
+        default=6,
+        ge=1,
+        description="Global cap on simultaneously open paper positions for auto-execution",
+    )
+    AUTO_EXEC_MAX_SL_POINTS: float = Field(
+        default=15.0,
+        gt=0,
+        description="Max 15m structural SL distance (price points) eligible for auto-execution",
+    )
     MAX_RISK_PERCENT: float = Field(
         default=5.0,
         ge=0.1,
