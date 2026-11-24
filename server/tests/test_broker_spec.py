@@ -12,10 +12,7 @@ from app.schemas.paper_trading import PaperOrderCreate
 from app.schemas.signal import SignalDirection
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import BROKER_SPECS, get_broker_spec
-from app.services.paper_trading.order_executor import (
-    InsufficientRiskBudgetError,
-    PaperOrderExecutor,
-)
+from app.services.paper_trading.order_executor import PaperOrderExecutor
 
 MARKET = 4000.0
 HALF_SPREAD = 0.05  # XAU pip_size 0.10 -> 0.5 pip = 0.05 price units
@@ -76,24 +73,25 @@ def test_invariant_lots_times_contract_times_distance_within_budget():
     assert checked > 100
 
 
-def test_distance_88_exness_rejects_fractional_accepts(test_db_session, monkeypatch):
+def test_distance_88_wide_stop_executes_at_profile_min_lot(test_db_session, monkeypatch):
+    """Wide stops no longer reject: both profiles use their own fixed minimum lot."""
     monkeypatch.setattr(settings, "BROKER_SPEC", "exness_standard_xauusd")
     _account(test_db_session, 200.0)
     _seed(test_db_session)
 
-    with pytest.raises(InsufficientRiskBudgetError) as exc:
-        _executor("exness_standard_xauusd").execute_order(
-            test_db_session, _order(88.0), current_market_price=MARKET
-        )
-    assert "Min lot would risk" in str(exc.value)
-
-    trade = _executor("theoretical_fractional").execute_order(
+    exness_trade = _executor("exness_standard_xauusd").execute_order(
         test_db_session, _order(88.0), current_market_price=MARKET
     )
-    actual_risk = trade.initial_position_size * 100.0 * 88.0
-    assert trade.status == "OPEN"
-    assert actual_risk <= 10.0 + 1e-6
-    assert trade.broker_profile == "theoretical_fractional"
+    assert exness_trade.status == "OPEN"
+    assert exness_trade.initial_position_size == pytest.approx(0.01)
+    assert exness_trade.broker_profile == "exness_standard_xauusd"
+
+    fractional_trade = _executor("theoretical_fractional").execute_order(
+        test_db_session, _order(88.0), current_market_price=MARKET
+    )
+    assert fractional_trade.status == "OPEN"
+    assert fractional_trade.initial_position_size == pytest.approx(0.0001)
+    assert fractional_trade.broker_profile == "theoretical_fractional"
 
 
 def test_distance_10_exness_accepts_001_lot_at_10_dollars(test_db_session, monkeypatch):

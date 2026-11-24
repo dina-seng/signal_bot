@@ -220,13 +220,18 @@ def place_paper_order(
         raise HTTPException(status_code=500, detail=f"Order execution failed: {str(e)}")
 
 
-@router.post("/orders/from-signal", response_model=PaperTradeResponse)
+@router.post("/orders/from-signal", response_model=PaperTradeResponse, status_code=201)
 def trade_from_signal(
     request: AutoTradeSignalRequest,
     db: Session = Depends(get_db),
     service: PaperTradingService = Depends(get_paper_trading_service),
 ):
-    """Auto-execute a paper trade position directly from an active signal."""
+    """Auto-execute a paper trade from an active signal (201 Created).
+
+    The SL is derived from the signal's own timeframe structure (15m entry =
+    15m SL), TP is set dynamically at 1:3, and the lot size is the fixed value
+    from the User Risk Profile. Wide structural stops are accepted.
+    """
     request.symbol = _normalize_symbol(request.symbol)
     try:
         return service.trade_from_signal(db=db, request=request)

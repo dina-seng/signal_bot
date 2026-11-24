@@ -458,11 +458,20 @@ def test_path_validator_advisory_warning_keeps_signal_qualified():
     indicator_mock.atr.atr_value = 0.0010
     indicator_mock.active_fvgs = []
 
-    # Mock structure analysis: Key support at 1.0960 (SL distance = 40 pips)
-    # SL is ~1.0955 (support - 0.5*ATR), TP1 at min_rr (2.0) is ~1.1090
+    # Mock structure analysis: confirmed 1h swing low at 1.0960 (40 pips below
+    # entry). The entry-timeframe SL sits on it and TP is exactly 1:3 = 1.1120.
+    from app.schemas.structure import SwingPoint, SwingType
     structure_mock = MagicMock()
     structure_mock.base_structure.key_support = 1.0960
     structure_mock.base_structure.key_resistance = 1.1200
+    structure_mock.base_structure.swing_points = [SwingPoint(
+        index=3,
+        timestamp=now,
+        price=1.0960,
+        swing_type=SwingType.SWING_LOW,
+        bar_high=1.0970,
+        bar_low=1.0960,
+    )]
     structure_mock.liquidity_pools = []
 
     # Place a FRESH RESISTANCE zone at 1.1025 (25 pips from entry)

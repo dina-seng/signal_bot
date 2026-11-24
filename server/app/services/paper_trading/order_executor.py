@@ -1,8 +1,9 @@
 """Paper Trading Order Execution and Signal-to-Trade Converter."""
 
+from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
@@ -13,9 +14,10 @@ from app.models.paper import VirtualAccount, PaperTrade
 from app.models.signal import Signal
 from app.schemas.paper_trading import AutoTradeSignalRequest, PaperOrderCreate
 from app.schemas.signal import SignalDirection
+from app.services.market_data.freshness import filter_closed_candles
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import BrokerSpec, get_broker_spec
-from app.services.signals import RiskManager, SignalGenerator
+from app.services.signals import RiskManager, SignalGenerator, StructuralLevelEngine, StructuralLevels
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +34,7 @@ _TIMEFRAME_MINUTES: dict[str, float] = {
     "1d":  1440.0,
 }
 
-# Upper lot bound; the minimum and step come from the selected BrokerSpec.
+# Backwards-compatible alias; the authoritative bound lives in settings.MAX_LOT_SIZE.
 MAX_LOT_SIZE: float = 100.0
 
 
@@ -143,6 +145,31 @@ class InsufficientRiskBudgetError(ValueError):
         super().__init__(message)
 
 
+@dataclass(frozen=True)
+class ExecutionRiskProfile:
+    """The dynamic "User Risk Profile" used at execution time.
+
+    Every field is resolved from an authoritative, non-hardcoded source:
+      * balance      -> the active VirtualAccount row in the database
+      * risk_percent -> live application settings (RISK_PER_ORDER_PCT)
+      * lot_size     -> the selected BrokerSpec minimum lot
+      * contract     -> the selected BrokerSpec / instrument specification
+    """
+
+    balance: float
+    risk_percent: float
+    lot_size: float
+    contract_size: Decimal
+    pip_size: float
+    pip_value_per_lot: float
+    broker_profile: str
+    symbol: str
+
+    @property
+    def risk_budget_usd(self) -> float:
+        return self.balance * self.risk_percent / 100.0
+
+
 class PaperOrderExecutor:
     """Handles order placement, execution simulation, and margin validation for paper trading."""
 
@@ -151,11 +178,89 @@ class PaperOrderExecutor:
         account_manager: Optional[VirtualAccountManager] = None,
         risk_manager: Optional[RiskManager] = None,
         signal_generator: Optional[SignalGenerator] = None,
+        structural_level_engine: Optional[StructuralLevelEngine] = None,
     ):
         self.account_manager = account_manager or VirtualAccountManager()
         self.risk_manager = risk_manager or RiskManager()
         self.signal_generator = signal_generator or SignalGenerator()
+        self.structural_level_engine = structural_level_engine or StructuralLevelEngine()
         self.broker_spec: BrokerSpec = get_broker_spec(settings.BROKER_SPEC)
+
+    # ------------------------------------------------------------------
+    # Dynamic execution context (the "User Risk Profile")
+    # ------------------------------------------------------------------
+    def resolve_user_risk_profile(
+        self, db: Session, account: VirtualAccount, symbol: str
+    ) -> ExecutionRiskProfile:
+        """Read balance / risk % / lot size / contract value dynamically.
+
+        No numeric literals are baked into execution. Balance comes from the
+        persisted virtual account, risk % from live settings, and lot size plus
+        contract value from the dynamically selected broker profile.
+        """
+        pip_size = self.risk_manager.get_pip_size(symbol)
+        pip_value = self.risk_manager.get_pip_value_per_lot(symbol)
+        if symbol == "XAU/USD":
+            contract_size = self.broker_spec.contract_size
+        else:
+            contract_size = Decimal(str(pip_value / pip_size)) if pip_size > 0 else Decimal("1")
+
+        return ExecutionRiskProfile(
+            balance=float(account.balance),
+            risk_percent=float(settings.MAX_RISK_PERCENT),
+            lot_size=float(self.broker_spec.min_lot),
+            contract_size=contract_size,
+            pip_size=pip_size,
+            pip_value_per_lot=pip_value,
+            broker_profile=self.broker_spec.name,
+            symbol=symbol,
+        )
+
+    def _load_entry_timeframe_candles(
+        self, db: Session, symbol: str, timeframe: str, limit: int = 200
+    ) -> List[Candle]:
+        """Load closed candles for the ENTRY timeframe only.
+
+        This is the strict timeframe lock: a 15m entry queries only 15m candles.
+        1H/4H data is never fetched here, so HTF structure cannot leak into SL/TP.
+        """
+        tf = str(timeframe or "").lower().strip()
+        if not tf:
+            raise ValueError("Cannot resolve structural levels without an entry timeframe.")
+        stmt = (
+            select(Candle)
+            .where(Candle.symbol == symbol, Candle.timeframe == tf)
+            .order_by(desc(Candle.timestamp))
+            .limit(limit)
+        )
+        candles = list(db.scalars(stmt).all())
+        candles.reverse()
+        return filter_closed_candles(candles, timeframe=tf)
+
+    def resolve_signal_levels(
+        self,
+        db: Session,
+        signal: Signal,
+        entry_price: float,
+        timeframe: str,
+        pip_size: float,
+    ) -> StructuralLevels:
+        """Resolve SL/TP from the signal's own timeframe candles only."""
+        candles = self._load_entry_timeframe_candles(
+            db, symbol=signal.symbol, timeframe=timeframe
+        )
+        if not candles:
+            raise ValueError(
+                f"No closed {timeframe} candles available for {signal.symbol}; "
+                "cannot place a timeframe-locked structural stop."
+            )
+        return self.structural_level_engine.resolve(
+            candles=candles,
+            direction=signal.direction,
+            entry_price=entry_price,
+            timeframe=timeframe,
+            pip_size=pip_size,
+        )
 
     def get_latest_market_price(self, db: Session, symbol: str) -> float:
         """Fetch the most recent closing price for a symbol from database."""
@@ -176,18 +281,17 @@ class PaperOrderExecutor:
         db: Session,
         signal: Signal,
         current_price: float,
+        *,
+        stop_loss: Optional[float] = None,
+        take_profit_1: Optional[float] = None,
     ) -> None:
         """Run pre-execution staleness and live-price invalidation gates.
 
-        Raises ValueError with a descriptive message if the signal is stale or
-        if the live market price has already moved past the signal's SL/TP,
-        preventing a guaranteed-loss order from being placed.
-
-        Args:
-            db: Active SQLAlchemy session (unused but kept for future real-time
-                provider injection without breaking the method signature).
-            signal: The DB Signal record to be executed.
-            current_price: Live market price fetched immediately before this call.
+        Stops are never rejected for being too wide: wide structural stops are
+        expected and are fully supported by the fixed 0.01 lot. Callers that
+        re-derive the entry-timeframe SL/TP pass them in so validation uses the
+        freshly resolved levels instead of the signal's stored (possibly HTF)
+        levels.
 
         Raises:
             ValueError: If the signal is too old or price has invalidated the setup.
@@ -244,37 +348,18 @@ class PaperOrderExecutor:
 
         # ------------------------------------------------------------------
         # Gate 2 — Live Market Price Invalidation
+        #
+        # Uses the freshly resolved entry-timeframe levels when supplied. There
+        # is intentionally NO SL-distance guard: lot size is fixed, so a wide
+        # structural stop cannot blow position sizing and must not be rejected.
         # ------------------------------------------------------------------
         direction = (signal.direction or "").upper()
-        sl = signal.stop_loss
-        tp = signal.take_profit_1
+        sl = stop_loss if stop_loss is not None else signal.stop_loss
+        tp = take_profit_1 if take_profit_1 is not None else signal.take_profit_1
 
         if sl is None or tp is None:
-            # Cannot validate without risk levels; skip gate (risk manager will
-            # calculate them during execution — at least staleness was checked).
+            # Cannot validate without risk levels; staleness was still checked.
             return
-
-        # ------------------------------------------------------------------
-        # Gate 3 — Minimum SL Distance Guard
-        #
-        # If the live market price has drifted to within 1 pip of the signal's
-        # Stop Loss, the position sizing formula (Risk / SL_distance) will
-        # produce an astronomically large unit count, blowing the margin.  This
-        # catches the case where staleness has closed the price-to-SL gap to
-        # near-zero without fully crossing the SL level.
-        # ------------------------------------------------------------------
-        MIN_SL_DISTANCE_PIPS = 0.0001  # 1 pip minimum clearance
-        sl_distance = abs(current_price - sl)
-        if sl_distance < MIN_SL_DISTANCE_PIPS:
-            msg = (
-                f"DEGENERATE SETUP REJECTED: Signal #{signal.id} for "
-                f"{signal.symbol} [{signal.timeframe}] — live price "
-                f"{current_price:.5f} is within {sl_distance:.5f} of Stop Loss "
-                f"{sl:.5f} (minimum clearance: {MIN_SL_DISTANCE_PIPS} pips). "
-                "Position sizing would produce infinite units; execution aborted."
-            )
-            logger.warning(msg)
-            raise ValueError(msg)
 
         if direction == "SELL":
             # For a SELL setup the SL is above entry and TP is below entry.
@@ -324,53 +409,6 @@ class PaperOrderExecutor:
                 logger.warning(msg)
                 raise ValueError(msg)
 
-    def _lots_for_risk_budget(
-        self,
-        raw_lots: Decimal,
-        symbol: str,
-        *,
-        stop_points: Optional[float] = None,
-        pip_size: Optional[float] = None,
-        budget: Optional[float] = None,
-        risk_percent: Optional[float] = None,
-        balance: Optional[float] = None,
-        contract_size: Optional[Decimal] = None,
-        entry: Optional[float] = None,
-        stop_loss: Optional[float] = None,
-    ) -> float:
-        """Floor raw lots onto the broker grid; reject if below the broker min lot.
-
-        Uses Decimal throughout — no float floor — so the invariant
-        lots * contract_size * distance <= risk_usd always holds.
-        """
-        spec = self.broker_spec
-        lots = spec.floor_lots(min(raw_lots, Decimal(str(MAX_LOT_SIZE))))
-        if lots < spec.min_lot:
-            stop_pips = (
-                stop_points / pip_size
-                if stop_points is not None and pip_size and pip_size > 0
-                else None
-            )
-            error = InsufficientRiskBudgetError(
-                raw_lots,
-                spec.min_lot,
-                contract_size=contract_size or spec.contract_size,
-                stop_points=stop_points,
-                stop_pips=stop_pips,
-                budget=budget,
-                per_point_risk=float(spec.min_lot * (contract_size or spec.contract_size)),
-                risk_percent=risk_percent,
-                balance=balance,
-                symbol=symbol,
-                entry=entry,
-                stop_loss=stop_loss,
-                volume_step=spec.lot_step,
-                executable_lots=lots,
-            )
-            logger.warning(f"{error}")
-            raise error
-        return float(lots)
-
     def execute_order(
         self,
         db: Session,
@@ -389,15 +427,6 @@ class PaperOrderExecutor:
         # 2. Resolve Market Price
         mkt_price = current_market_price or self.get_latest_market_price(db, order.symbol)
         pip_size = self.risk_manager.get_pip_size(order.symbol)
-        # BrokerSpec profiles are XAU/USD profiles. For any legacy non-XAU
-        # instrument, retain the instrument-derived contract (pip value / pip size)
-        # so existing behaviour is unchanged.
-        if order.symbol == "XAU/USD":
-            contract_size = self.broker_spec.contract_size
-        else:
-            contract_size = Decimal(
-                str(self.risk_manager.get_pip_value_per_lot(order.symbol) / pip_size)
-            )
         order_type = order.order_type.upper().strip()
 
         # 3. Determine Entry Price
@@ -424,22 +453,41 @@ class PaperOrderExecutor:
         tp1 = order.take_profit_1
         tp2 = order.take_profit_2
 
-        if status == "OPEN" and not tp1 and not tp2:
+        if not order.dynamic_tp_from_sl and status == "OPEN" and not tp1 and not tp2:
             raise ValueError(
                 "Unmanaged position rejected: at least one take-profit target is required."
             )
 
-        if not sl or not tp1:
-            risk_res = self.risk_manager.calculate_trade_risk(
-                symbol=order.symbol,
-                direction=order.direction,
-                entry_price=exec_entry,
-                account_balance=account.balance,
-                risk_percent=order.risk_percent or settings.MAX_RISK_PERCENT,
+        if order.dynamic_tp_from_sl:
+            # Signal execution: the SL was derived from the entry-timeframe
+            # structure. Derive the final TP from the ACTUAL fill price so the
+            # 1:3 geometry is exact, with no HTF input and no SL-distance gate.
+            if sl is None:
+                raise ValueError("Dynamic TP requires a resolved structural stop loss.")
+            sl_distance = abs(exec_entry - sl)
+            if sl_distance <= 0:
+                raise ValueError("Invalid stop distance: entry and stop loss are equal.")
+            rr = float(settings.MIN_RR_TP1)
+            tp_distance = sl_distance * rr
+            tp1 = round(
+                exec_entry + tp_distance
+                if order.direction == SignalDirection.BUY
+                else exec_entry - tp_distance,
+                5,
             )
-            sl = sl or risk_res.stop_loss
-            tp1 = tp1 or risk_res.take_profit_1
-            tp2 = tp2 or risk_res.take_profit_2
+            tp2 = None  # one final 3R target
+        else:
+            if not sl or not tp1:
+                risk_res = self.risk_manager.calculate_trade_risk(
+                    symbol=order.symbol,
+                    direction=order.direction,
+                    entry_price=exec_entry,
+                    account_balance=account.balance,
+                    risk_percent=order.risk_percent or settings.MAX_RISK_PERCENT,
+                )
+                sl = sl or risk_res.stop_loss
+                tp1 = tp1 or risk_res.take_profit_1
+                tp2 = tp2 or risk_res.take_profit_2
 
         if status == "OPEN" and (sl is None or (tp1 is None and tp2 is None)):
             raise ValueError(
@@ -447,48 +495,30 @@ class PaperOrderExecutor:
                 "target are required."
             )
 
-        # Broker-spec sizing from the resolved price distance (Decimal, no float floor).
-        risk_pct = order.risk_percent or settings.MAX_RISK_PERCENT
-        distance = abs(exec_entry - sl)
-        if distance <= 0:
-            raise ValueError("Invalid stop distance: entry and stop loss are equal.")
-        risk_usd = account.balance * (risk_pct / 100.0)
-        raw_lots = (
-            Decimal(str(account.balance))
-            * (Decimal(str(risk_pct)) / Decimal("100"))
-            / (Decimal(str(distance)) * contract_size)
-        )
-
+        # 5. Dynamic User Risk Profile — fixed lot, no SL-distance sizing.
+        profile = self.resolve_user_risk_profile(db, account, order.symbol)
+        distance = abs(exec_entry - sl) if sl is not None else 0.0
         if order.position_size is not None:
             # Explicit operator override (manual order) — honour it, floored to grid.
             lots = float(self.broker_spec.floor_lots(Decimal(str(order.position_size))))
         else:
-            # Auto-sizing from the signal: reject rather than force the min lot.
-            lots = self._lots_for_risk_budget(
-                raw_lots,
-                order.symbol,
-                stop_points=distance,
-                pip_size=pip_size,
-                budget=risk_usd,
-                risk_percent=risk_pct,
-                balance=account.balance,
-                contract_size=contract_size,
-                entry=exec_entry,
-                stop_loss=sl,
-            )
-        lots = max(float(self.broker_spec.min_lot), min(MAX_LOT_SIZE, lots))
+            # Signals always execute the profile's fixed lot (0.01 by default).
+            # Wide structural stops are accepted; they are never a rejection reason.
+            lots = profile.lot_size
+        lots = max(float(self.broker_spec.min_lot), min(float(settings.MAX_LOT_SIZE), lots))
 
         actual_risk_usd = float(
-            Decimal(str(lots)) * contract_size * Decimal(str(distance))
+            Decimal(str(lots)) * profile.contract_size * Decimal(str(distance))
         )
-        actual_risk_pct = (actual_risk_usd / account.balance * 100.0) if account.balance else 0.0
+        actual_risk_pct = (actual_risk_usd / profile.balance * 100.0) if profile.balance else 0.0
         logger.info(
-            f"PAPER SIZING [{self.broker_spec.name}] {order.symbol}: "
-            f"distance={distance:.5f} lots={lots:.4f} "
-            f"risk=${actual_risk_usd:.2f} ({actual_risk_pct:.2f}%) budget=${risk_usd:.2f}"
+            f"PAPER SIZING [{profile.broker_profile}] {order.symbol}: "
+            f"distance={distance:.5f} fixed_lot={lots:.4f} "
+            f"risk=${actual_risk_usd:.2f} ({actual_risk_pct:.2f}%) "
+            f"budget=${profile.risk_budget_usd:.2f} rr={settings.MIN_RR_TP1}"
         )
 
-        # 5. Margin Validation
+        # 6. Margin Validation
         req_margin = self.account_manager.calculate_required_margin(
             symbol=order.symbol,
             lots=lots,
@@ -503,7 +533,7 @@ class PaperOrderExecutor:
 
         margin_allocated = req_margin if status == "OPEN" else 0.0
 
-        # 6. Save Paper Position to DB
+        # 7. Save Paper Position to DB
         now = datetime.now(timezone.utc)
         paper_trade = PaperTrade(
             account_id=account.id,
@@ -533,7 +563,7 @@ class PaperOrderExecutor:
         db.commit()
         db.refresh(paper_trade)
 
-        # 7. Update Account Financials
+        # 8. Update Account Financials
         self.account_manager.recalculate_account_financials(db, account)
 
         logger.info(
@@ -549,15 +579,15 @@ class PaperOrderExecutor:
     ) -> PaperTrade:
         """Convert a trading signal into an active virtual position.
 
-        Executes two pre-flight validation gates before placing any order:
-          1. Timestamp Staleness Gate — signal must be younger than one full bar
-             of its timeframe (e.g. < 15 min old for a 15m signal).
-          2. Live Price Invalidation Gate — the current market price must still
-             be within the signal's SL/TP corridor. If price has already moved
-             past the SL or reached the TP, the order is aborted.
+        Execution contract:
+          * SL is re-derived from candles of the signal's OWN timeframe only
+            (15m signal -> 15m swing/order block; never 1H or 4H).
+          * TP is placed exactly 1:3 away from the fill price.
+          * Lot size is the fixed value from the dynamic User Risk Profile.
+          * Wide structural stops are never a rejection reason.
 
-        These gates prevent the class of 0-second SL_HIT losses caused by
-        executing stale scanner outputs against a market that has already moved.
+        Two pre-flight gates remain: timestamp staleness and live-price
+        invalidation, both evaluated against the freshly resolved levels.
         """
         target_signal: Optional[Signal] = None
 
@@ -604,13 +634,44 @@ class PaperOrderExecutor:
         #    signal-generation time and may be 15–60 minutes stale.
         live_price = self.get_latest_market_price(db, target_signal.symbol)
 
-        # 3. Pre-Execution Validation Gates (staleness + live price invalidation).
-        #    Raises ValueError with a descriptive message if the signal is invalid;
-        #    the caller (scanner) should catch and log, but NOT place the order.
+        # 3. STRICT ENTRY-TIMEFRAME LOCK.
+        #    The persisted signal's timeframe is authoritative. A 15m signal can
+        #    only ever see 15m candles here: no 1H/4H query, no HTF structure, no
+        #    stored HTF-derived SL/TP. The client-supplied timeframe is ignored.
+        entry_timeframe = (
+            str(target_signal.timeframe or request.timeframe or "15m").lower().strip()
+        )
+        pip_size = self.risk_manager.get_pip_size(target_signal.symbol)
+        levels = self.resolve_signal_levels(
+            db=db,
+            signal=target_signal,
+            entry_price=live_price,
+            timeframe=entry_timeframe,
+            pip_size=pip_size,
+        )
+        logger.info(
+            f"STRUCTURAL LEVELS [{entry_timeframe}] Signal #{target_signal.id} "
+            f"{target_signal.symbol} {levels.direction}: "
+            f"entry={levels.entry_price:.5f} SL={levels.stop_loss:.5f} "
+            f"({levels.source}) sl_dist={levels.sl_distance:.5f} "
+            f"TP={levels.take_profit_1:.5f} RR={levels.rr_multiple}"
+        )
+
+        # Provisional TP for the live-price gate. execute_order re-derives the
+        # final TP from the exact fill price so the 1:3 distance is exact.
+        rr = float(settings.MIN_RR_TP1)
+        provisional_tp = round(
+            live_price + levels.sl_distance * rr
+            if levels.direction == "BUY"
+            else live_price - levels.sl_distance * rr,
+            5,
+        )
         self.validate_signal_before_execution(
             db=db,
             signal=target_signal,
             current_price=live_price,
+            stop_loss=levels.stop_loss,
+            take_profit_1=provisional_tp,
         )
 
         # Log advisory warning if present on the signal without raising an exception
@@ -629,11 +690,10 @@ class PaperOrderExecutor:
             direction=SignalDirection(target_signal.direction),
             order_type="MARKET",
             risk_percent=request.risk_percent,
-            stop_loss=target_signal.stop_loss,
-            take_profit_1=target_signal.take_profit_1,
-            take_profit_2=target_signal.take_profit_2,
+            stop_loss=levels.stop_loss,
+            dynamic_tp_from_sl=True,
             signal_id=target_signal.id,
         )
 
-        # 4. Execute at live market price (NOT the stale signal entry price).
+        # 4. Execute at live market price with the fixed profile lot (0.01).
         return self.execute_order(db=db, order=order, current_market_price=live_price)

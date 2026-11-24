@@ -60,6 +60,11 @@ class Settings(BaseSettings):
         default="exness_standard_xauusd",
         description="Paper-trading broker lot specification profile",
     )
+    MAX_LOT_SIZE: float = Field(
+        default=100.0,
+        ge=0.01,
+        description="Upper lot bound for paper execution (config-driven, never hardcoded at call sites)",
+    )
     MAX_RISK_PERCENT: float = Field(
         default=5.0,
         ge=0.1,

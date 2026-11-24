@@ -10,10 +10,7 @@ from app.models.candle import Candle
 from app.schemas.paper_trading import PaperOrderCreate
 from app.schemas.signal import RiskParameters, SignalDirection
 from app.services.paper_trading.broker_spec import get_broker_spec
-from app.services.paper_trading.order_executor import (
-    InsufficientRiskBudgetError,
-    PaperOrderExecutor,
-)
+from app.services.paper_trading.order_executor import PaperOrderExecutor
 from app.services.paper_trading.paper_service import PaperTradingService
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.signals import RiskManager
@@ -77,13 +74,15 @@ def test_a_valid_min_lot_execution(test_db_session):
 
 
 # ---------------------------------------------------------------- B
-def test_b_min_lot_exceeds_budget_rejected(test_db_session):
+def test_b_min_lot_is_executed_regardless_of_budget(test_db_session):
+    """Wide stops execute at the fixed profile lot; they are never rejected."""
     _account(test_db_session, 200.0)
     _seed(test_db_session)
-    with pytest.raises(InsufficientRiskBudgetError):
-        PaperOrderExecutor().execute_order(
-            test_db_session, _order(30.38), current_market_price=MARKET
-        )
+    trade = PaperOrderExecutor().execute_order(
+        test_db_session, _order(30.38), current_market_price=MARKET
+    )
+    assert trade.status == "OPEN"
+    assert trade.initial_position_size == pytest.approx(0.01)
 
     rp = RiskManager().calculate_trade_risk(
         symbol="XAU/USD", direction=SignalDirection.BUY,

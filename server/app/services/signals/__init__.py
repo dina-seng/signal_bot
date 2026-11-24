@@ -13,6 +13,7 @@ from app.services.signals.path_validator import PathValidator
 from app.services.signals.risk_manager import RiskManager
 from app.services.signals.scoring_engine import SignalScoringEngine
 from app.services.signals.signal_generator import SignalGenerator
+from app.services.signals.structural_levels import StructuralLevelEngine, StructuralLevels
 from app.services.strategies import StrategyManager
 
 __all__ = [
@@ -28,5 +29,7 @@ __all__ = [
     "SignalScoringEngine",
     "StrategyManager",
     "StructureConsensusEvaluator",
+    "StructuralLevelEngine",
+    "StructuralLevels",
 ]
 

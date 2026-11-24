@@ -406,7 +406,16 @@ async function fetchWithTiming<T>(url: string, options: RequestInit = {}, timeou
     const durationMs = Math.round(performance.now() - start);
 
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      // Surface the backend `detail` so operators see the real rejection reason
+      // (e.g. staleness, no 15m candles) instead of a generic "Bad Request".
+      let detail = '';
+      try {
+        const body = await res.json();
+        detail = typeof body?.detail === 'string' ? body.detail : JSON.stringify(body?.detail ?? body);
+      } catch {
+        detail = res.statusText;
+      }
+      throw new Error(`HTTP ${res.status}: ${detail || res.statusText}`);
     }
 
     const data = await res.json();

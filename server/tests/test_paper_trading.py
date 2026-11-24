@@ -1,7 +1,7 @@
 """Unit tests for Virtual Account, Paper Order Execution, Position Management, and SL/TP Monitoring."""
 
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.models.candle import Candle
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
@@ -35,6 +35,23 @@ def _seed_candle(db, symbol="EUR/USD", close=1.1000):
         volume=100.0,
     )
     db.add(c)
+    db.commit()
+
+
+def _seed_closed_series(db, symbol, prices, timeframe="1h"):
+    """Seed fully closed OHLC candles (oldest first) for structural SL tests."""
+    now = datetime.now(timezone.utc)
+    for i, (close, high, low) in enumerate(prices):
+        db.add(Candle(
+            symbol=symbol,
+            timeframe=timeframe,
+            timestamp=now - timedelta(hours=len(prices) - i),
+            open=close,
+            high=high,
+            low=low,
+            close=close,
+            volume=100.0,
+        ))
     db.commit()
 
 
@@ -114,8 +131,16 @@ def test_paper_order_insufficient_margin(test_db_session):
 
 
 def test_paper_trade_from_signal(test_db_session):
-    """Test converting a Signal database record into an active virtual position."""
-    _seed_candle(test_db_session, symbol="GBP/USD", close=1.3000)
+    """Signal execution uses the signal-timeframe structure and a 1:3 TP."""
+    _seed_closed_series(test_db_session, "GBP/USD", [
+        (1.2990, 1.3000, 1.2985),
+        (1.2995, 1.3002, 1.2988),
+        (1.2980, 1.2995, 1.2975),  # structural swing low
+        (1.2990, 1.3000, 1.2982),
+        (1.3000, 1.3008, 1.2992),
+        (1.3005, 1.3010, 1.2998),
+        (1.3000, 1.3006, 1.2995),
+    ])
     service = PaperTradingService()
 
     sig = Signal(
@@ -124,7 +149,7 @@ def test_paper_trade_from_signal(test_db_session):
         direction="BUY",
         setup_score=85.0,
         entry_price=1.3000,
-        stop_loss=1.2950,
+        stop_loss=1.2950,  # deliberately stale/wide — must be overridden
         take_profit_1=1.3100,
         take_profit_2=1.3150,
         risk_reward=2.0,
@@ -142,8 +167,11 @@ def test_paper_trade_from_signal(test_db_session):
     assert trade.direction == SignalDirection.BUY
     assert trade.signal_id == sig.id
     assert trade.status == "OPEN"
-    assert trade.stop_loss == 1.2950
-    assert trade.take_profit_1 == 1.3100
+    # SL comes from the closed 1h swing low, never the persisted signal SL.
+    assert trade.stop_loss == pytest.approx(1.2975)
+    assert trade.initial_position_size == pytest.approx(0.01)
+    sl_distance = abs(trade.entry_price - trade.stop_loss)
+    assert abs(trade.take_profit_1 - trade.entry_price) == pytest.approx(sl_distance * 3, abs=1e-5)
 
 
 # -------------------------------------------------------------
@@ -243,23 +271,24 @@ def _small_account(db, balance=214.20):
     return account
 
 
-def test_wide_stop_is_rejected_when_risk_budget_cannot_fund_min_lot(test_db_session):
-    """$214.20 / 0.5% / 77-point stop -> raw lots ~0.0001 -> REJECT, no position."""
-    from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
-
+def test_wide_stop_is_accepted_at_fixed_min_lot(test_db_session):
+    """A wide structural stop is never a rejection reason: fixed 0.01 lot applies."""
     _small_account(test_db_session)
     _seed_candle(test_db_session, symbol="XAU/USD", close=3592.79)
 
     order = PaperOrderCreate(
         symbol="XAU/USD", direction=SignalDirection.BUY, order_type="MARKET",
         stop_loss=3515.43, take_profit_1=3633.89, risk_percent=0.5,
+        dynamic_tp_from_sl=True,
     )
-    with pytest.raises(InsufficientRiskBudgetError, match="Risk budget insufficient"):
-        PaperOrderExecutor().execute_order(
-            test_db_session, order, current_market_price=3592.79
-        )
+    trade = PaperOrderExecutor().execute_order(
+        test_db_session, order, current_market_price=3592.79
+    )
 
-    assert test_db_session.query(PaperTrade).filter_by(symbol="XAU/USD").count() == 0
+    assert trade.status == "OPEN"
+    assert trade.initial_position_size == pytest.approx(0.01)
+    sl_distance = abs(trade.entry_price - trade.stop_loss)
+    assert abs(trade.take_profit_1 - trade.entry_price) == pytest.approx(sl_distance * 3, abs=1e-5)
 
 
 def test_small_stop_is_accepted_with_risk_compliant_lot(test_db_session):
@@ -306,10 +335,9 @@ def test_option_c_affordable_stop_accepted_at_min_lot(test_db_session, monkeypat
     assert realized_risk <= budget
 
 
-def test_option_c_wide_stop_rejected_with_affordability_hints(test_db_session, monkeypatch):
-    """A 20-point stop on $214.20 at 5% is rejected with both capital levers shown."""
+def test_option_c_wide_stop_accepted_with_fixed_profile_lot(test_db_session, monkeypatch):
+    """A 20-point stop on a small account executes at the profile's fixed lot."""
     from app.core.config import settings
-    from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
 
     monkeypatch.setattr(settings, "MAX_RISK_PERCENT", 5.0)
     _small_account(test_db_session, 214.20)
@@ -319,14 +347,9 @@ def test_option_c_wide_stop_rejected_with_affordability_hints(test_db_session, m
         symbol="XAU/USD", direction=SignalDirection.BUY, order_type="MARKET",
         stop_loss=3572.79, take_profit_1=3632.79, risk_percent=5.0,
     )
-    with pytest.raises(InsufficientRiskBudgetError) as exc:
-        PaperOrderExecutor().execute_order(
-            test_db_session, order, current_market_price=3592.79
-        )
+    trade = PaperOrderExecutor().execute_order(
+        test_db_session, order, current_market_price=3592.79
+    )
 
-    message = str(exc.value)
-    assert "Max affordable stop" in message
-    assert "Balance needed for this stop" in message
-    assert "pips" in message
-    assert exc.value.max_affordable_points is not None
-    assert exc.value.required_balance > 214.20
+    assert trade.status == "OPEN"
+    assert trade.initial_position_size == pytest.approx(0.01)

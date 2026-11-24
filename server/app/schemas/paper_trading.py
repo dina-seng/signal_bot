@@ -57,10 +57,14 @@ class PaperOrderCreate(BaseModel):
     target_entry_price: Optional[float] = Field(default=None, description="Target price for LIMIT/STOP orders")
     position_size: Optional[float] = Field(default=None, ge=0.01, le=100.0, description="Lots. If None, auto-calculated via risk_percent")
     risk_percent: Optional[float] = Field(default=None, ge=0.01, le=10.0, description="Risk % of account equity; defaults to settings.MAX_RISK_PERCENT")
-    stop_loss: Optional[float] = Field(default=None, description="Stop loss price")
+    stop_loss: Optional[float] = Field(default=None, description="Stop loss price (entry-timeframe structural level for signal trades)")
     take_profit_1: Optional[float] = Field(default=None, description="Take profit 1 price (2.0 R:R default)")
     take_profit_2: Optional[float] = Field(default=None, description="Take profit 2 price (3.0 R:R default)")
     signal_id: Optional[int] = Field(default=None, description="Linked signal ID if triggered from signal engine")
+    dynamic_tp_from_sl: bool = Field(
+        default=False,
+        description="When True, derive TP from the resolved SL distance at the exact fill price using the configured RR (1:3).",
+    )
 
 
 class PaperTradeResponse(BaseModel):

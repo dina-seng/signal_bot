@@ -43,6 +43,7 @@ from app.services.signals.evaluators import (
 )
 from app.services.signals.path_validator import PathValidator
 from app.services.signals.risk_manager import RiskManager
+from app.services.signals.structural_levels import StructuralLevelEngine
 from app.services.structure import MultiTimeframeStructureEngine
 from app.services.strategies.base import StrategyResult
 
@@ -77,6 +78,7 @@ class ConfluenceEngine:
         self.indicator_service = indicator_service or IndicatorService()
         self.news_filter = news_filter or NewsFilterEngine()
         self.risk_manager = risk_manager or RiskManager()
+        self.structural_level_engine = StructuralLevelEngine()
         self.path_validator = PathValidator()
         self.min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
 
@@ -341,107 +343,74 @@ class ConfluenceEngine:
         reasons = list(result.reasons)  # Mutable copy for path validation notes
         warnings: List[str] = []
 
-        # 7. Risk Management & SMC Geometric Levels + PATH VALIDATION
+        # 7. Risk Management — ENTRY-TIMEFRAME-LOCKED structural SL + dynamic 1:3 TP
         risk_params: Optional[RiskParameters] = None
 
         if direction in (SignalDirection.BUY, SignalDirection.SELL):
-            # Check if strategy supplied specific custom risk levels (e.g. dynamic SL/TP)
-            custom_sl = result.metadata.get("stop_loss") if result.metadata else None
-            custom_tp1 = result.metadata.get("take_profit_1") if result.metadata else None
+            # Local import avoids a signals <-> paper_trading package import cycle.
+            from app.services.paper_trading.broker_spec import get_broker_spec
 
-            if custom_sl is not None and custom_tp1 is not None and abs(current_price - custom_sl) > 0:
-                pip_size = self.risk_manager.get_pip_size(symbol)
-                risk_price = abs(current_price - custom_sl)
-                risk_pips = round(risk_price / pip_size, 1)
-                reward_pips_tp1 = round(abs(custom_tp1 - current_price) / pip_size, 1)
-                rr_tp1 = round(reward_pips_tp1 / max(1e-6, risk_pips), 2)
-                custom_tp2 = (result.metadata.get("take_profit_2") if result.metadata else None) or (
-                    current_price + (custom_tp1 - current_price) * (2.5 / 1.5)
-                )
-                reward_pips_tp2 = round(abs(custom_tp2 - current_price) / pip_size, 1)
-                rr_tp2 = round(reward_pips_tp2 / max(1e-6, risk_pips), 2)
+            pip_size = self.risk_manager.get_pip_size(symbol)
+            result_meta = result.metadata or {}
+            limit_entry = result_meta.get("ideal_entry")
+            resolved_entry = (
+                float(limit_entry)
+                if result_meta.get("entry_mode") == "limit_zone" and limit_entry
+                else current_price
+            )
 
-                # Local import avoids a signals <-> paper_trading package import cycle.
-                from app.services.paper_trading.broker_spec import get_broker_spec
+            # `structure_analysis` is computed from candles_primary — the SAME
+            # timeframe as the signal. 1H/4H data is never consulted here.
+            base_structure = getattr(structure_analysis, "base_structure", None)
+            levels = self.structural_level_engine.resolve(
+                candles=[],
+                swings=getattr(base_structure, "swing_points", None) or [],
+                direction=direction,
+                entry_price=resolved_entry,
+                timeframe=timeframe,
+                pip_size=pip_size,
+            )
 
-                risk_pct = risk_percent or settings.MAX_RISK_PERCENT
-                risk_amount_usd = round(account_balance * (risk_pct / 100.0), 2)
-                pip_val = self.risk_manager.get_pip_value_per_lot(symbol)
-                spec = get_broker_spec(settings.BROKER_SPEC)
-                contract = (
-                    Decimal(str(spec.contract_size))
-                    if symbol.replace("%2F", "/").strip().upper() == "XAU/USD"
-                    else Decimal(str(pip_val / pip_size))
-                )
-                raw_lots = (
-                    Decimal(str(risk_amount_usd))
-                    / (Decimal(str(risk_price)) * contract)
-                    if risk_price > 0
-                    else Decimal("0")
-                )
-                executable = spec.floor_lots(raw_lots)
-                is_executable = executable >= spec.min_lot
-                suggested_lots = float(executable) if is_executable else 0.0
-                min_lot_risk_usd = float(spec.min_lot * contract * Decimal(str(risk_price)))
+            risk_pct = risk_percent or settings.MAX_RISK_PERCENT
+            risk_amount_usd = round(account_balance * (risk_pct / 100.0), 2)
+            pip_val = self.risk_manager.get_pip_value_per_lot(symbol)
+            spec = get_broker_spec(settings.BROKER_SPEC)
+            contract = (
+                Decimal(str(spec.contract_size))
+                if symbol.replace("%2F", "/").strip().upper() == "XAU/USD"
+                else Decimal(str(pip_val / pip_size))
+            )
+            risk_price = levels.sl_distance
+            risk_pips = round(risk_price / pip_size, 1)
+            reward_pips_tp1 = round(abs(levels.take_profit_1 - resolved_entry) / pip_size, 1)
+            rr_tp1 = round(levels.rr_multiple, 2)
 
-                # Limit-zone setups are executable at the planned limit price,
-                # not at the current market price. Keep market-mode behaviour.
-                result_meta = result.metadata or {}
-                limit_entry = result_meta.get("ideal_entry")
-                resolved_entry = (
-                    float(limit_entry)
-                    if result_meta.get("entry_mode") == "limit_zone" and limit_entry
-                    else current_price
-                )
+            # Fixed lot from the dynamic profile; never derived from SL distance
+            # and never a reason to reject a signal.
+            fixed_lot = float(spec.min_lot)
+            min_lot_risk_usd = float(spec.min_lot * contract * Decimal(str(risk_price)))
 
-                risk_params = RiskParameters(
-                    entry_price=round(resolved_entry, 5),
-                    stop_loss=round(custom_sl, 5),
-                    take_profit_1=round(custom_tp1, 5),
-                    take_profit_2=round(custom_tp2, 5),
-                    risk_pips=risk_pips,
-                    reward_pips_tp1=reward_pips_tp1,
-                    reward_pips_tp2=reward_pips_tp2,
-                    risk_reward_tp1=rr_tp1,
-                    risk_reward_tp2=rr_tp2,
-                    account_balance=account_balance,
-                    risk_percent=risk_pct,
-                    risk_amount_usd=risk_amount_usd,
-                    suggested_lot_size=suggested_lots,
-                    raw_lot_size=float(raw_lots),
-                    is_executable=is_executable,
-                    min_lot_risk_usd=min_lot_risk_usd,
-                    volume_step=float(spec.lot_step),
-                )
-            else:
-                supp_low = structure_analysis.base_structure.key_support
-                res_high = structure_analysis.base_structure.key_resistance
+            risk_params = RiskParameters(
+                entry_price=round(resolved_entry, 5),
+                stop_loss=levels.stop_loss,
+                take_profit_1=levels.take_profit_1,
+                take_profit_2=levels.take_profit_2,
+                risk_pips=risk_pips,
+                reward_pips_tp1=reward_pips_tp1,
+                reward_pips_tp2=reward_pips_tp1,
+                risk_reward_tp1=rr_tp1,
+                risk_reward_tp2=rr_tp1,
+                account_balance=account_balance,
+                risk_percent=risk_pct,
+                risk_amount_usd=risk_amount_usd,
+                suggested_lot_size=fixed_lot,
+                raw_lot_size=fixed_lot,
+                is_executable=True,
+                min_lot_risk_usd=min_lot_risk_usd,
+                volume_step=float(spec.lot_step),
+            )
 
-                # A. Calculate Initial Risk
-                risk_params = self.risk_manager.calculate_trade_risk(
-                    symbol=symbol,
-                    direction=direction,
-                    entry_price=current_price,
-                    atr_value=indicator_analysis.atr.atr_value,
-                    key_support_low=supp_low,
-                    key_resistance_high=res_high,
-                    account_balance=account_balance,
-                    risk_percent=risk_percent,
-                )
-
-
-            # B. Small Account Rejection Check
-            if risk_params.is_executable is False or (
-                risk_params.is_executable is None and risk_params.suggested_lot_size <= 0
-            ):
-                logger.warning(f"Trade REJECTED for {symbol}: Insufficient balance for safe position sizing.")
-                direction = SignalDirection.WAIT
-                reasons = [
-                    "❌ INSUFFICIENT BALANCE: Account is too small to safely trade this setup at minimum lot size.",
-                    "Action: Awaiting larger account balance or lower volatility setup."
-                ]
-                risk_params = None
-            else:
+            if risk_params is not None:
                 # C. 🗺️ PATH VALIDATION (Informational Advisory Warning System)
                 sr_zones = getattr(structure_analysis, 'sr_zones', [])
                 liquidity_pools = getattr(structure_analysis, 'liquidity_pools', [])

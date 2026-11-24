@@ -1,10 +1,11 @@
 """Test Suite for Data Integrity, Deduplication, and Normalization."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
 from app.core.database import SessionLocal, init_db
+from app.models.candle import Candle
 from app.core.normalization import (
     normalize_symbol,
     normalize_timeframe,
@@ -97,6 +98,15 @@ def test_paper_trade_idempotency_from_signal(test_db_session):
     """Verify that open_trade_from_signal is idempotent and prevents duplicate paper trades."""
     executor = PaperOrderExecutor()
     now = datetime.now(timezone.utc)
+
+    # Seed closed 1h candles: execution derives the SL from the signal timeframe.
+    for i in range(7):
+        test_db_session.add(Candle(
+            symbol="EUR/USD", timeframe="1h",
+            timestamp=now - timedelta(hours=7 - i),
+            open=1.1040, high=1.1060, low=1.1020, close=1.1050, volume=100.0,
+        ))
+    test_db_session.commit()
 
     # Create a test signal
     sig = Signal(
