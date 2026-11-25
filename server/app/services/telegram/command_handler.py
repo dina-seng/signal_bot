@@ -1,7 +1,7 @@
 """Interactive Telegram Bot Commands Processor."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
@@ -70,17 +70,59 @@ class TelegramCommandHandler:
                 return sym
         return s
 
+    @staticmethod
+    def _build_login_reply(
+        db: Session, request: TelegramCommandRequest
+    ) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """Shared magic-link flow for /login and the /start login deep link."""
+        telegram_id = request.user_id
+        if telegram_id is None and request.chat_id and str(request.chat_id).lstrip("-").isdigit():
+            telegram_id = int(request.chat_id)
+        if telegram_id is None:
+            return (
+                "⚠️ Could not identify your Telegram account. Try again from a private chat.",
+                None,
+            )
+        try:
+            login_url, ttl = AuthService().create_login_link(
+                db,
+                telegram_id,
+                username=request.user_name,
+                first_name=request.user_first_name,
+            )
+            reply = (
+                "🔐 <b>QuantView Login</b>\n"
+                f"Use the button below within {ttl // 60} minutes to open your "
+                "authenticated dashboard."
+            )
+            markup: Optional[Dict[str, Any]] = {
+                "inline_keyboard": [[{
+                    "text": "🔐 Click here to log in to QuantView",
+                    "url": login_url,
+                }]]
+            }
+            return reply, markup
+        except Exception as exc:
+            logger.error(f"Failed to create login link for {telegram_id}: {exc}")
+            return "❌ Could not create a login link. Please try again.", None
+
     async def handle_command(self, db: Session, request: TelegramCommandRequest) -> TelegramCommandResponse:
         """Parse and execute a Telegram bot command."""
         raw_cmd = request.command.strip()
         parts = raw_cmd.split()
-        cmd_name = parts[0].lower() if parts else "/help"
+        cmd_name = parts[0].lower().split("@")[0] if parts else "/help"
         reply_markup: Optional[Dict[str, Any]] = None
 
         # -------------------------------------------------------------
-        # 1. Help & Start Menu
+        # 1. Help & Start Menu (/start login is the web deep-link payload)
         # -------------------------------------------------------------
-        if cmd_name in ("/start", "/help"):
+        login_payload = (
+            (request.start_parameter or "").strip().lower() == "login"
+            or any(part.strip().lower() == "login" for part in parts[1:])
+        )
+        if cmd_name == "/start" and login_payload:
+            reply, reply_markup = self._build_login_reply(db, request)
+        elif cmd_name in ("/start", "/help"):
             reply = self.formatter.format_help_menu(active_symbols=list(ACTIVE_SYMBOLS))
 
         # -------------------------------------------------------------
@@ -391,35 +433,7 @@ class TelegramCommandHandler:
         # 10. Magic-link dashboard login
         # -------------------------------------------------------------
         elif cmd_name == "/login":
-            telegram_id = request.user_id
-            if telegram_id is None and request.chat_id and str(request.chat_id).lstrip("-").isdigit():
-                telegram_id = int(request.chat_id)
-            if telegram_id is None:
-                reply = "⚠️ Could not identify your Telegram account. Try again from a private chat."
-            else:
-                try:
-                    login_url, ttl = AuthService().create_login_link(
-                        db,
-                        telegram_id,
-                        username=request.user_name,
-                        first_name=getattr(request, "user_first_name", None),
-                    )
-                    reply = (
-                        "🔐 <b>QuantView Login</b>\n"
-                        f"Use the button below within {ttl // 60} minutes to open your "
-                        "authenticated dashboard."
-                    )
-                    reply_markup = {
-                        "inline_keyboard": [[
-                            {
-                                "text": "🔐 Click here to log in to QuantView",
-                                "url": login_url,
-                            }
-                        ]]
-                    }
-                except Exception as exc:
-                    logger.error(f"Failed to create login link for {telegram_id}: {exc}")
-                    reply = "❌ Could not create a login link. Please try again."
+            reply, reply_markup = self._build_login_reply(db, request)
 
         # -------------------------------------------------------------
         # 11. Fallback for Unknown Commands (MUST BE LAST)

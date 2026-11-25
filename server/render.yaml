@@ -16,3 +16,6 @@ services:
       # 2. Ensure this is overridden by your actual Neon URL in the Render Dashboard!
       - key: DATABASE_URL
         sync: false # <-- Add this to prevent Render from overwriting your Dashboard secret
+      # Shared by backend (bot/deep-link config) and frontend build (deep-link button)
+      - key: NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
+        sync: false

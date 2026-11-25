@@ -30,6 +30,7 @@ class TelegramCommandRequest(BaseModel):
     user_id: Optional[int] = None
     user_name: Optional[str] = None
     user_first_name: Optional[str] = None
+    start_parameter: Optional[str] = None
 
 
 class TelegramCommandResponse(BaseModel):

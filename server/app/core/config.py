@@ -202,6 +202,14 @@ class Settings(BaseSettings):
     # Telegram Bot (Milestone 9)
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_CHAT_ID: Optional[str] = None
+    # Username used by the frontend deep link: https://t.me/<username>?start=login
+    TELEGRAM_BOT_USERNAME: str = Field(
+        default="signalTheBEST_bot",
+        validation_alias=AliasChoices(
+            "TELEGRAM_BOT_USERNAME", "NEXT_PUBLIC_TELEGRAM_BOT_USERNAME"
+        ),
+        description="Telegram bot username for the magic-link deep link",
+    )
 
     # User / Presentation Timezone
     # IANA timezone string for formatting Telegram notifications and display (e.g., "Asia/Bangkok", "America/New_York", "Europe/London", "UTC")

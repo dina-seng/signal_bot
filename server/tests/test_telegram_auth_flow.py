@@ -68,6 +68,37 @@ def test_telegram_auth_flow(client, test_db_session, monkeypatch):
     assert replay.status_code == 400
 
 
+def test_start_login_deep_link_uses_same_flow(test_db_session):
+    """The web deep link sends '/start login' and must yield the same magic link."""
+    tg = MockTelegramClient()
+    handler = TelegramCommandHandler(telegram_client=tg)
+
+    reply = asyncio.run(handler.handle_command(
+        db=test_db_session,
+        request=TelegramCommandRequest(
+            command="/start login", chat_id="888", user_id=888,
+            user_name="deeplink", start_parameter="login",
+        ),
+    ))
+
+    assert reply.handled_successfully is True
+    assert "QuantView Login" in reply.reply_text
+    record = tg.sent_messages[-1]
+    login_url = record["reply_markup"]["inline_keyboard"][0][0]["url"]
+    assert "/auth/callback?token=" in login_url
+
+    from app.models.user import LoginToken
+    token_row = test_db_session.query(LoginToken).filter(LoginToken.telegram_id == 888).one_or_none()
+    assert token_row is not None
+
+    # Plain /start still shows the help menu.
+    help_reply = asyncio.run(handler.handle_command(
+        db=test_db_session,
+        request=TelegramCommandRequest(command="/start", chat_id="888", user_id=888),
+    ))
+    assert "/scan" in help_reply.reply_text
+
+
 def test_unauthorized_redirect(client, monkeypatch):
     """Protected APIs answer 401 while public/health/preflight stay reachable."""
     monkeypatch.setattr(settings, "AUTH_ENABLED", True)

@@ -92,12 +92,14 @@ async def telegram_webhook(
         chat = msg.get("chat", {})
         chat_id = str(chat.get("id", ""))
         user = msg.get("from", {})
+        start_parameter = msg.get("start_parameter")
     else:
         # Pydantic model - access attributes directly
         text = getattr(msg, "text", "") or ""
         chat = getattr(msg, "chat", None)
         chat_id = str(getattr(chat, "id", "")) if chat else ""
         user = getattr(msg, "from_user", None) or getattr(msg, "from_", None)
+        start_parameter = getattr(msg, "start_parameter", None)
 
     logger.info(f"📩 Message from chat {chat_id}: {text}")
 
@@ -117,6 +119,7 @@ async def telegram_webhook(
             user_id=_extract("id"),
             user_name=_extract("username"),
             user_first_name=_extract("first_name"),
+            start_parameter=start_parameter,
         )
 
         if cmd_root in _HEAVY_COMMANDS:

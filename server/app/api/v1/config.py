@@ -29,6 +29,7 @@ class AppConfigResponse(BaseModel):
     quote_presence_ttl_seconds: int
     quote_stale_after_seconds: int
     active_symbols: List[str]
+    telegram_bot_username: str
 
 
 @router.get("", response_model=AppConfigResponse)
@@ -54,4 +55,5 @@ def get_system_config():
         quote_presence_ttl_seconds=settings.QUOTE_PRESENCE_TTL_SECONDS,
         quote_stale_after_seconds=settings.QUOTE_STALE_AFTER_SECONDS,
         active_symbols=list(ACTIVE_SYMBOLS),
+        telegram_bot_username=settings.TELEGRAM_BOT_USERNAME,
     )

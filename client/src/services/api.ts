@@ -49,6 +49,7 @@ export interface AppConfig {
   quote_presence_ttl_seconds?: number;
   quote_stale_after_seconds?: number;
   active_symbols: string[];
+  telegram_bot_username?: string;
 }
 
 export interface AuthUser {
