@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # ── Backend endpoint contract ─────────────────────────────────────────────────
 
 def test_auth_me_returns_json_when_unauthenticated(client):
-    """GET /auth/me with no cookie must return JSON {authenticated: false}, not HTML."""
+    """GET /auth/me with no Bearer token must return JSON {authenticated: false}, not HTML."""
     resp = client.get("/api/v1/auth/me")
     assert resp.status_code == 200, resp.text
     content_type = resp.headers.get("content-type", "")
@@ -42,8 +42,9 @@ def test_auth_me_returns_json_when_unauthenticated(client):
 
 
 def test_auth_me_returns_json_when_authenticated(client, test_db_session, monkeypatch):
-    """GET /auth/me with a valid session cookie must return JSON {authenticated: true}."""
+    """GET /auth/me with a valid Bearer JWT must return JSON {authenticated: true}."""
     import hashlib, hmac, time
+    from urllib.parse import parse_qs, urlparse
     from app.core.config import settings
 
     BOT_TOKEN = "session-json-test-token"
@@ -62,16 +63,17 @@ def test_auth_me_returns_json_when_authenticated(client, test_db_session, monkey
     secret = hashlib.sha256(BOT_TOKEN.encode()).digest()
     values["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
 
-    # Authenticate via widget to get a session cookie.
+    # Authenticate via widget; the JWT arrives on the SPA callback URL.
     login = client.get(
         "/api/v1/auth/telegram-widget-verify",
         params=values,
         follow_redirects=False,
     )
     assert login.status_code == 302, login.text
+    jwt = parse_qs(urlparse(login.headers["location"]).query)["token"][0]
 
     # /auth/me must respond with JSON {authenticated: true}.
-    me = client.get("/api/v1/auth/me")
+    me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {jwt}"})
     assert me.status_code == 200, me.text
     content_type = me.headers.get("content-type", "")
     assert "application/json" in content_type, (

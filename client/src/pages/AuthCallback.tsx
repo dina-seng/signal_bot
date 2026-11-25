@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { quantViewApi } from '../services/api';
+import { setAuthToken } from '../services/authToken';
 import { useAuth } from '../contexts/AuthContext';
 
 export const AuthCallback: React.FC = () => {
@@ -23,7 +24,20 @@ export const AuthCallback: React.FC = () => {
 
     (async () => {
       try {
-        await quantViewApi.verifyLogin(token);
+        let jwt = token;
+        // The Telegram widget already hands us a signed JWT; the bot's magic
+        // link carries a one-time code that must be exchanged first.
+        if (token.split('.').length !== 3) {
+          const res = await quantViewApi.verifyLogin(token);
+          if (!res.data.token) {
+            throw new Error('Login response did not include a session token.');
+          }
+          jwt = res.data.token;
+        }
+
+        setAuthToken(jwt);
+        // Never leave the token in the address bar / history / referrer.
+        window.history.replaceState(null, '', window.location.pathname);
         await refresh();
         navigate('/dashboard', { replace: true });
       } catch (err: any) {

@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import time
+from urllib.parse import parse_qs, urlparse
 
 from app.core.config import settings
 from app.models.user import User
@@ -29,6 +30,12 @@ def _widget_payload(telegram_id=555, *, auth_date=None, stale=False):
     return values
 
 
+def _jwt_from_redirect(response) -> str:
+    location = urlparse(response.headers["location"])
+    assert location.path.endswith("/auth/callback")
+    return parse_qs(location.query)["token"][0]
+
+
 def test_telegram_widget_hash_verification(client, test_db_session, monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", BOT_TOKEN)
     monkeypatch.setattr(settings, "ADMIN_TELEGRAM_ID", 555)
@@ -37,15 +44,16 @@ def test_telegram_widget_hash_verification(client, test_db_session, monkeypatch)
     response = client.post("/api/v1/auth/telegram-widget-verify", json=payload, follow_redirects=False)
 
     assert response.status_code == 302, response.text
-    assert response.headers["location"] == settings.DASHBOARD_REDIRECT_URL
-    assert settings.SESSION_COOKIE_NAME in response.cookies
+    jwt = _jwt_from_redirect(response)
+    assert response.headers["location"].startswith(settings.MAGIC_LINK_BASE_URL)
+    assert "set-cookie" not in response.headers
 
     user = test_db_session.query(User).filter(User.telegram_id == 555).one_or_none()
     assert user is not None
     assert user.username == "widget_user"
     assert user.is_admin is True
 
-    me = client.get("/api/v1/auth/me")
+    me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {jwt}"})
     assert me.json()["user"]["id"] == str(user.id)
 
 
@@ -55,6 +63,7 @@ def test_telegram_widget_get_redirect(client, test_db_session, monkeypatch):
     payload = _widget_payload(telegram_id=556)
     response = client.get("/api/v1/auth/telegram-widget-verify", params=payload, follow_redirects=False)
     assert response.status_code == 302
+    assert _jwt_from_redirect(response)
     assert test_db_session.query(User).filter(User.telegram_id == 556).one() is not None
 
 
@@ -96,8 +105,7 @@ def test_widget_valid_signature(client, test_db_session, monkeypatch):
         "/api/v1/auth/telegram-widget-verify", params=payload, follow_redirects=False
     )
     assert response.status_code == 302
-    assert response.headers["location"].endswith("/dashboard")
-    assert settings.SESSION_COOKIE_NAME in response.cookies
+    assert _jwt_from_redirect(response)
     assert test_db_session.query(User).filter(User.telegram_id == 557).one().is_admin is True
 
 

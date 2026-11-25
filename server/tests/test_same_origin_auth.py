@@ -1,8 +1,8 @@
-"""Same-origin Telegram login regression tests (mobile cookie loop).
+"""Same-origin Telegram login regression tests (JWT transport).
 
-The widget callback, the API base and the session cookie must all live on the
-frontend origin. Cross-site cookies are dropped by mobile ITP/STP, producing a
-/login redirect loop on phones while desktop keeps working.
+The widget callback and API base stay on the frontend origin, and the session
+travels as a JWT in localStorage + Authorization header instead of a cookie
+that mobile ITP/STP drops on cross-site redirects.
 """
 
 import hashlib
@@ -10,10 +10,12 @@ import hmac
 import re
 import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from app.core.config import settings
+from app.core.security import decode_session_token
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -86,32 +88,60 @@ def test_widget_authurl_is_first_party():
     assert "VITE_API_URL=/api/v1" in env
 
 
-def test_cookie_host_only(client, widget_token, monkeypatch):
-    """Set-Cookie is host-only, HttpOnly, Secure and SameSite=Lax."""
-    monkeypatch.setattr(settings, "WIDGET_COOKIE_SECURE", True)
-    monkeypatch.setattr(settings, "WIDGET_COOKIE_SAMESITE", "lax")
+def _jwt_from_redirect(resp) -> str:
+    location = urlparse(resp.headers["location"])
+    assert location.path == "/auth/callback"
+    assert location.scheme == "https"
+    assert location.netloc == "quanview.dinacreator.space"
+    return parse_qs(location.query)["token"][0]
 
+
+def test_frontend_uses_localstorage_bearer_token():
+    """The SPA stores the JWT in localStorage and sends it as a Bearer header."""
+    def source(relative: str) -> str:
+        return (REPO_ROOT / relative).read_text(encoding="utf-8")
+
+    token_module = source("client/src/services/authToken.ts")
+    assert "'quantview_auth_token'" in token_module
+    assert "localStorage" in token_module
+
+    api = source("client/src/services/api.ts")
+    assert "credentials: 'include'" not in api
+    assert "Authorization: `Bearer ${token}`" in api
+    assert "getAuthToken()" in api
+
+    callback = source("client/src/pages/AuthCallback.tsx")
+    assert "setAuthToken(jwt)" in callback
+    assert "window.history.replaceState" in callback
+    assert "navigate('/dashboard'" in callback
+
+    auth_context = source("client/src/contexts/AuthContext.tsx")
+    assert "getAuthToken()" in auth_context
+    assert "clearAuthToken()" in auth_context
+
+    app = source("client/src/App.tsx")
+    assert "<Navigate to=\"/login\" replace />" in app
+
+
+def test_widget_verify_uses_jwt_not_cookie(client, widget_token):
+    """Verify 302s to the SPA callback with a JWT and sets no cookie at all."""
     resp = client.get(
         "/api/v1/auth/telegram-widget-verify",
         params=widget_token,
         follow_redirects=False,
     )
     assert resp.status_code == 302, resp.text
+    assert "set-cookie" not in resp.headers
 
-    cookie_header = resp.headers.get("set-cookie", "")
-    assert settings.SESSION_COOKIE_NAME in cookie_header
-    assert "Domain=" not in cookie_header  # host-only: no explicit Domain
-    assert "Path=/" in cookie_header
-    assert "samesite=lax" in cookie_header.lower()
-    assert "Secure" in cookie_header
-    assert "httponly" in cookie_header.lower()
+    jwt = _jwt_from_redirect(resp)
+    claims = decode_session_token(jwt)
+    assert claims is not None
+    assert claims["sub"]
 
 
 def test_mobile_login_flow(client, widget_token, monkeypatch):
-    """widget -> verify -> 302 /dashboard -> authenticated GET /dashboard."""
+    """widget -> 302 /auth/callback?token -> Bearer JWT -> dashboard 200."""
     monkeypatch.setattr(settings, "AUTH_ENABLED", True)
-    monkeypatch.setattr(settings, "WIDGET_COOKIE_SECURE", False)
-    monkeypatch.setattr(settings, "WIDGET_COOKIE_SAMESITE", "lax")
 
     verify = client.get(
         "/api/v1/auth/telegram-widget-verify",
@@ -119,19 +149,17 @@ def test_mobile_login_flow(client, widget_token, monkeypatch):
         follow_redirects=False,
     )
     assert verify.status_code == 302, verify.text
-    location = verify.headers["location"]
-    assert location.endswith("/dashboard")
-    assert location.startswith("https://quanview.dinacreator.space")
+    jwt = _jwt_from_redirect(verify)
 
-    # The cookie from the same-origin 302 is sent back on the SPA route.
-    dashboard = client.get("/dashboard")
-    assert dashboard.status_code == 200, dashboard.text
-    assert "/login" not in str(dashboard.json())
-
-    session = client.get("/api/v1/auth/me")
+    # The SPA stores the JWT in localStorage and sends it on every API call.
+    auth_headers = {"Authorization": f"Bearer {jwt}"}
+    session = client.get("/api/v1/auth/me", headers=auth_headers)
     assert session.status_code == 200, session.text
     assert session.json()["authenticated"] is True
 
-    # Guard still works without the cookie (no silent auth bypass).
-    client.cookies.clear()
+    dashboard = client.get("/dashboard", headers=auth_headers)
+    assert dashboard.status_code == 200, dashboard.text
+    assert "/login" not in str(dashboard.json())
+
+    # Guard still rejects a plain browser navigation without a Bearer header.
     assert client.get("/dashboard").status_code == 401

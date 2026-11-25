@@ -12,7 +12,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.metrics import metrics
-from app.core.security import decode_session_token
+from app.core.security import decode_session_token, extract_bearer_token
 from app.core.database import engine, init_db
 from sqlalchemy import inspect, text
 from app.api.v1.router import api_v1_router 
@@ -226,7 +226,7 @@ _TELEGRAM_WEBHOOK = "/api/v1/telegram/webhook"
 
 @app.middleware("http")
 async def enforce_session_auth(request: Request, call_next):
-    """Require a signed session cookie for every non-public API request."""
+    """Require a Bearer JWT for every non-public API request."""
     path = request.url.path
     is_public = (
         not settings.AUTH_ENABLED
@@ -238,7 +238,9 @@ async def enforce_session_auth(request: Request, call_next):
     if is_public:
         return await call_next(request)
 
-    claims = decode_session_token(request.cookies.get(settings.SESSION_COOKIE_NAME))
+    claims = decode_session_token(
+        extract_bearer_token(request.headers.get("authorization"))
+    )
     if claims is None:
         return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
     request.state.user = claims
@@ -271,8 +273,8 @@ def dashboard_entry():
     """Authenticated SPA entry route.
 
     Netlify serves the built React app from this path on the frontend origin.
-    Keeping a light backend counterpart lets the same-origin session guard be
-    verified end-to-end (cookie -> 200, no bounce to /login).
+    Keeping a light backend counterpart lets the session guard be verified
+    end-to-end (Bearer JWT -> 200, no bounce to /login).
     """
     return {"spa": "/dashboard", "authenticated": True}
 

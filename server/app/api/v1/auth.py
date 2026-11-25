@@ -2,8 +2,9 @@
 
 import time
 from typing import Any, Dict
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,7 @@ from app.core.logging import logger
 from app.core.security import (
     create_session_token,
     decode_session_token,
+    extract_bearer_token,
     telegram_widget_computed_hash,
     telegram_widget_data_check_string,
     verify_telegram_widget_signature,
@@ -30,28 +32,17 @@ from app.services.auth_service import AuthService
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-def _set_session_cookie(
-    response: Response,
-    token: str,
-    max_age: int,
-    *,
-    secure: bool,
-    samesite: str,
-) -> None:
-    """Issue a HOST-ONLY session cookie for the same-origin /api proxy.
-
-    Deliberately no `domain=` argument: the browser attaches the cookie to
-    whatever host it sees (quanview.dinacreator.space), never to onrender.com.
-    """
-    response.set_cookie(
-        key=settings.SESSION_COOKIE_NAME,
-        value=token,
-        max_age=max_age,
-        httponly=True,
-        secure=secure,
-        samesite=samesite,
-        path="/",
+def _jwt_for_user(user: Any, ttl_seconds: int | None = None) -> str:
+    """Mint the session JWT the SPA stores and sends as a Bearer header."""
+    return create_session_token(
+        str(user.id), bool(user.is_admin), ttl_seconds=ttl_seconds
     )
+
+
+def _auth_callback_url(jwt: str) -> str:
+    """Frontend callback that persists the JWT in localStorage."""
+    base = settings.MAGIC_LINK_BASE_URL.rstrip("/")
+    return f"{base}/auth/callback?token={quote(jwt, safe='')}"
 
 
 @router.post("/generate-login-link", response_model=LoginLinkResponse)
@@ -72,27 +63,23 @@ def generate_login_link(
 @router.post("/verify", response_model=SessionResponse)
 def verify_login_token(
     payload: VerifyTokenRequest,
-    response: Response,
     db: Session = Depends(get_db),
 ):
-    """Exchange a magic-link token for an HTTP-only signed session cookie."""
+    """Exchange a magic-link token for a session JWT returned in the body."""
     try:
         user = AuthService().verify_login_token(db, payload.token)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    _set_session_cookie(
-        response,
-        create_session_token(str(user.id), bool(user.is_admin)),
-        settings.SESSION_TTL_SECONDS,
-        secure=settings.SESSION_COOKIE_SECURE,
-        samesite=settings.SESSION_COOKIE_SAMESITE,
+    return SessionResponse(
+        authenticated=True,
+        user=UserResponse.model_validate(user),
+        token=_jwt_for_user(user),
     )
-    return SessionResponse(authenticated=True, user=UserResponse.model_validate(user))
 
 
 def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session, request: Request | None = None) -> RedirectResponse:
-    """Validate Telegram's signed payload and issue a 30-day session cookie."""
+    """Validate Telegram's signed payload and issue a 30-day session JWT."""
     # ── Temporary proxy-debug log (remove once login is confirmed working) ────
     if request is not None:
         fwd_proto = request.headers.get("x-forwarded-proto", "<not set>")
@@ -104,11 +91,8 @@ def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session, requ
             scheme, host, fwd_proto, fwd_host,
         )
         logger.info(
-            "[AUTH_PROXY_DEBUG] will set cookie: name=%s secure=%s samesite=%s → redirect=%s",
-            settings.SESSION_COOKIE_NAME,
-            settings.WIDGET_COOKIE_SECURE,
-            settings.WIDGET_COOKIE_SAMESITE,
-            settings.DASHBOARD_REDIRECT_URL,
+            "[AUTH_PROXY_DEBUG] issuing JWT via %s",
+            settings.MAGIC_LINK_BASE_URL,
         )
 
     if not verify_telegram_widget_signature(data, received_hash):
@@ -141,21 +125,12 @@ def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session, requ
         username=data.get("username"),
         first_name=data.get("first_name"),
     )
-    # Same-origin /dashboard: the widget posts to quanview.dinacreator.space
-    # (Netlify proxies /api), so the host-only cookie survives the redirect.
-    # DASHBOARD_REDIRECT_URL must be an absolute URL to the frontend domain —
-    # never a relative path, which would redirect to the Render backend domain.
-    redirect_url = settings.DASHBOARD_REDIRECT_URL
-    logger.info("[AUTH] Redirecting authenticated user to %s", redirect_url)
-    redirect = RedirectResponse(url=redirect_url, status_code=302)
-    _set_session_cookie(
-        redirect,
-        create_session_token(str(user.id), bool(user.is_admin)),
-        settings.WIDGET_SESSION_TTL_SECONDS,
-        secure=settings.WIDGET_COOKIE_SECURE,
-        samesite=settings.WIDGET_COOKIE_SAMESITE,
-    )
-    return redirect
+    # No cross-domain cookie: hand the JWT to the SPA callback, which stores it
+    # in localStorage and sends it back as Authorization: Bearer <jwt>.
+    jwt = _jwt_for_user(user, ttl_seconds=settings.WIDGET_SESSION_TTL_SECONDS)
+    redirect_url = _auth_callback_url(jwt)
+    logger.info("[AUTH] Redirecting authenticated user to the SPA callback")
+    return RedirectResponse(url=redirect_url, status_code=302)
 
 
 @router.post("/telegram-widget-verify")
@@ -186,7 +161,9 @@ def telegram_widget_verify_get(request: Request, db: Session = Depends(get_db)):
 @router.get("/me", response_model=SessionResponse)
 def current_session(request: Request, db: Session = Depends(get_db)):
     """Return the current user (or authenticated=False) for the SPA bootstrap."""
-    claims = decode_session_token(request.cookies.get(settings.SESSION_COOKIE_NAME))
+    claims = decode_session_token(
+        extract_bearer_token(request.headers.get("authorization"))
+    )
     if claims is None:
         return SessionResponse(authenticated=False, user=None)
     user = AuthService.get_user(db, claims["sub"])
@@ -196,6 +173,6 @@ def current_session(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/logout")
-def logout(response: Response):
-    response.delete_cookie(settings.SESSION_COOKIE_NAME, path="/")
+def logout():
+    """JWTs live in localStorage; the client discards its token on sign-out."""
     return {"success": True}

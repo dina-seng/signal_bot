@@ -25,13 +25,16 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + padding)
 
 
-def create_session_token(user_id: str, is_admin: bool) -> str:
+def create_session_token(
+    user_id: str, is_admin: bool, ttl_seconds: Optional[int] = None
+) -> str:
     now = int(time.time())
+    ttl = settings.SESSION_TTL_SECONDS if ttl_seconds is None else ttl_seconds
     payload: Dict[str, Any] = {
         "sub": str(user_id),
         "admin": bool(is_admin),
         "iat": now,
-        "exp": now + settings.SESSION_TTL_SECONDS,
+        "exp": now + int(ttl),
     }
     header = _b64url_encode(b'{"alg":"HS256","typ":"JWT"}')
     body = _b64url_encode(
@@ -67,6 +70,17 @@ def decode_session_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         return claims
     except Exception:
         return None
+
+
+def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    """Extract a JWT from an `Authorization: Bearer <token>` header."""
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token or None
 
 
 def telegram_widget_data_check_string(payload: Dict[str, Any]) -> str:

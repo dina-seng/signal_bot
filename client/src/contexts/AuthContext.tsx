@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { ApiError, quantViewApi, AuthUser } from '../services/api';
+import { clearAuthToken, getAuthToken } from '../services/authToken';
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -17,16 +18,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    // Session is a JWT in localStorage; no cookie exists to check.
+    if (!getAuthToken()) {
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
     try {
       const res = await quantViewApi.getSession();
       setUser(res.data.authenticated ? res.data.user : null);
     } catch (err) {
-      // 401 → not logged in (expected).
+      // 401 → token missing/invalid/expired: discard it so the route guard
+      // redirects to /login.
       // 502 → proxy returned HTML instead of JSON (Render cold-start or broken
       //        proxy rule). Both cases: treat as logged-out, never surface a
       //        SyntaxError. Log proxy errors at warn level for visibility.
       if (err instanceof ApiError) {
-        if (err.status !== 401) {
+        if (err.status === 401) {
+          clearAuthToken();
+        } else {
           console.warn(
             `[Auth] Session check returned HTTP ${err.status}: ${err.message}. ` +
             (err.status === 502
@@ -50,6 +60,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = useCallback(async () => {
     await quantViewApi.logout();
+    clearAuthToken();
     setUser(null);
   }, []);
 

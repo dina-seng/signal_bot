@@ -16,9 +16,10 @@
  */
 
 import { API_BASE_PATH } from '../config/sameOrigin';
+import { clearAuthToken, getAuthToken } from './authToken';
 
-// Same-origin only. Netlify (prod) and Vite (dev) proxy /api/* to the backend,
-// so the session cookie stays first-party and no CORS preflight is needed.
+// Same-origin only. Netlify (prod) and Vite (dev) proxy /api/* to the backend.
+// Auth travels in a Bearer header, so no cookies or credentialed fetches.
 // An absolute backend host in env is deliberately ignored.
 const configuredBase = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
 const API_BASE = configuredBase.startsWith('/api') ? configuredBase : API_BASE_PATH;
@@ -70,6 +71,8 @@ export interface AuthUser {
 export interface SessionResponse {
   authenticated: boolean;
   user: AuthUser | null;
+  /** JWT issued by /auth/verify (magic-link flow). */
+  token?: string | null;
 }
 
 export class ApiError extends Error {
@@ -455,14 +458,15 @@ async function fetchWithTiming<T>(url: string, options: RequestInit = {}, timeou
   try {
     const method = (options.method || 'GET').toUpperCase();
     const hasBody = method !== 'GET' && method !== 'HEAD' && options.body !== undefined;
+    const token = getAuthToken();
     const res = await fetch(url, {
       ...options,
-      credentials: 'include',
       signal: controller.signal,
       headers: {
         // Only send Content-Type when there is a body. On bodyless GETs this
         // header is what forces a CORS preflight before every dashboard poll.
         ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.headers || {}),
       },
     });
@@ -646,7 +650,11 @@ export const quantViewApi = {
   // without it the backend stretches the quote cache to the idle TTL.
   async sendPresenceHeartbeat(): Promise<void> {
     try {
-      await fetch(`${API_BASE}/market/presence`, { method: 'POST', credentials: 'include' });
+      const token = getAuthToken();
+      await fetch(`${API_BASE}/market/presence`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
     } catch {
       // Presence is best-effort; never break the dashboard on a heartbeat failure.
     }
@@ -747,6 +755,8 @@ export const quantViewApi = {
       await fetchWithTiming(`${API_BASE}/auth/logout`, { method: 'POST' });
     } catch {
       // Best effort — local state is cleared by the caller regardless.
+    } finally {
+      clearAuthToken();
     }
   },
 };

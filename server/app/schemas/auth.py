@@ -53,3 +53,5 @@ class UserResponse(BaseModel):
 class SessionResponse(BaseModel):
     authenticated: bool
     user: Optional[UserResponse] = None
+    # Session JWT issued by /auth/verify; the SPA stores it in localStorage.
+    token: Optional[str] = None

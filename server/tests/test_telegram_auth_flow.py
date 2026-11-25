@@ -27,7 +27,7 @@ def _message_response(chat_id: str, *, success: bool = True, error=None):
 
 
 def test_telegram_auth_flow(client, test_db_session, monkeypatch):
-    """Mock /login -> magic link -> verify -> user + signed session cookie."""
+    """Mock /login -> magic link -> verify -> user + session JWT."""
     monkeypatch.setattr(settings, "ADMIN_TELEGRAM_ID", 777)
     tg = MockTelegramClient()
     handler = TelegramCommandHandler(telegram_client=tg)
@@ -53,13 +53,15 @@ def test_telegram_auth_flow(client, test_db_session, monkeypatch):
     assert payload["authenticated"] is True
     assert payload["user"]["telegram_id"] == 777
     assert payload["user"]["is_admin"] is True
-    assert settings.SESSION_COOKIE_NAME in verified.cookies
+    jwt = payload["token"]
+    assert jwt and jwt.count(".") == 2
+    assert "set-cookie" not in verified.headers
 
     users = test_db_session.query(User).all()
     assert len(users) == 1
     assert users[0].is_admin is True
 
-    me = client.get("/api/v1/auth/me")
+    me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {jwt}"})
     assert me.status_code == 200
     assert me.json()["user"]["telegram_id"] == 777
 
