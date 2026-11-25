@@ -14,7 +14,12 @@ class Settings(BaseSettings):
     """Central configuration for the Forex Market Analysis & Signal Bot."""
 
     # Project metadata
-    PROJECT_NAME: str = "Forex Market Analysis & Telegram Signal Bot"
+    PROJECT_NAME: str = "QuantView Proprietary Platform"
+    API_TITLE: str = "QuantView Proprietary API"
+    API_DESCRIPTION: str = (
+        "Proprietary algorithmic trading, risk, and signal platform API. "
+        "All rights reserved."
+    )
     APP_ENV: str = "development"
     LOG_LEVEL: str = "INFO"
 

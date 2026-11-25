@@ -159,9 +159,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title=settings.PROJECT_NAME,
+    title=settings.API_TITLE,
     version="1.0.0",
-    description="Forex Market Analysis, Market Structure, Liquidity Detection, and Signal Generation Engine",
+    description=settings.API_DESCRIPTION,
     lifespan=lifespan,
 )
 

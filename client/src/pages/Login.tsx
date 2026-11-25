@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { LockKeyhole, ShieldCheck } from 'lucide-react';
+import logoImg from '../../assets/logo.png';
 
 const botUsername = (
   import.meta.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || 'signalTheBEST_bot'
@@ -34,14 +35,17 @@ export const Login: React.FC = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/70 p-8 shadow-2xl">
-        <div className="flex items-center gap-3 mb-6">
-          <span className="p-3 rounded-xl bg-sky-500/10 text-sky-400">
-            <LockKeyhole size={22} />
-          </span>
-          <div>
-            <h1 className="text-xl font-semibold text-white">QuantView Sign In</h1>
-            <p className="text-sm text-slate-400">Official Telegram Login Widget</p>
-          </div>
+        <div className="mb-6 flex flex-col items-center text-center">
+          <img
+            src={logoImg}
+            alt="QuantView"
+            className="h-12 w-auto object-contain drop-shadow-[0_0_12px_rgba(124,58,237,0.35)]"
+          />
+          <h1 className="mt-4 text-xl font-semibold text-white">QuantView Sign In</h1>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-400">
+            <LockKeyhole size={14} className="text-sky-400" />
+            Secure access via Telegram
+          </p>
         </div>
 
         <div id="telegram-login-widget" className="flex min-h-[64px] justify-center" />

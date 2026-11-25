@@ -2,7 +2,7 @@
 
 Self-hosted, single-asset (**XAU/USD**) market-analysis system. It ingests 15m candles, derives 1h/4h locally, scores Smart Money Concepts (SMC) setups, and publishes qualified signals to a React dashboard, a FastAPI API, an optional Telegram bot, and a virtual paper-trading account.
 
-> **Research system, not financial advice.** No broker integration and no live order routing.
+> **Proprietary platform.** Algorithmic analysis is provided for informational purposes. Trading involves risk.
 
 ## Scope
 
@@ -50,4 +50,4 @@ reports/smc_baseline_v2/           canonical baseline v2 + delta report
 
 [Architecture](docs/ARCHITECTURE.md) · [Services](docs/SERVICES.md) · [Testing](docs/TESTING_AND_VALIDATION.md) · [Findings](docs/GAPS_AND_FINDINGS.md) · [Execution contract](execution_contract_final.md) · [Baseline write-up](establish.md) · [AI workflow rules](RAYU.md)
 
-Research and educational use only. No outcome is guaranteed; independent validation and risk controls are required before any live decision.
+© 2026 QuantView. All rights reserved. Proprietary and Confidential.

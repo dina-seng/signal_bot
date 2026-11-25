@@ -1382,6 +1382,9 @@ export const Dashboard: React.FC = () => {
             <span className="font-mono text-[10px] text-slate-500">FastAPI: http://localhost:8000</span>
             <span>•</span>
             <span className="text-slate-400">Telegram Bot: @signalTheBEST_bot</span>
+            <span className="hidden xl:inline text-slate-500">
+              Algorithmic analysis provided for informational purposes. Trading involves risk.
+            </span>
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">

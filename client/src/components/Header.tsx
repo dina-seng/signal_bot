@@ -118,9 +118,6 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-xs font-mono font-bold tracking-wide sm:tracking-widest text-white uppercase whitespace-nowrap group-hover:text-purple-300 transition-colors">
               QUANT<span className="text-emerald-400">VIEW</span>
             </span>
-            <span className="text-[10px] font-mono text-zinc-500 uppercase px-1 py-0.5 rounded bg-white/5 border border-white/10 group-hover:border-purple-500/30">
-              OS
-            </span>
           </Link>
 
           {/* Unified System Status Dropdown Pill (Consolidates LIVE DATA, BROKER, RISK SAFE) */}
