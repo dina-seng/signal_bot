@@ -36,6 +36,15 @@ from app.services.telegram.client import BaseTelegramClient, get_telegram_client
 from app.services.telegram.message_formatter import TelegramMessageFormatter
 
 
+MASTER_FUND_FOOTER = (
+    "ℹ️ <i>You are viewing the automated Master Signal Account. "
+    "Trades are executed live by the QuantView engine.</i>"
+)
+MASTER_FUND_POSITIONS_FOOTER = (
+    "ℹ️ <i>These are live positions managed by the QuantView algorithm.</i>"
+)
+
+
 class TelegramCommandHandler:
     """Handles incoming bot commands (/scan, /signal, /news, /account, /positions, /performance, /help, /sync)."""
 
@@ -321,10 +330,13 @@ class TelegramCommandHandler:
         elif cmd_name == "/positions":
             positions = self.paper_service.get_positions(db)
             if not positions:
-                reply = "💼 <b>No open or pending paper trading positions currently.</b>"
+                reply = (
+                    "💼 <b>No open or pending Master Fund positions currently.</b>\n"
+                    f"{MASTER_FUND_POSITIONS_FOOTER}"
+                )
             else:
                 lines = [
-                    f"📊 <b>ACTIVE PAPER POSITIONS ({len(positions)})</b> 📊",
+                    f"📡 <b>MASTER FUND ACTIVE POSITIONS ({len(positions)})</b> 📡",
                     "━━━━━━━━━━━━━━━━━━━━",
                 ]
                 for p in positions:
@@ -339,6 +351,10 @@ class TelegramCommandHandler:
                         f"  Entry: <code>{entry_f}</code> | Current: <code>{curr_f}</code> | PnL: <code>{pnl_str}</code>\n"
                         f"  SL: <code>{sl_f}</code> | TP1: <code>{tp1_f}</code>"
                     )
+                lines.extend([
+                    "━━━━━━━━━━━━━━━━━━━━",
+                    MASTER_FUND_POSITIONS_FOOTER,
+                ])
                 reply = "\n".join(lines)
 
         # -------------------------------------------------------------
@@ -347,7 +363,7 @@ class TelegramCommandHandler:
         elif cmd_name == "/performance":
             perf = self.paper_service.get_portfolio_performance(db)
             reply = (
-                f"🏆 <b>VIRTUAL TRADING PERFORMANCE</b> 🏆\n"
+                f"🏛️ <b>QUANTVIEW MASTER FUND</b> 🏛️\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"💵 <b>Current Balance:</b> <code>${perf.current_balance:,.2f}</code>\n"
                 f"📈 <b>Total Return:</b> <code>{perf.total_return_pct:>+6.2f}%</code>\n"
@@ -356,7 +372,8 @@ class TelegramCommandHandler:
                 f"💰 <b>Profit Factor:</b> <code>{perf.profit_factor:.2f}</code>\n"
                 f"💵 <b>Average Win:</b> <code>${perf.average_win:,.2f}</code>\n"
                 f"🛑 <b>Average Loss:</b> <code>${perf.average_loss:,.2f}</code>\n"
-                f"━━━━━━━━━━━━━━━━━━━━"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{MASTER_FUND_FOOTER}"
             )
 
         # -------------------------------------------------------------

@@ -698,7 +698,7 @@ class TelegramMessageFormatter:
             else "N/A"
         )
         return (
-            f"💼 <b>VIRTUAL TRADING PORTFOLIO</b> 💼\n"
+            f"🏛️ <b>QUANTVIEW MASTER FUND</b> 🏛️\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 <b>Account:</b> <code>{acc_name}</code>\n"
             f"💵 <b>Balance:</b> <code>${acc.balance:>10,.2f}</code>\n"
@@ -713,7 +713,10 @@ class TelegramMessageFormatter:
             f"  • <b>Profit Factor:</b> <code>{perf.profit_factor:.2f}</code>\n"
             f"  • <b>Active Positions:</b> <code>{perf.open_trades}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🕒 <code>{ts_str}</code>"
+            f"🕒 <code>{ts_str}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "ℹ️ <i>You are viewing the automated Master Signal Account. "
+            "Trades are executed live by the QuantView engine.</i>"
         )
 
     @staticmethod
@@ -728,9 +731,9 @@ class TelegramMessageFormatter:
             "🔄 <code>/sync</code> - Force fresh market data sync\n"
             "🎯 <code>/signal &lt;pair&gt;</code> - Deep setup analysis (e.g. <code>/signal XAU/USD</code>)\n"
             "📰 <code>/news</code> - Economic calendar &amp; news blackout check\n"
-            "💼 <code>/account</code> - Virtual trading balance, equity &amp; margin\n"
-            "📊 <code>/positions</code> - List all active paper positions\n"
-            "🏆 <code>/performance</code> - Strategy win rate &amp; statistics\n"
+            "💼 <code>/account</code> - View the Master Fund balance and equity\n"
+            "📊 <code>/positions</code> - See the Master Fund's currently open trades\n"
+            "🏆 <code>/performance</code> - View the Master Fund track record and win rate\n"
             "📈 <code>/backtest &lt;pair&gt;</code> - Historical strategy simulation\n"
             "❓ <code>/help</code> - Show this command reference\n"
             "━━━━━━━━━━━━━━━━━━━━\n"

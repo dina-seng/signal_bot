@@ -223,7 +223,22 @@ async def test_telegram_command_handler(test_db_session):
     # 4. /account
     res_acc = await handler.handle_command(test_db_session, TelegramCommandRequest(command="/account"))
     assert res_acc.handled_successfully is True
-    assert "VIRTUAL TRADING PORTFOLIO" in res_acc.reply_text
+    assert "QUANTVIEW MASTER FUND" in res_acc.reply_text
+    assert "automated Master Signal Account" in res_acc.reply_text
+
+    # 5. /positions and /performance are branded as the Master Fund.
+    res_pos = await handler.handle_command(test_db_session, TelegramCommandRequest(command="/positions"))
+    assert "Master Fund" in res_pos.reply_text
+    assert "QuantView algorithm" in res_pos.reply_text
+
+    res_perf = await handler.handle_command(test_db_session, TelegramCommandRequest(command="/performance"))
+    assert "QUANTVIEW MASTER FUND" in res_perf.reply_text
+    assert "automated Master Signal Account" in res_perf.reply_text
+
+    # 6. Help menu describes the read-only Master Fund views.
+    assert "Master Fund balance and equity" in res_help.reply_text
+    assert "Master Fund track record and win rate" in res_help.reply_text
+    assert "Master Fund's currently open trades" in res_help.reply_text
 
 
 # -------------------------------------------------------------
