@@ -21,7 +21,10 @@ class AppConfigResponse(BaseModel):
     mode: str
     provider_name: str
     quote_max_age_seconds: int
-    quote_cache_ttl_seconds: int
+    quote_cache_ttl_seconds: float
+    quote_response_cache_ttl_seconds: int
+    derived_cache_ttl_seconds: float
+    dashboard_poll_seconds: int
     quote_idle_cache_ttl_seconds: int
     quote_presence_ttl_seconds: int
     quote_stale_after_seconds: int
@@ -44,6 +47,9 @@ def get_system_config():
         provider_name=settings.MARKET_DATA_PROVIDER,
         quote_max_age_seconds=settings.QUOTE_MAX_AGE_SECONDS,
         quote_cache_ttl_seconds=settings.QUOTE_CACHE_TTL_SECONDS,
+        quote_response_cache_ttl_seconds=settings.QUOTE_RESPONSE_CACHE_TTL_SECONDS,
+        derived_cache_ttl_seconds=settings.DERIVED_CACHE_TTL_SECONDS,
+        dashboard_poll_seconds=settings.DASHBOARD_POLL_SECONDS,
         quote_idle_cache_ttl_seconds=settings.QUOTE_IDLE_CACHE_TTL_SECONDS,
         quote_presence_ttl_seconds=settings.QUOTE_PRESENCE_TTL_SECONDS,
         quote_stale_after_seconds=settings.QUOTE_STALE_AFTER_SECONDS,

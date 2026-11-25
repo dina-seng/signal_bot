@@ -40,7 +40,7 @@ def _reset_quote_state():
 @pytest.mark.asyncio
 async def test_same_price_keeps_last_price_change_at(monkeypatch):
     monkeypatch.setattr(settings, "QUOTE_PRESENCE_TTL_SECONDS", 600)
-    monkeypatch.setattr(settings, "QUOTE_CACHE_TTL_SECONDS", 0)  # force every call to fetch
+    monkeypatch.setattr(settings, "QUOTE_RESPONSE_CACHE_TTL_SECONDS", 0)  # force every call to fetch
     market_mod._presence_last_beat = market_mod.time.time()
 
     provider = AsyncMock()
@@ -55,7 +55,7 @@ async def test_same_price_keeps_last_price_change_at(monkeypatch):
 @pytest.mark.asyncio
 async def test_changed_price_advances_last_price_change_at(monkeypatch):
     monkeypatch.setattr(settings, "QUOTE_PRESENCE_TTL_SECONDS", 600)
-    monkeypatch.setattr(settings, "QUOTE_CACHE_TTL_SECONDS", 0)
+    monkeypatch.setattr(settings, "QUOTE_RESPONSE_CACHE_TTL_SECONDS", 0)
     market_mod._presence_last_beat = market_mod.time.time()
 
     prices = iter([2500.0, 2501.5])

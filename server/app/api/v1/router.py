@@ -12,6 +12,7 @@ from app.api.v1.backtest import router as backtest_router
 from app.api.v1.paper import router as paper_router
 from app.api.v1.telegram import router as telegram_router
 from app.api.v1.config import router as config_router
+from app.api.v1.dashboard import router as dashboard_router
 
 api_v1_router = APIRouter(prefix="/v1")
 api_v1_router.include_router(health_router)
@@ -25,6 +26,7 @@ api_v1_router.include_router(backtest_router)
 api_v1_router.include_router(paper_router)
 api_v1_router.include_router(telegram_router)
 api_v1_router.include_router(config_router)
+api_v1_router.include_router(dashboard_router)
 
 
 

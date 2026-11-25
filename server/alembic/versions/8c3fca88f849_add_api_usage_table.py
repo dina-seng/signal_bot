@@ -32,7 +32,15 @@ def upgrade() -> None:
     op.create_index(op.f('ix_api_usage_id'), 'api_usage', ['id'], unique=False)
     # Auto-generated Neon playground artifact removed: it is unused by the app
     # and its presence is not guaranteed on fresh/non-Neon databases.
-    op.create_index(op.f('ix_candles_source'), 'candles', ['source'], unique=False)
+    # Guard the duplicate creation: the initial migration already creates this
+    # index on fresh databases, so a plain create_index breaks `upgrade head`.
+    _candle_indexes = {
+        idx["name"]
+        for idx in sa.inspect(op.get_bind()).get_indexes("candles")
+        if idx.get("name")
+    }
+    if 'ix_candles_source' not in _candle_indexes:
+        op.create_index(op.f('ix_candles_source'), 'candles', ['source'], unique=False)
     op.create_unique_constraint('uq_liquidity_symbol_tf_type_ts', 'liquidity_events', ['symbol', 'timeframe', 'event_type', 'timestamp'])
     op.create_unique_constraint('uq_news_currency_name_time', 'news_events', ['currency', 'event_name', 'scheduled_time'])
     op.create_unique_constraint('uq_paper_trade_account_signal', 'paper_trades', ['account_id', 'signal_id'])

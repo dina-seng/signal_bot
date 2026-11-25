@@ -10,6 +10,7 @@ from app.core.config import ACTIVE_SYMBOLS, settings
 from app.core.database import SessionLocal
 from app.core.logging import logger
 from app.services.market_data import get_market_data_provider
+from app.services.market_data.cache import CachedMarketDataProvider
 from app.services.news import ForexFactoryProvider
 from app.services.paper_trading import PaperTradingService
 from app.services.signals import SignalGenerator
@@ -29,7 +30,9 @@ def get_shared_scanner() -> AutomatedMarketScanner:
             signal_generator=SignalGenerator(),
             paper_service=PaperTradingService(),
             telegram_client=get_telegram_client(),
-            market_provider=get_market_data_provider(settings.MARKET_DATA_PROVIDER),
+            market_provider=CachedMarketDataProvider(
+                get_market_data_provider(settings.MARKET_DATA_PROVIDER)
+            ),
             news_provider=ForexFactoryProvider(),
         )
     return _shared_scanner

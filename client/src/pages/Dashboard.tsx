@@ -42,6 +42,7 @@ import {
   BackendScannerStatus,
   BackendQuote,
   AppConfig,
+  DashboardSnapshot,
 } from '../services/api';
 import { formatPrice, getTimeUntil } from '../utils/formatters';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
@@ -85,6 +86,7 @@ export const Dashboard: React.FC = () => {
   const isFetchingSignalsRef = useRef<boolean>(false);
   const isFetchingNewsRef = useRef<boolean>(false);
   const isFetchingPricesRef = useRef<boolean>(false);
+  const isFetchingSnapshotRef = useRef<boolean>(false);
   // True when the last quote poll returned a live (non-STALE) quote. Candle-close
   // refreshes must never overwrite a newer quote while this is true.
   const quoteFreshRef = useRef<boolean>(false);
@@ -481,20 +483,243 @@ export const Dashboard: React.FC = () => {
     }
   }, []);
 
-  // Master manual refresh function
-  const handleManualRefresh = async () => {
-    setIsRefreshing(true);
+  // Single-endpoint poll: the backend assembles every section in parallel and
+  // returns one response, so the UI no longer pays for ~10 serialised GETs.
+  const fetchSnapshot = useCallback(async () => {
+    if (isFetchingSnapshotRef.current) return;
+    isFetchingSnapshotRef.current = true;
     try {
+      const res = await quantViewApi.getDashboardSnapshot('XAU/USD', '15m');
+      const snap: DashboardSnapshot = res.data;
+
+      if (snap.config) setAppConfig(snap.config);
+
+      // Quote — same freshness rules as the dedicated quote poll.
+      if (snap.quote) {
+        const quote = {
+          ...snap.quote,
+          fetched_at: snap.quote.fetched_at || new Date().toISOString(),
+        };
+        setLatestQuote(quote);
+        const quoteIsFresh = quote.is_stale !== true;
+        quoteFreshRef.current = quoteIsFresh;
+      }
+
+      const prices: Record<string, number> = {};
+      if (typeof snap.quote?.price === 'number' && snap.quote.price > 0 && !snap.quote.is_stale) {
+        prices['XAU/USD'] = snap.quote.price;
+      } else if (Array.isArray(snap.candles) && snap.candles.length > 0) {
+        const last = snap.candles[snap.candles.length - 1];
+        if (typeof last?.close === 'number') prices['XAU/USD'] = last.close;
+      }
+      setLivePrices((prev) => ({ ...prev, ...prices }));
+
+      // Atomic paper snapshot: account + positions share one live price tick.
+      if (snap.paper_summary) {
+        const bAcc: BackendAccount = snap.paper_summary.account;
+        const unrealized = Number((bAcc.equity - bAcc.balance).toFixed(2));
+        setAccount({
+          balance: bAcc.balance,
+          equity: bAcc.equity,
+          unrealizedPnl: unrealized,
+          unrealizedPnlPercent: bAcc.balance > 0
+            ? Number(((unrealized / bAcc.balance) * 100).toFixed(2))
+            : 0,
+          marginUsed: bAcc.margin_used,
+          marginAvailable: bAcc.free_margin,
+          marginLevelPercent: bAcc.margin_level_pct,
+          activePositionsCount: bAcc.open_positions_count,
+          todayPnl: unrealized,
+          brokerStatus: 'CONNECTED',
+          latencyMs: res.durationMs,
+          currency: bAcc.currency,
+        });
+      }
+      if (Array.isArray(snap.positions)) {
+        setPositions(snap.positions.map((p: BackendPosition) => {
+          const entry = p.entry_price;
+          const pnl = p.unrealized_pnl ?? 0;
+          const size = p.remaining_position_size || p.initial_position_size || 0.1;
+          return {
+            id: String(p.id),
+            symbol: p.symbol as PairSymbol,
+            side: p.direction,
+            size,
+            entryPrice: entry,
+            currentPrice: p.current_price,
+            stopLoss: p.stop_loss,
+            takeProfit: p.take_profit_1,
+            pnl,
+            pnlPercent: Number(((pnl / (entry * size * 1000 || 1)) * 100).toFixed(2)),
+            pips: p.pnl_pips ?? 0,
+            openTime: p.opened_at
+              ? new Date(p.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' UTC'
+              : '--:-- UTC',
+          };
+        }));
+      }
+
+      if (Array.isArray(snap.trades)) {
+        setClosedTrades(snap.trades.map((t: BackendPaperTrade) => ({
+          id: String(t.id),
+          symbol: t.symbol,
+          side: t.direction,
+          size: t.remaining_position_size || t.initial_position_size || 0.1,
+          entryPrice: t.entry_price,
+          exitPrice: t.exit_price || t.current_price,
+          stopLoss: t.stop_loss,
+          takeProfit: t.take_profit_1,
+          realizedPnl: t.realized_pnl,
+          pnlPips: t.pnl_pips,
+          returnR: t.return_r,
+          exitReason: t.exit_reason || 'CLOSED',
+          openedAt: t.opened_at,
+          closedAt: t.closed_at || t.opened_at,
+        })));
+      }
+
+      if (snap.performance) {
+        const bPerf: BackendPerformance = snap.performance;
+        setStats((prev) => ({
+          ...prev,
+          winRate: bPerf.win_rate_pct ?? (bPerf.win_rate ? Number((bPerf.win_rate * 100).toFixed(1)) : prev.winRate),
+          profitFactor: bPerf.profit_factor ?? prev.profitFactor,
+          totalTrades: bPerf.total_trades ?? prev.totalTrades,
+          maxDrawdown: bPerf.max_drawdown_pct ?? bPerf.max_drawdown ?? null,
+          sharpeRatio: bPerf.sharpe_ratio ?? null,
+          expectancyPips: bPerf.expectancy_pips ?? null,
+          initialBalance: bPerf.initial_balance ?? null,
+        }));
+      }
+
+      if (Array.isArray(snap.signals)) {
+        const bSignals: BackendSignal[] = snap.signals;
+        setSignals(SUPPORTED_PAIRS.map((sym) => {
+          const matching = bSignals.find((s) => s.symbol === sym);
+          const actionable = matching && matching.status === 'ACTIVE' &&
+            (matching.direction === 'BUY' || matching.direction === 'SELL');
+          if (actionable && matching) {
+            const isBuy = matching.direction === 'BUY';
+            const entry = matching.entry_price || prices[sym] || 0;
+            const sl = matching.stop_loss || 0;
+            const pipsAtRisk = entry > 0 && sl > 0
+              ? Math.abs(Math.round(isBuy ? (entry - sl) * 10000 : (sl - entry) * 10000)) / 10
+              : undefined;
+            const rr = matching.risk_reward || matching.risk_reward_ratio;
+            const rawScore = matching.setup_score ?? matching.confluence_score;
+            return {
+              id: `SIG-${matching.id || sym}`,
+              symbol: sym,
+              direction: matching.direction,
+              confluenceScore: typeof rawScore === 'number' ? Math.round(rawScore) : 0,
+              timeframe: matching.timeframe || '15m',
+              entryPrice: entry,
+              stopLoss: sl,
+              takeProfit1: matching.take_profit_1 || 0,
+              takeProfit2: matching.take_profit_2 || 0,
+              riskRewardRatio: rr ? `1:${rr.toFixed(1)}` : '--',
+              pipsAtRisk,
+              timestamp: matching.timestamp
+                ? new Date(matching.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' UTC'
+                : 'Active',
+              setupReason: Array.isArray(matching.reasons) && matching.reasons.length > 0
+                ? matching.reasons.slice(0, 3).join(' • ')
+                : 'Multi-Timeframe Structure Confirmation & Liquidity Sweep',
+              trendAlignment: matching.trend_alignment || undefined,
+              htfTrend: matching.htf_trend || undefined,
+              notifyEnabled: true,
+              status: 'ACTIVE' as const,
+              hasActiveSignal: true,
+            };
+          }
+          const rawScore = matching ? (matching.setup_score ?? matching.confluence_score ?? 0) : 0;
+          return {
+            id: `SCAN-${sym}`,
+            symbol: sym,
+            direction: 'SCANNING' as const,
+            confluenceScore: Math.round(rawScore),
+            timeframe: matching?.timeframe || '15m',
+            currentPrice: prices[sym] || undefined,
+            trendAlignment: matching?.trend_alignment || undefined,
+            htfTrend: matching?.htf_trend || undefined,
+            notifyEnabled: false,
+            status: 'SCANNING' as const,
+            hasActiveSignal: false,
+            setupReason: matching?.reasons?.[0]
+              || (matching?.htf_trend ? `1H Trend: ${matching.htf_trend} • Awaiting high-confluence setup` : 'Awaiting Data: Scanning order flow for Breaker Blocks and Fair Value Gaps.'),
+          };
+        }));
+      }
+
+      if (Array.isArray(snap.news) && snap.news.length > 0) {
+        setNews(snap.news.map((n: BackendNewsEvent) => {
+          const scheduledIso = n.scheduled_time;
+          const countdown = getTimeUntil(scheduledIso);
+          return {
+            id: n.id,
+            time: scheduledIso,
+            currency: n.currency,
+            event: n.event_name || n.title || n.event || 'Macro Event',
+            impact: n.impact,
+            actual: n.actual,
+            forecast: n.forecast || '--',
+            previous: n.previous || '--',
+            minutesUntil: countdown.minutesUntil,
+            isBlackoutTrigger: n.impact === 'HIGH' && countdown.isWithin30m,
+            scheduledTimeRaw: scheduledIso,
+          };
+        }));
+      }
+
+      if (snap.blackout) {
+        const b = snap.blackout;
+        setRiskStatus({
+          isBlackout: b.in_blackout,
+          statusText: b.reason || (b.in_blackout ? 'BLACKOUT ACTIVE: Macro event in blackout window' : 'SAFE TO TRADE — Normal trading conditions'),
+          activeEvent: b.event_title || (b.in_blackout ? 'High-Impact Red Folder Blackout Window Active' : undefined),
+          minutesRemaining: b.minutes_to_next_event ?? 0,
+        });
+      }
+
+      if (snap.telegram_status) {
+        setTelegramStatus(snap.telegram_status);
+        setAlertConfig((prev) => ({
+          ...prev,
+          telegramChatConnected: snap.telegram_status!.is_configured,
+          telegramBotHandle: '@signalTheBEST_bot',
+        }));
+      }
+      if (snap.scanner_status) setScannerStatus(snap.scanner_status);
+
+      setApiResponseTimeMs(res.durationMs);
+      setIsApiConnected(true);
+      setApiErrorMessage(null);
+      lastFetchTimestampRef.current = Date.now();
+      setLastUpdatedSecondsAgo(0);
+    } catch (err: any) {
+      console.warn('[QuantView API] Snapshot fetch failed, falling back:', err.message);
+      setIsApiConnected(false);
+      setApiErrorMessage(err.message || 'Dashboard snapshot unavailable');
       await Promise.allSettled([
         fetchLiveQuotes(),
         fetchAccountAndPositions(),
         fetchSignalsAndPrices(),
         fetchNewsAndRisk(),
       ]);
+    } finally {
+      isFetchingSnapshotRef.current = false;
+    }
+  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
+
+  // Master manual refresh function
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchSnapshot();
       addToast('success', 'Terminal Synchronized', 'Fetched latest data from FastAPI backend.');
     } finally {
       setIsRefreshing(false);
-      setPollCountdown(30);
+      setPollCountdown(pollSeconds);
     }
   };
 
@@ -505,25 +730,12 @@ export const Dashboard: React.FC = () => {
     async function initialBoot() {
       setIsInitialLoading(true);
       try {
-        try {
-          const cfgRes = await quantViewApi.getConfig();
-          if (cfgRes.data) {
-            setAppConfig(cfgRes.data);
-          }
-        } catch (cfgErr) {
-          console.warn('[QuantView API] Failed to fetch app config:', cfgErr);
-        }
-
-        await Promise.allSettled([
-          fetchLiveQuotes(),
-          fetchAccountAndPositions(),
-          fetchSignalsAndPrices(),
-          fetchNewsAndRisk(),
-        ]);
+        // Config arrives inside the same snapshot response.
+        await fetchSnapshot();
       } finally {
         if (isMounted) {
           setIsInitialLoading(false);
-          setPollCountdown(30);
+          setPollCountdown(appConfig?.dashboard_poll_seconds ?? 15);
         }
       }
     }
@@ -533,60 +745,37 @@ export const Dashboard: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
+  }, [fetchSnapshot]);
 
-  // Polling Interval: 15s for Quotes (0 DB load), 30s for presence heartbeat and
-  // Paper Trading, 60s for Signals & News, paused when the page is hidden.
+  // One poll loop for the whole dashboard, cadence driven by backend config.
+  // A single GET replaces the former 15s/30s/60s GET waterfall.
+  const pollSeconds = appConfig?.dashboard_poll_seconds ?? 15;
+
   useEffect(() => {
-    let secondsCounter = 0;
-
-    // Register presence immediately so the backend keeps the 60s active TTL.
+    // Register presence immediately so the backend keeps the active quote TTL.
     quantViewApi.sendPresenceHeartbeat();
 
-    const timer = setInterval(() => {
-      // Guard: Pause polling completely when browser tab is hidden to save Neon DB compute
+    const poll = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
         return;
       }
+      quantViewApi.sendPresenceHeartbeat();
+      fetchSnapshot();
+      setPollCountdown(pollSeconds);
+    };
 
-      secondsCounter++;
-
-      // Update age of last fetch
+    const timer = setInterval(poll, pollSeconds * 1000);
+    const countdownTimer = setInterval(() => {
       setLastUpdatedSecondsAgo(Math.floor((Date.now() - lastFetchTimestampRef.current) / 1000));
-
-      // 15-Second Poll: Price Quote (backend caches for 60s, provider granularity ~1min)
-      if (secondsCounter % 15 === 0) {
-        fetchLiveQuotes();
-      }
-
-      // 30-Second Poll: presence heartbeat + Paper Trading endpoints
-      if (secondsCounter % 30 === 0) {
-        quantViewApi.sendPresenceHeartbeat();
-        fetchAccountAndPositions();
-        setPollCountdown(30);
-      } else {
-        setPollCountdown((prev) => (prev > 1 ? prev - 1 : 30));
-      }
-
-      // 60-Second Poll: Signals & News Calendar
-      if (secondsCounter % 60 === 0) {
-        fetchSignalsAndPrices();
-        fetchNewsAndRisk();
-      }
+      setPollCountdown((prev) => (prev > 1 ? prev - 1 : pollSeconds));
     }, 1000);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        quantViewApi.sendPresenceHeartbeat();
-        fetchLiveQuotes();
         const elapsedSec = Math.floor((Date.now() - lastFetchTimestampRef.current) / 1000);
-        if (elapsedSec >= 30) {
-          fetchAccountAndPositions();
-          setPollCountdown(30);
-        }
-        if (elapsedSec >= 60) {
-          fetchSignalsAndPrices();
-          fetchNewsAndRisk();
+        if (elapsedSec >= pollSeconds) {
+          quantViewApi.sendPresenceHeartbeat();
+          fetchSnapshot();
         }
       }
     };
@@ -595,9 +784,10 @@ export const Dashboard: React.FC = () => {
 
     return () => {
       clearInterval(timer);
+      clearInterval(countdownTimer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
+  }, [fetchSnapshot, pollSeconds]);
 
   // Per-pair notification toggle
   const handleToggleNotify = (id: string, symbol: PairSymbol, currentVal: boolean) => {
@@ -649,7 +839,7 @@ export const Dashboard: React.FC = () => {
     );
 
     // Re-fetch fresh account from backend
-    setTimeout(fetchAccountAndPositions, 500);
+    setTimeout(fetchSnapshot, 500);
   };
 
   // On-demand market scan across all symbols
@@ -663,7 +853,7 @@ export const Dashboard: React.FC = () => {
         'Scan Completed',
         `Confluence engine evaluated ${res.data.symbols_scanned} symbols: ${count} actionable trade setup(s) identified.`
       );
-      await fetchSignalsAndPrices();
+      await fetchSnapshot();
     } catch (err: any) {
       addToast('warning', 'Scan Failed', err.message || 'Market scanner returned error');
     } finally {
@@ -681,7 +871,7 @@ export const Dashboard: React.FC = () => {
         'Calendar Synchronized',
         `Synced economic news events from ForexFactory provider via /api/v1/news/sync.`
       );
-      await fetchNewsAndRisk();
+      await fetchSnapshot();
     } catch (err: any) {
       addToast('warning', 'Sync Failed', err.message || 'Could not synchronize calendar');
     } finally {
@@ -699,11 +889,7 @@ export const Dashboard: React.FC = () => {
         'Scanner Triggered',
         `Background scanner cycle executed via /api/v1/telegram/scanner/trigger.`
       );
-      await Promise.allSettled([
-        fetchAccountAndPositions(),
-        fetchSignalsAndPrices(),
-        fetchNewsAndRisk(),
-      ]);
+      await fetchSnapshot();
     } catch (err: any) {
       addToast('warning', 'Scanner Error', err.message || 'Could not trigger background scanner');
     } finally {

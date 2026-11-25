@@ -39,9 +39,9 @@ def test_presence_endpoint_marks_dashboard_active(client):
     resp = client.post("/api/v1/market/presence")
 
     assert resp.status_code == 200
-    assert resp.json()["cache_ttl_seconds"] == settings.QUOTE_CACHE_TTL_SECONDS
+    assert resp.json()["cache_ttl_seconds"] == settings.QUOTE_RESPONSE_CACHE_TTL_SECONDS
     assert market_mod._presence_is_active() is True
-    assert market_mod._effective_cache_ttl() == float(settings.QUOTE_CACHE_TTL_SECONDS)
+    assert market_mod._effective_cache_ttl() == float(settings.QUOTE_RESPONSE_CACHE_TTL_SECONDS)
 
 
 @pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_active_presence_uses_60s_cache_ttl(monkeypatch):
     clock = {"now": 1000.0}
     monkeypatch.setattr(market_mod.time, "time", lambda: clock["now"])
     monkeypatch.setattr(settings, "QUOTE_PRESENCE_TTL_SECONDS", 60)
-    monkeypatch.setattr(settings, "QUOTE_CACHE_TTL_SECONDS", 60)
+    monkeypatch.setattr(settings, "QUOTE_RESPONSE_CACHE_TTL_SECONDS", 60)
     monkeypatch.setattr(settings, "QUOTE_IDLE_CACHE_TTL_SECONDS", 300)
 
     provider = AsyncMock()
@@ -77,7 +77,7 @@ async def test_idle_presence_stretches_ttl_to_300s(monkeypatch):
     clock = {"now": 2000.0}
     monkeypatch.setattr(market_mod.time, "time", lambda: clock["now"])
     monkeypatch.setattr(settings, "QUOTE_PRESENCE_TTL_SECONDS", 60)
-    monkeypatch.setattr(settings, "QUOTE_CACHE_TTL_SECONDS", 60)
+    monkeypatch.setattr(settings, "QUOTE_RESPONSE_CACHE_TTL_SECONDS", 60)
     monkeypatch.setattr(settings, "QUOTE_IDLE_CACHE_TTL_SECONDS", 300)
 
     provider = AsyncMock()

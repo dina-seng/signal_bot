@@ -326,15 +326,32 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   // 2. Fetch Base Historical Candlesticks from FastAPI backend
   const loadChartData = useCallback(async () => {
     try {
-      const [candlesRes, indRes, liqRes, structRes] = await Promise.allSettled([
-        quantViewApi.getCandles(selectedSymbol, selectedTimeframe, 60),
-        quantViewApi.getIndicators(selectedSymbol, selectedTimeframe),
-        quantViewApi.getLiquidityZones(selectedSymbol, selectedTimeframe),
-        quantViewApi.getStructure(selectedSymbol, selectedTimeframe),
-      ]);
+      let rawCandles: any[] = [];
+      let indData: any = null;
+      let liqData: any = null;
+      let structData: any = null;
 
-      if (candlesRes.status === 'fulfilled' && candlesRes.value.data?.length > 0) {
-        const rawCandles = candlesRes.value.data;
+      try {
+        // One cached round-trip instead of four parallel GETs.
+        const snapRes = await quantViewApi.getDashboardSnapshot(selectedSymbol, selectedTimeframe);
+        rawCandles = snapRes.data.candles || [];
+        indData = snapRes.data.indicators;
+        liqData = snapRes.data.liquidity;
+        structData = snapRes.data.structure;
+      } catch {
+        const [candlesRes, indRes, liqRes, structRes] = await Promise.allSettled([
+          quantViewApi.getCandles(selectedSymbol, selectedTimeframe, 60),
+          quantViewApi.getIndicators(selectedSymbol, selectedTimeframe),
+          quantViewApi.getLiquidityZones(selectedSymbol, selectedTimeframe),
+          quantViewApi.getStructure(selectedSymbol, selectedTimeframe),
+        ]);
+        if (candlesRes.status === 'fulfilled') rawCandles = candlesRes.value.data || [];
+        if (indRes.status === 'fulfilled') indData = indRes.value.data;
+        if (liqRes.status === 'fulfilled') liqData = liqRes.value.data;
+        if (structRes.status === 'fulfilled') structData = structRes.value.data;
+      }
+
+      if (rawCandles.length > 0) {
 
         const mapped: FormedCandle[] = rawCandles.map((c) => ({
           time: parseToUnixSeconds(c.timestamp),
@@ -396,15 +413,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         setIsRealData(false);
       }
 
-      if (indRes.status === 'fulfilled' && indRes.value.data) {
-        setIndicatorData(indRes.value.data);
-      }
-      if (liqRes.status === 'fulfilled' && liqRes.value.data) {
-        setLiquidityZones(liqRes.value.data);
-      }
-      if (structRes.status === 'fulfilled' && structRes.value.data) {
-        setStructureData(structRes.value.data);
-      }
+      if (indData) setIndicatorData(indData);
+      if (liqData) setLiquidityZones(liqData);
+      if (structData) setStructureData(structData);
     } catch (err) {
       console.warn('[TradingChart] Error loading candle data:', err);
     }

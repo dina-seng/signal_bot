@@ -86,6 +86,7 @@ class PaperTrade(Base):
     __table_args__ = (
         UniqueConstraint("account_id", "signal_id", name="uq_paper_trade_account_signal"),
         Index("ix_paper_trade_sym_status", "symbol", "status", "opened_at"),
+        Index("ix_paper_trade_account_status", "account_id", "status"),
     )
 
 

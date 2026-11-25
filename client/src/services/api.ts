@@ -42,6 +42,9 @@ export interface AppConfig {
   provider_name: string;
   quote_max_age_seconds: number;
   quote_cache_ttl_seconds?: number;
+  quote_response_cache_ttl_seconds?: number;
+  derived_cache_ttl_seconds?: number;
+  dashboard_poll_seconds?: number;
   quote_idle_cache_ttl_seconds?: number;
   quote_presence_ttl_seconds?: number;
   quote_stale_after_seconds?: number;
@@ -54,6 +57,29 @@ export interface PaperSummary {
   tick_price: number | null;
   tick_source: string;
   as_of: string;
+}
+
+/** One round-trip carrying every data group the dashboard main poll needs. */
+export interface DashboardSnapshot {
+  symbol: string;
+  timeframe: string;
+  quote: BackendQuote | null;
+  candles: any[];
+  indicators: any | null;
+  structure: any | null;
+  liquidity: any | null;
+  paper_summary: PaperSummary | null;
+  positions: BackendPosition[];
+  trades: BackendPaperTrade[];
+  performance: BackendPerformance | null;
+  signals: BackendSignal[];
+  news: BackendNewsEvent[];
+  blackout: BackendBlackoutCheck | null;
+  telegram_status: BackendTelegramStatus | null;
+  scanner_status: BackendScannerStatus | null;
+  config: AppConfig | null;
+  as_of: string;
+  timings_ms: Record<string, number>;
 }
 
 export interface BackendQuote {
@@ -395,11 +421,15 @@ async function fetchWithTiming<T>(url: string, options: RequestInit = {}, timeou
   const id = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const method = (options.method || 'GET').toUpperCase();
+    const hasBody = method !== 'GET' && method !== 'HEAD' && options.body !== undefined;
     const res = await fetch(url, {
       ...options,
       signal: controller.signal,
       headers: {
-        'Content-Type': 'application/json',
+        // Only send Content-Type when there is a body. On bodyless GETs this
+        // header is what forces a CORS preflight before every dashboard poll.
+        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
         ...(options.headers || {}),
       },
     });
@@ -448,6 +478,17 @@ export const quantViewApi = {
   async getSummary(): Promise<{ data: PaperSummary; durationMs: number }> {
     console.log('[API] GET /api/v1/paper/summary');
     return fetchWithTiming<PaperSummary>(`${API_BASE}/paper/summary`);
+  },
+
+  // 3a. Single dashboard snapshot — replaces the 10-endpoint poll waterfall.
+  async getDashboardSnapshot(
+    symbol = 'XAU/USD',
+    timeframe = '15m',
+  ): Promise<{ data: DashboardSnapshot; durationMs: number }> {
+    console.log('[API] GET /api/v1/dashboard/snapshot');
+    const url = `${API_BASE}/dashboard/snapshot?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`;
+    const timeout = Number(import.meta.env.VITE_SNAPSHOT_TIMEOUT_MS || 10000);
+    return fetchWithTiming<DashboardSnapshot>(url, {}, timeout);
   },
 
   // 3b. Paper Trading Open Positions

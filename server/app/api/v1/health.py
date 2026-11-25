@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func, desc
 from app.core.database import get_db, SessionLocal
 from app.core.config import settings
+from app.core.metrics import metrics
+from app.services.market_data.cache import derived_cache, provider_cache
 from app.models.candle import Candle
 from app.schemas.market import MarketHealthResponse
 from app.services.market_data.freshness import ensure_utc_datetime, is_forex_weekend
@@ -117,3 +119,30 @@ def get_health_status(db: Session = Depends(get_db)):
         last_sync_status="ok" if is_fresh else "sync_needed",
         last_sync_error=None,
     )
+
+
+@router.get("/health/latency")
+def get_latency_health():
+    """Expose measured pipeline timings so performance claims can be verified."""
+    provider_stats = provider_cache.stats()
+    derived_stats = derived_cache.stats()
+    snapshot = metrics.snapshot()
+    stages = snapshot["stages"]
+    return {
+        "provider_fetch_ms": provider_stats["avg_provider_fetch_ms"],
+        "cache_hit_rate": provider_stats["cache_hit_rate"],
+        "db_query_ms": stages.get("db", {}).get("avg_ms", 0.0),
+        "serialize_ms": stages.get("serialize", {}).get("avg_ms", 0.0),
+        "total_request_ms": snapshot["requests"].get("avg_ms", 0.0),
+        "provider_cache": provider_stats,
+        "derived_cache": derived_stats,
+        "stages": stages,
+        "requests": snapshot["requests"],
+        "sample_size": snapshot["sample_size"],
+        "config": {
+            "quote_cache_ttl_seconds": settings.QUOTE_CACHE_TTL_SECONDS,
+            "derived_cache_ttl_seconds": settings.DERIVED_CACHE_TTL_SECONDS,
+            "cors_max_age_seconds": settings.CORS_MAX_AGE_SECONDS,
+            "dashboard_poll_seconds": settings.DASHBOARD_POLL_SECONDS,
+        },
+    }

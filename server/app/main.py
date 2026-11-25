@@ -1,11 +1,13 @@
 """FastAPI Main Application Entrypoint."""
 
 from contextlib import asynccontextmanager
+import time
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.metrics import metrics
 from app.core.database import engine, init_db
 from sqlalchemy import inspect, text
 from app.api.v1.router import api_v1_router 
@@ -134,14 +136,48 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware
+# CORS Middleware — exact frontend origin(s) only, no wildcard with credentials.
+# The max-age header lets the browser cache the preflight response instead of
+# sending an OPTIONS request before every dashboard poll.
+_frontend_origins = [
+    origin.strip().rstrip("/")
+    for origin in settings.FRONTEND_ORIGIN.split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_frontend_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "X-Request-ID",
+    ],
+    expose_headers=["X-Response-Time-Ms"],
+    max_age=settings.CORS_MAX_AGE_SECONDS,
 )
+
+
+@app.middleware("http")
+async def record_request_latency(request: Request, call_next):
+    """Measure every request and log the total at DEBUG level."""
+    started = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+    metrics.record_request(request.url.path, duration_ms)
+    response.headers["X-Response-Time-Ms"] = str(duration_ms)
+    logger.debug(
+        "[latency] %s %s completed in %.2fms",
+        request.method,
+        request.url.path,
+        duration_ms,
+    )
+    return response
+
 
 # Include API Routers
 app.include_router(api_v1_router, prefix="/api")    

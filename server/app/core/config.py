@@ -125,9 +125,16 @@ class Settings(BaseSettings):
     # Deprecated: provider labels are minute-rounded, so this can never trip. Kept for
     # config compatibility only; staleness is now derived from last_price_change_at.
     QUOTE_MAX_AGE_SECONDS: int = 120
-    # Provider granularity is ~1 minute, so a 60s cache costs zero freshness while
-    # cutting provider credits ~6x versus the old 3s cache.
-    QUOTE_CACHE_TTL_SECONDS: int = 60
+    # Short TTL for live quote/candle provider ticks (single-flight cache in
+    # front of the upstream provider).
+    QUOTE_CACHE_TTL_SECONDS: float = Field(
+        default=5.0,
+        ge=0,
+        description="TTL for cached quote/candle provider ticks (seconds)",
+    )
+    # API-layer quote *response* cache. Provider granularity is ~1 minute, so a
+    # 60s response cache costs zero freshness while cutting provider credits.
+    QUOTE_RESPONSE_CACHE_TTL_SECONDS: int = 60
     # With no recent dashboard heartbeat, fall back to a slow lazy refresh cadence.
     QUOTE_IDLE_CACHE_TTL_SECONDS: int = 300
     # A dashboard heartbeat younger than this counts as an active viewer.
@@ -135,6 +142,43 @@ class Settings(BaseSettings):
     # STALE when the price itself has not changed for this long during market hours.
     QUOTE_STALE_AFTER_SECONDS: int = 180
     QUOTE_MAX_DEVIATION_PCT: float = 0.05
+
+    # API transport / dashboard aggregation (all tunables are env-driven)
+    # Exact cross-origin frontend origin. Comma-separated values are supported
+    # for multi-origin dev setups; no wildcard when credentials are enabled.
+    FRONTEND_ORIGIN: str = "http://localhost:3000"
+    CORS_MAX_AGE_SECONDS: int = Field(
+        default=86400,
+        ge=0,
+        description="Browser preflight cache lifetime for CORS (seconds)",
+    )
+    DASHBOARD_POLL_SECONDS: int = Field(
+        default=15,
+        ge=1,
+        description="Main dashboard snapshot poll interval (seconds)",
+    )
+    DASHBOARD_CANDLE_LIMIT: int = Field(default=60, ge=1, le=500)
+    DASHBOARD_DERIVED_LIMIT: int = Field(default=200, ge=20, le=2000)
+    DASHBOARD_NEWS_LIMIT: int = Field(default=30, ge=1, le=500)
+    DASHBOARD_SIGNALS_LIMIT: int = Field(default=25, ge=1, le=500)
+    DASHBOARD_TRADE_HISTORY_LIMIT: int = Field(default=50, ge=1, le=500)
+
+    # Provider cache + request coalescing
+    PROVIDER_CACHE_ENABLED: bool = True
+    DERIVED_CACHE_TTL_SECONDS: float = Field(
+        default=30.0,
+        ge=0,
+        description="TTL for derived indicators/structure/liquidity results (seconds)",
+    )
+    STALE_ON_THROTTLE: bool = Field(
+        default=True,
+        description="Serve the last-good cached value when the upstream provider throttles",
+    )
+    LATENCY_SAMPLE_SIZE: int = Field(
+        default=200,
+        ge=10,
+        description="Number of recent request latency samples kept in memory",
+    )
     YAHOO_GOLD_SYMBOL: str = "XAUUSD=X"
     TWELVE_DATA_API_KEY: Optional[str] = Field(
         default=None,

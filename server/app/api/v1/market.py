@@ -52,9 +52,9 @@ def get_supported_symbols():
 _quote_cache: Dict[Tuple[str, str], Tuple[float, QuoteResponse]] = {}
 
 # Timestamp (time.time()) of the most recent dashboard heartbeat. Presence gating:
-# active viewers refresh on QUOTE_CACHE_TTL_SECONDS, idle deployments on the much
-# slower QUOTE_IDLE_CACHE_TTL_SECONDS. There is no background quote loop; refresh
-# is lazy and only happens when something requests the quote.
+# active viewers refresh on QUOTE_RESPONSE_CACHE_TTL_SECONDS, idle deployments on
+# the much slower QUOTE_IDLE_CACHE_TTL_SECONDS. There is no background quote loop;
+# refresh is lazy and only happens when something requests the quote.
 _presence_last_beat: float = 0.0
 
 
@@ -65,7 +65,7 @@ def _presence_is_active(now: Optional[float] = None) -> bool:
 
 def _effective_cache_ttl(now: Optional[float] = None) -> float:
     if _presence_is_active(now):
-        return float(settings.QUOTE_CACHE_TTL_SECONDS)
+        return float(settings.QUOTE_RESPONSE_CACHE_TTL_SECONDS)
     return float(settings.QUOTE_IDLE_CACHE_TTL_SECONDS)
 
 
@@ -238,7 +238,7 @@ def record_dashboard_presence():
         "active": True,
         "last_heartbeat_at": datetime.fromtimestamp(_presence_last_beat, tz=timezone.utc),
         "presence_ttl_seconds": settings.QUOTE_PRESENCE_TTL_SECONDS,
-        "cache_ttl_seconds": settings.QUOTE_CACHE_TTL_SECONDS,
+        "cache_ttl_seconds": settings.QUOTE_RESPONSE_CACHE_TTL_SECONDS,
         "idle_cache_ttl_seconds": settings.QUOTE_IDLE_CACHE_TTL_SECONDS,
     }
 
