@@ -43,13 +43,16 @@ import {
   BackendQuote,
   AppConfig,
   DashboardSnapshot,
+  ApiError,
 } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import { formatPrice, getTimeUntil } from '../utils/formatters';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD'];
 
 export const Dashboard: React.FC = () => {
+  const { isAdmin, user: authUser, signOut } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
   const [account, setAccount] = useState(initialAccountSummary);
   const [stats, setStats] = useState(initialPerformanceStats);
@@ -697,6 +700,11 @@ export const Dashboard: React.FC = () => {
       lastFetchTimestampRef.current = Date.now();
       setLastUpdatedSecondsAgo(0);
     } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        // Session expired: clear it so the route guard redirects to /login.
+        await signOut();
+        return;
+      }
       console.warn('[QuantView API] Snapshot fetch failed, falling back:', err.message);
       setIsApiConnected(false);
       setApiErrorMessage(err.message || 'Dashboard snapshot unavailable');
@@ -709,7 +717,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       isFetchingSnapshotRef.current = false;
     }
-  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk]);
+  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk, signOut]);
 
   // Master manual refresh function
   const handleManualRefresh = async () => {
@@ -975,6 +983,11 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  // Non-admin users never see (or keep) the admin-only settings tab.
+  useEffect(() => {
+    if (!isAdmin && currentTab === 'settings') setCurrentTab('dashboard');
+  }, [isAdmin, currentTab]);
+
   // Shared navigation props for the persistent sidebar and the mobile drawer
   const sidebarProps = {
     currentTab,
@@ -984,6 +997,7 @@ export const Dashboard: React.FC = () => {
     isBlackout: riskStatus.isBlackout,
     isApiConnected,
     isScannerRunning: scannerStatus?.is_running,
+    isAdmin,
   };
 
   return (
@@ -1250,7 +1264,8 @@ export const Dashboard: React.FC = () => {
                 />
               </GlassCard>
 
-              {/* Notification & Background Scanner Settings Panel (Full width 12-col) */}
+              {/* Notification & Background Scanner Settings Panel (ADMIN ONLY) */}
+              {isAdmin && (
               <GlassCard className="col-span-12">
                 <NotificationSettings
                   config={alertConfig}
@@ -1265,6 +1280,7 @@ export const Dashboard: React.FC = () => {
                   isTriggeringScanner={isTriggeringScanner}
                 />
               </GlassCard>
+              )}
             </div>
           )}
 
@@ -1337,8 +1353,8 @@ export const Dashboard: React.FC = () => {
             </div>
           )}
 
-          {/* 5. DEDICATED NOTIFICATION SETTINGS TAB */}
-          {currentTab === 'settings' && (
+          {/* 5. DEDICATED NOTIFICATION SETTINGS TAB (ADMIN ONLY) */}
+          {isAdmin && currentTab === 'settings' && (
             <div className="grid grid-cols-12 gap-4 w-full">
               <GlassCard className="col-span-12">
                 <NotificationSettings

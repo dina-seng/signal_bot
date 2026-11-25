@@ -103,11 +103,20 @@ async def telegram_webhook(
 
     if text.startswith("/"):
         cmd_root = text.split()[0].split("@")[0].lower()
+
+        def _extract(field: str, default=None):
+            if not user:
+                return default
+            if isinstance(user, dict):
+                return user.get(field, default)
+            return getattr(user, field, default)
+
         cmd_req = TelegramCommandRequest(
             command=text,
             chat_id=chat_id,
-            user_id=getattr(user, "id", None) if user else None,
-            user_name=getattr(user, "username", None) if user else None,
+            user_id=_extract("id"),
+            user_name=_extract("username"),
+            user_first_name=_extract("first_name"),
         )
 
         if cmd_root in _HEAVY_COMMANDS:

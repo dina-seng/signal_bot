@@ -10,6 +10,7 @@ from app.models.signal_candidate import SignalCandidate
 from app.models.backtest import BacktestRun, BacktestTrade
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
 from app.models.api_usage import ApiUsage
+from app.models.user import User, LoginToken
 
 __all__ = [
     "Base",
@@ -27,4 +28,6 @@ __all__ = [
     "PaperTrade",
     "AccountTransaction",
     "ApiUsage",
+    "User",
+    "LoginToken",
 ]

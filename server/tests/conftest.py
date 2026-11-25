@@ -81,6 +81,15 @@ def disable_background_scanner():
 
 
 @pytest.fixture(autouse=True)
+def disable_http_session_auth():
+    """Existing tests exercise unauthenticated endpoints; auth has its own tests."""
+    original = settings.AUTH_ENABLED
+    settings.AUTH_ENABLED = False
+    yield
+    settings.AUTH_ENABLED = original
+
+
+@pytest.fixture(autouse=True)
 def enforce_test_symbols():
     """Pin SUPPORTED_SYMBOLS to the active single-asset (XAU/USD) for all tests."""
     orig = settings.SUPPORTED_SYMBOLS
