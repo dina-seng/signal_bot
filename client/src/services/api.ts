@@ -468,17 +468,37 @@ async function fetchWithTiming<T>(url: string, options: RequestInit = {}, timeou
     });
     const durationMs = Math.round(performance.now() - start);
 
+    // Guard: if the response is not JSON (e.g. Netlify HTML error page when
+    // Render is cold-starting, or a proxy 502/504 that slips through as 200),
+    // treat it as a server error so callers never hit a SyntaxError.
+    const contentType = res.headers.get('content-type') ?? '';
+    const isJson = contentType.includes('application/json');
+
     if (!res.ok) {
       // Surface the backend `detail` so operators see the real rejection reason
       // (e.g. staleness, no 15m candles) instead of a generic "Bad Request".
       let detail = '';
-      try {
-        const body = await res.json();
-        detail = typeof body?.detail === 'string' ? body.detail : JSON.stringify(body?.detail ?? body);
-      } catch {
-        detail = res.statusText;
+      if (isJson) {
+        try {
+          const body = await res.json();
+          detail = typeof body?.detail === 'string' ? body.detail : JSON.stringify(body?.detail ?? body);
+        } catch {
+          detail = res.statusText;
+        }
+      } else {
+        detail = res.statusText || `non-JSON response (content-type: ${contentType || 'none'})`;
       }
       throw new ApiError(res.status, `HTTP ${res.status}: ${detail || res.statusText}`);
+    }
+
+    // Even a 200 can carry an HTML body (Netlify CDN 200 for the SPA when the
+    // proxy rule is missed, or a cold-start redirect that lands on /index.html).
+    if (!isJson) {
+      throw new ApiError(
+        502,
+        `Expected JSON but got "${contentType || 'unknown content-type'}" from ${url}. ` +
+        `This usually means the /api/* proxy rule is not matching or Render is returning an error page.`
+      );
     }
 
     const data = await res.json();

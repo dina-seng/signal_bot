@@ -2,21 +2,22 @@ name: Render Keep-Alive (Cambodia Market Hours)
 
 on:
   schedule:
-    # 🇰🇭 MONDAY MARKET OPEN: 
+    # 🇰🇭 MONDAY MARKET OPEN:
     # Sunday 21:00 UTC = Monday 04:00 AM Cambodia
-    # Pings every 10 mins to catch the exact minute the market opens
-    - cron: "*/10 21-23 * * 0"
-    
-    # 🇰🇭 FULL TRADING DAYS (Mon-Thu): 
+    # Pings every 5 mins — tighter cadence prevents cold-start on market open
+    - cron: "*/5 21-23 * * 0"
+
+    # 🇰🇭 FULL TRADING DAYS (Mon-Thu):
     # 00:00 UTC = 07:00 AM Cambodia
-    # Server stays awake 24/7 during these days
-    - cron: "*/10 * * * 1-4"
-    
-    # 🇰🇭 FRIDAY MARKET CLOSE: 
+    # Every 5 min keeps Render warm; cold-start (50s) would cause proxy timeouts
+    # and return Render's HTML error page instead of JSON → SyntaxError in client
+    - cron: "*/5 * * * 1-4"
+
+    # 🇰🇭 FRIDAY MARKET CLOSE:
     # Friday 00:00 to 22:50 UTC = Saturday 07:00 AM to 05:50 AM Cambodia
     # Pings until the exact minute the market closes for the weekend
-    - cron: "*/10 0-22 * * 5"
-    
+    - cron: "*/5 0-22 * * 5"
+
   # Allow manual trigger from the GitHub Actions tab if needed
   workflow_dispatch: {}
 
@@ -30,7 +31,7 @@ jobs:
           # 1st call: Absorbs the 30-50s Render cold-start delay. Don't fail if this times out.
           curl -sS -o /dev/null -w "warm-up: %{http_code} in %{time_total}s\n" \
             --max-time 110 https://signal-bot-hemp.onrender.com/ping || true
-            
+
           # 2nd call: Now that server is awake, this MUST succeed
           curl -sf -o /dev/null -w "final: %{http_code} in %{time_total}s\n" \
             --max-time 30 --retry 2 --retry-delay 5 --retry-all-errors \

@@ -21,8 +21,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res = await quantViewApi.getSession();
       setUser(res.data.authenticated ? res.data.user : null);
     } catch (err) {
-      if (!(err instanceof ApiError) || err.status !== 401) {
-        console.warn('[Auth] Session check failed:', err);
+      // 401 → not logged in (expected).
+      // 502 → proxy returned HTML instead of JSON (Render cold-start or broken
+      //        proxy rule). Both cases: treat as logged-out, never surface a
+      //        SyntaxError. Log proxy errors at warn level for visibility.
+      if (err instanceof ApiError) {
+        if (err.status !== 401) {
+          console.warn(
+            `[Auth] Session check returned HTTP ${err.status}: ${err.message}. ` +
+            (err.status === 502
+              ? 'Likely cause: /api/* proxy rule not matching or Render cold-start returned HTML.'
+              : 'Treating as logged-out.')
+          );
+        }
+      } else {
+        // Network error, abort, etc. — still treat as logged-out.
+        console.warn('[Auth] Session check failed (network/parse error):', err);
       }
       setUser(null);
     } finally {
