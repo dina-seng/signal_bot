@@ -1,6 +1,7 @@
 """FastAPI Main Application Entrypoint."""
 
 from contextlib import asynccontextmanager
+import os
 import time
 import httpx
 from fastapi import FastAPI, Request
@@ -41,6 +42,26 @@ def _ensure_required_columns() -> None:
                     conn.execute(
                         text(f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR(64)")
                     )
+
+
+def _log_alembic_state() -> None:
+    """Log alembic current/heads equivalents so Render proves the DB revision."""
+    try:
+        from alembic.config import Config
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        ini_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "alembic.ini"
+        )
+        cfg = Config(ini_path)
+        heads = ScriptDirectory.from_config(cfg).get_heads()
+        with engine.connect() as connection:
+            current = MigrationContext.configure(connection).get_current_revision()
+        logger.info(f"[alembic] current: {current or '(none)'}")
+        logger.info(f"[alembic] heads: {', '.join(heads) or '(none)'}")
+    except Exception as exc:
+        logger.warning(f"[alembic] Could not inspect migration state: {exc}")
 
 
 def _heal_pending_market_trades() -> None:
@@ -114,6 +135,7 @@ async def lifespan(app: FastAPI):
         
     init_db()
     _ensure_required_columns()
+    _log_alembic_state()
     _heal_pending_market_trades()
 
     # Persistent shared HTTP client — eliminates per-request TCP/TLS handshake overhead.

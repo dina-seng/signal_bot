@@ -84,9 +84,16 @@ def disable_background_scanner():
 def disable_http_session_auth():
     """Existing tests exercise unauthenticated endpoints; auth has its own tests."""
     original = settings.AUTH_ENABLED
+    original_secure = settings.SESSION_COOKIE_SECURE
+    original_samesite = settings.SESSION_COOKIE_SAMESITE
     settings.AUTH_ENABLED = False
+    # TestClient speaks plain HTTP; a Secure cookie would never be sent back.
+    settings.SESSION_COOKIE_SECURE = False
+    settings.SESSION_COOKIE_SAMESITE = "lax"
     yield
     settings.AUTH_ENABLED = original
+    settings.SESSION_COOKIE_SECURE = original_secure
+    settings.SESSION_COOKIE_SAMESITE = original_samesite
 
 
 @pytest.fixture(autouse=True)

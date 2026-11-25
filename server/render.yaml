@@ -6,7 +6,10 @@ services:
     buildCommand: |
       pip install -r requirements.txt
       alembic upgrade head
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Apply schema migrations on EVERY boot (not just at build time), so a
+    # stale DATABASE_URL or a skipped build-time migration cannot leave the
+    # running app with a schema older than the models.
+    startCommand: cd server 2>/dev/null || true; alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.8

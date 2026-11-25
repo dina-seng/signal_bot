@@ -14,6 +14,55 @@ from app.services.signals import RiskManager
 class VirtualAccountManager:
     """Manages virtual trading accounts, margin checks, balance, equity, and transactions."""
 
+    # Columns that exist on every deployment, including databases that never
+    # received the Milestone 2 user_id migration. Used only as a last-resort
+    # fallback when the full ORM select fails with schema drift.
+    _LEGACY_ACCOUNT_COLUMNS = (
+        "id", "name", "initial_balance", "balance", "equity", "margin_used",
+        "free_margin", "currency", "leverage", "is_active", "created_at", "updated_at",
+    )
+
+    def _legacy_active_account(
+        self, db: Session, account_id: Optional[int] = None
+    ) -> Optional[VirtualAccount]:
+        """Select an account without referring to any post-migration column."""
+        table = VirtualAccount.__table__
+        columns = [table.c[name] for name in self._LEGACY_ACCOUNT_COLUMNS]
+        stmt = select(*columns)
+        stmt = (
+            stmt.where(table.c.id == account_id)
+            if account_id is not None
+            else stmt.where(table.c.is_active == True)
+        )
+        row = db.execute(stmt.order_by(table.c.id.asc())).first()
+        if row is None:
+            return None
+        return VirtualAccount(**dict(zip(self._LEGACY_ACCOUNT_COLUMNS, row)))
+
+    def _find_active_account(self, db: Session) -> Optional[VirtualAccount]:
+        """Look up the active account, surviving a missing user_id column."""
+        try:
+            return db.scalars(
+                select(VirtualAccount)
+                .where(VirtualAccount.is_active == True)
+                .order_by(VirtualAccount.id.asc())
+            ).first()
+        except Exception as exc:
+            # The failed statement poisons the transaction on Postgres. Roll back
+            # first, otherwise every subsequent query fails with
+            # InFailedSqlTransaction and the whole dashboard 500s.
+            db.rollback()
+            logger.warning(
+                "Active-account query failed (schema drift, e.g. missing "
+                "virtual_accounts.user_id): %s. Falling back to legacy columns.",
+                exc,
+            )
+            try:
+                return self._legacy_active_account(db)
+            except Exception as legacy_exc:
+                logger.error("Legacy active-account lookup also failed: %s", legacy_exc)
+                return None
+
     @staticmethod
     def calculate_required_margin(symbol: str, lots: float, price: float, leverage: int = 100) -> float:
         """Calculate required margin in USD for a given position size."""
@@ -32,8 +81,7 @@ class VirtualAccountManager:
 
     def get_or_create_default_account(self, db: Session) -> VirtualAccount:
         """Fetch the active primary account or initialize one with $10,000."""
-        stmt = select(VirtualAccount).where(VirtualAccount.is_active == True).order_by(VirtualAccount.id.asc())
-        account = db.scalars(stmt).first()
+        account = self._find_active_account(db)
         if not account:
             try:
                 account = VirtualAccount(
@@ -61,18 +109,51 @@ class VirtualAccountManager:
                 db.add(tx)
                 db.commit()
                 logger.info(f"Initialized Primary Virtual Account #{account.id} with $10,000.")
-            except Exception:
+            except Exception as exc:
                 db.rollback()
-                account = db.scalars(stmt).first()
+                logger.warning(
+                    "Default-account creation failed (%s); retrying with legacy columns.", exc
+                )
+                try:
+                    table = VirtualAccount.__table__
+                    now = datetime.now(timezone.utc)
+                    result = db.execute(
+                        table.insert().values(
+                            name="Primary Virtual Account",
+                            initial_balance=10000.0,
+                            balance=10000.0,
+                            equity=10000.0,
+                            margin_used=0.0,
+                            free_margin=10000.0,
+                            currency="USD",
+                            leverage=100,
+                            is_active=True,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    account_id = result.inserted_primary_key[0]
+                    db.add(
+                        AccountTransaction(
+                            account_id=account_id,
+                            transaction_type="DEPOSIT",
+                            amount=10000.0,
+                            balance_after=10000.0,
+                            description="Initial Account Deposit",
+                        )
+                    )
+                    db.commit()
+                    account = self._legacy_active_account(db, account_id)
+                    logger.info(f"Initialized Primary Virtual Account #{account_id} with $10,000.")
+                except Exception as legacy_exc:
+                    db.rollback()
+                    logger.error("Legacy default-account creation failed: %s", legacy_exc)
+                    account = self._find_active_account(db)
         return account
 
     def get_active_account(self, db: Session) -> Optional[VirtualAccount]:
         """Return the active paper account, or None. Never creates one implicitly."""
-        return db.scalars(
-            select(VirtualAccount)
-            .where(VirtualAccount.is_active == True)
-            .order_by(VirtualAccount.id.asc())
-        ).first()
+        return self._find_active_account(db)
 
     def create_account(self, db: Session, request: VirtualAccountCreate) -> VirtualAccount:
         """Create a new virtual account."""
