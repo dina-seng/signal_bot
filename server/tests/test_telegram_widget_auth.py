@@ -72,3 +72,51 @@ def test_telegram_widget_expired_payload(client, monkeypatch):
     payload = _widget_payload(stale=True)
     response = client.post("/api/v1/auth/telegram-widget-verify", json=payload, follow_redirects=False)
     assert response.status_code == 401
+
+
+def test_widget_valid_signature(client, test_db_session, monkeypatch):
+    """GET query params signed with SHA256(bot_token).digest() authenticate."""
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setattr(settings, "ADMIN_TELEGRAM_ID", 557)
+    payload = _widget_payload(telegram_id=557)
+    payload["last_name"] = "Signed"
+
+    # Re-sign including the extra field.
+    data = {k: v for k, v in payload.items() if k != "hash"}
+    check = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
+    import hashlib
+    import hmac
+    payload["hash"] = hmac.new(
+        hashlib.sha256(BOT_TOKEN.encode()).digest(),
+        check.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    response = client.get(
+        "/api/v1/auth/telegram-widget-verify", params=payload, follow_redirects=False
+    )
+    assert response.status_code == 302
+    assert response.headers["location"].endswith("/dashboard")
+    assert settings.SESSION_COOKIE_NAME in response.cookies
+    assert test_db_session.query(User).filter(User.telegram_id == 557).one().is_admin is True
+
+
+def test_widget_invalid_signature(client, monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    payload = _widget_payload()
+    payload["hash"] = "0" * 64
+    response = client.get(
+        "/api/v1/auth/telegram-widget-verify", params=payload, follow_redirects=False
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid Telegram widget signature"
+
+
+def test_widget_future_auth_date_accepted(client, monkeypatch):
+    """Future timestamps are not rejected (staleness is one-directional)."""
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    payload = _widget_payload(auth_date=int(time.time()) + 600)
+    response = client.post(
+        "/api/v1/auth/telegram-widget-verify", json=payload, follow_redirects=False
+    )
+    assert response.status_code == 302

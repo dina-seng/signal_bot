@@ -1,5 +1,6 @@
 """Application configuration management using Pydantic Settings."""
 
+import logging
 from typing import Annotated, List, Optional
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -232,6 +233,7 @@ class Settings(BaseSettings):
 
     # Milestone 2 — Telegram authentication & multi-user broadcasting
     AUTH_ENABLED: bool = True
+    AUTH_DEBUG: bool = False
     JWT_SECRET_KEY: str = Field(
         default="dev-only-session-secret-change-me",
         min_length=8,
@@ -276,6 +278,20 @@ class Settings(BaseSettings):
                 except Exception:
                     pass
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("TELEGRAM_BOT_TOKEN", mode="before")
+    @classmethod
+    def sanitize_bot_token(cls, value):
+        """Strip accidental whitespace; warn about whitespace/quotes in env."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped != value or '"' in value or "'" in value:
+                logging.getLogger(__name__).warning(
+                    "TELEGRAM_BOT_TOKEN has leading/trailing whitespace or quotes; "
+                    "whitespace was stripped (quotes are left as-is)."
+                )
+            return stripped
         return value
 
     @field_validator("FRONTEND_ORIGIN", mode="after")

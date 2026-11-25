@@ -69,30 +69,31 @@ def decode_session_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
 
-def verify_telegram_widget_signature(payload: Dict[str, Any], provided_hash: str) -> bool:
-    """Verify a Telegram Login Widget payload.
-
-    Telegram signs the alphabetically sorted ``key=value`` lines with
-    HMAC-SHA256 keyed by SHA256(bot token). We also accept the literal-token
-    variant documented by some deployments, then use constant-time comparison.
-    """
-    data_check_string = "\n".join(
+def telegram_widget_data_check_string(payload: Dict[str, Any]) -> str:
+    """Alphabetically sorted ``key=value`` lines, excluding hash (Login Widget)."""
+    return "\n".join(
         f"{key}={value}"
         for key, value in sorted(payload.items())
         if key != "hash" and value is not None
     )
-    token = settings.TELEGRAM_BOT_TOKEN or ""
-    if not token:
+
+
+def telegram_widget_computed_hash(payload: Dict[str, Any]) -> str:
+    """Official Login Widget HMAC: SHA256(bot_token).digest() is the key."""
+    token = (settings.TELEGRAM_BOT_TOKEN or "").strip()
+    secret_key = hashlib.sha256(token.encode("utf-8")).digest()
+    data_check_string = telegram_widget_data_check_string(payload)
+    return hmac.new(
+        secret_key, data_check_string.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+
+
+def verify_telegram_widget_signature(payload: Dict[str, Any], provided_hash: str) -> bool:
+    """Constant-time verification against Telegram's Login Widget signature."""
+    if not settings.TELEGRAM_BOT_TOKEN:
         return False
-    secret_variants = (
-        hashlib.sha256(token.encode("utf-8")).digest(),  # official Telegram spec
-        token.encode("utf-8"),  # deployments that key with the raw token
-    )
-    for secret in secret_variants:
-        computed = hmac.new(secret, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-        if hmac.compare_digest(computed, provided_hash or ""):
-            return True
-    return False
+    computed = telegram_widget_computed_hash(payload)
+    return hmac.compare_digest(computed, provided_hash or "")
 
 
 def generate_login_token() -> str:

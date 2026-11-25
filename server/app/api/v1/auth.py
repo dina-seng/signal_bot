@@ -1,7 +1,7 @@
 """Telegram magic-link and official Login Widget authentication endpoints."""
 
 import time
-from typing import Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -13,6 +13,8 @@ from app.core.logging import logger
 from app.core.security import (
     create_session_token,
     decode_session_token,
+    telegram_widget_computed_hash,
+    telegram_widget_data_check_string,
     verify_telegram_widget_signature,
 )
 from app.schemas.auth import (
@@ -67,19 +69,37 @@ def verify_login_token(
     return SessionResponse(authenticated=True, user=UserResponse.model_validate(user))
 
 
-def _widget_redirect(payload: TelegramWidgetPayload, db: Session) -> RedirectResponse:
+def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session) -> RedirectResponse:
     """Validate Telegram's signed payload and issue a 30-day session cookie."""
-    if not verify_telegram_widget_signature(payload.signing_data(), payload.hash):
-        logger.warning("Rejected Telegram widget login: invalid hash for id %s", payload.id)
+    if not verify_telegram_widget_signature(data, received_hash):
+        if settings.AUTH_DEBUG:
+            logger.debug(
+                "[AUTH_DEBUG] widget data_check_string=%r computed_hash=%s",
+                telegram_widget_data_check_string(data),
+                telegram_widget_computed_hash(data),
+            )
+        logger.warning(
+            "Rejected Telegram widget login: invalid hash for id %s", data.get("id")
+        )
         raise HTTPException(status_code=401, detail="Invalid Telegram widget signature")
 
-    age_seconds = int(time.time()) - payload.auth_date
+    try:
+        telegram_id = int(data["id"])
+        auth_date = int(data["auth_date"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid Telegram widget payload")
+
+    # One-directional: only stale payloads are rejected; future clock skew is OK.
+    age_seconds = int(time.time()) - auth_date
     if age_seconds > settings.WIDGET_AUTH_MAX_AGE_SECONDS:
         logger.warning("Rejected Telegram widget login: auth_date is %ss old", age_seconds)
         raise HTTPException(status_code=401, detail="Telegram widget payload expired")
 
     user = AuthService().get_or_create_widget_user(
-        db, payload.id, username=payload.username, first_name=payload.first_name
+        db,
+        telegram_id,
+        username=data.get("username"),
+        first_name=data.get("first_name"),
     )
     redirect = RedirectResponse(url=settings.DASHBOARD_REDIRECT_URL, status_code=302)
     redirect.set_cookie(
@@ -100,29 +120,22 @@ def telegram_widget_verify_post(
     db: Session = Depends(get_db),
 ):
     """JSON fallback for the Telegram Login Widget callback."""
-    return _widget_redirect(payload, db)
+    return _widget_redirect(payload.signing_data(), payload.hash, db)
 
 
 @router.get("/telegram-widget-verify")
-def telegram_widget_verify_get(
-    id: int,
-    auth_date: int,
-    hash: str,
-    first_name: str = "",
-    username: Optional[str] = None,
-    photo_url: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    """Primary callback: the widget navigates here with query parameters."""
-    payload = TelegramWidgetPayload(
-        id=id,
-        first_name=first_name,
-        username=username,
-        photo_url=photo_url,
-        auth_date=auth_date,
-        hash=hash,
-    )
-    return _widget_redirect(payload, db)
+def telegram_widget_verify_get(request: Request, db: Session = Depends(get_db)):
+    """Primary callback: widget navigates here with decoded query parameters.
+
+    We read raw query params so extra signed fields (e.g. last_name) are also
+    included verbatim in the data-check-string.
+    """
+    data = {
+        key: value
+        for key, value in request.query_params.items()
+        if key != "hash"
+    }
+    return _widget_redirect(data, request.query_params.get("hash", ""), db)
 
 
 @router.get("/me", response_model=SessionResponse)
