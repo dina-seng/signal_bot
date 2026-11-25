@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     UniqueConstraint,
+    Uuid,
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -30,6 +31,10 @@ class VirtualAccount(Base):
     currency = Column(String(10), nullable=False, default="USD")
     leverage = Column(Integer, nullable=False, default=100)  # e.g. 100 for 1:100 leverage
     is_active = Column(Boolean, nullable=False, default=True)
+    # NULL = legacy/shared account; new rows may be scoped to a Telegram user.
+    user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
@@ -44,6 +49,10 @@ class PaperTrade(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     account_id = Column(Integer, ForeignKey("virtual_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    # NULL = legacy single-user trade; preserved for all existing rows.
+    user_id = Column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     signal_id = Column(Integer, nullable=True, index=True)
     symbol = Column(String(20), nullable=False, index=True)
     direction = Column(String(10), nullable=False)  # "BUY", "SELL"

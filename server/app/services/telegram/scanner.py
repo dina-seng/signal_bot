@@ -35,6 +35,7 @@ from app.services.news import (
 from app.services.paper_trading import PaperTradingService
 from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
 from app.services.signals import SignalGenerator
+from app.services.telegram.broadcast import broadcast_to_subscribers
 from app.services.telegram.client import BaseTelegramClient, get_telegram_client
 from app.services.telegram.message_formatter import TelegramMessageFormatter
 
@@ -159,7 +160,9 @@ class AutomatedMarketScanner:
         pnl = float(getattr(trade, "realized_pnl", 0.0) or 0.0)
         return "TP" if pnl > 0 else "SL"
 
-    async def _send_trade_exit_alert(self, trade: PaperTrade, ev: str = "") -> bool:
+    async def _send_trade_exit_alert(
+        self, trade: PaperTrade, ev: str = "", db: Optional[Session] = None
+    ) -> bool:
         """Broadcast the correct TP/SL template for one closed position."""
         reason = str(getattr(trade, "exit_reason", "") or "").upper()
         exit_kind = self._classify_exit(trade, ev)
@@ -212,11 +215,15 @@ class AutomatedMarketScanner:
                 timestamp=timestamp,
             )
 
-        await self.telegram_client.send_message(
-            text=msg_text,
-            parse_mode="HTML",
-            signal_id=trade.signal_id,
-        )
+        owned_db = db is None
+        session = db or SessionLocal()
+        try:
+            await broadcast_to_subscribers(
+                session, self.telegram_client, text=msg_text, signal_id=trade.signal_id
+            )
+        finally:
+            if owned_db:
+                session.close()
         return True
 
     async def _auto_execute_signal(
@@ -296,11 +303,12 @@ class AutomatedMarketScanner:
             logger.warning(f"Auto-execution rejected (risk budget) for {sig.symbol}: {e}")
             if broadcast_to_telegram:
                 try:
-                    await self.telegram_client.send_message(
+                    await broadcast_to_subscribers(
+                        db,
+                        self.telegram_client,
                         text=self.formatter.format_trade_rejection(
                             sig, rejection_reason, getattr(e, "hints", {})
                         ),
-                        parse_mode="HTML",
                         signal_id=sig.id or sig.fingerprint,
                     )
                 except Exception as send_err:
@@ -310,9 +318,10 @@ class AutomatedMarketScanner:
             logger.error(f"Auto-execution rejected for {sig.symbol}: {e}")
             if broadcast_to_telegram:
                 try:
-                    await self.telegram_client.send_message(
+                    await broadcast_to_subscribers(
+                        db,
+                        self.telegram_client,
                         text=self.formatter.format_trade_rejection(sig, rejection_reason, {}),
-                        parse_mode="HTML",
                         signal_id=sig.id or sig.fingerprint,
                     )
                 except Exception as send_err:
@@ -328,9 +337,10 @@ class AutomatedMarketScanner:
         )
         if broadcast_to_telegram:
             try:
-                await self.telegram_client.send_message(
+                await broadcast_to_subscribers(
+                    db,
+                    self.telegram_client,
                     text=self.formatter.format_auto_execution(trade),
-                    parse_mode="HTML",
                     signal_id=sig.id or sig.fingerprint,
                 )
             except Exception as e:
@@ -692,12 +702,14 @@ class AutomatedMarketScanner:
                             self._broadcasted_fingerprints.add(sig.fingerprint)
                             try:
                                 msg_text = self.formatter.format_signal_alert(sig)
-                                send_res = await self.telegram_client.send_message(
+                                results = await broadcast_to_subscribers(
+                                    db,
+                                    self.telegram_client,
                                     text=msg_text,
-                                    parse_mode="HTML",
                                     signal_id=sig.id or sig.fingerprint,
                                 )
-                                if send_res.success:
+                                send_res = results[0] if results else None
+                                if send_res is not None and send_res.success:
                                     signals_broadcast += 1
                                     if sig.id:
                                         db_sig = db.get(Signal, sig.id)
@@ -709,8 +721,11 @@ class AutomatedMarketScanner:
                                         f"[{sig.timeframe}] (Score: {sig.setup_score:.1f})"
                                     )
                                 else:
+                                    error_detail = (
+                                        send_res.error if send_res is not None else "no recipients"
+                                    )
                                     logger.error(
-                                        f"Telegram delivery failed for {sig.symbol}: {send_res.error}"
+                                        f"Telegram delivery failed for {sig.symbol}: {error_detail}"
                                     )
                             except Exception as e:
                                 logger.error(f"Telegram delivery failed for {sig.symbol}: {e}")
@@ -750,11 +765,17 @@ class AutomatedMarketScanner:
                                     trade_id = int(match.group(1))
                                     trade = db.get(PaperTrade, trade_id)
                                     if trade:
-                                        msg_sent = await self._send_trade_exit_alert(trade, ev)
+                                        msg_sent = await self._send_trade_exit_alert(
+                                            trade, ev, db=db
+                                        )
                                 if not msg_sent:
-                                    await self.telegram_client.send_message(
-                                        text=f"🔔 <b>POSITION UPDATE:</b> <code>{self.formatter.escape_html(ev)}</code>",
-                                        parse_mode="HTML",
+                                    await broadcast_to_subscribers(
+                                        db,
+                                        self.telegram_client,
+                                        text=(
+                                            "🔔 <b>POSITION UPDATE:</b> "
+                                            f"<code>{self.formatter.escape_html(ev)}</code>"
+                                        ),
                                     )
                             except Exception as e:
                                 logger.error(f"Telegram delivery failed for position update: {e}")

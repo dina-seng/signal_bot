@@ -5,9 +5,11 @@ import time
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.metrics import metrics
+from app.core.security import decode_session_token
 from app.core.database import engine, init_db
 from sqlalchemy import inspect, text
 from app.api.v1.router import api_v1_router 
@@ -100,6 +102,11 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info(f"Starting {settings.PROJECT_NAME} in [{settings.APP_ENV}] mode (MODE={settings.MODE})...")
     logger.info(f"Risk per order: MAX_RISK_PERCENT = {settings.MAX_RISK_PERCENT:.1f}% (source: settings/.env)")
+    if (
+        settings.APP_ENV.lower() in {"production", "prod"}
+        and settings.JWT_SECRET_KEY == "dev-only-session-secret-change-me"
+    ):
+        logger.warning("JWT_SECRET_KEY is the development default — set a strong secret in env.")
     
     # Fail fast if MOCK provider is configured for LIVE mode
     if settings.MODE.lower() == "live" and settings.MARKET_DATA_PROVIDER.lower() == "mock":
@@ -137,21 +144,18 @@ app = FastAPI(
 )
 
 # CORS Middleware — exact frontend origin(s) only, no wildcard with credentials.
-# The max-age header lets the browser cache the preflight response instead of
-# sending an OPTIONS request before every dashboard poll.
-_frontend_origins = [
-    origin.strip().rstrip("/")
-    for origin in settings.FRONTEND_ORIGIN.split(",")
-    if origin.strip()
-]
+# settings.FRONTEND_ORIGIN is normalised to a non-empty List[str] by config.py,
+# so a blank/malformed env var can never silently allow zero origins.
+_frontend_origins = list(settings.FRONTEND_ORIGIN)
+logger.info(f"🌐 CORS configured for origins: {settings.FRONTEND_ORIGIN}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_frontend_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=[
-        "Authorization",
         "Content-Type",
+        "Authorization",
         "Accept",
         "Origin",
         "X-Requested-With",
@@ -177,6 +181,34 @@ async def record_request_latency(request: Request, call_next):
         duration_ms,
     )
     return response
+
+
+# Session guard is innermost: CORS still answers OPTIONS and decorates 401s,
+# while latency logging still measures the full request including auth.
+_PUBLIC_PATHS = {"/ping", "/", "/docs", "/redoc", "/openapi.json"}
+_PUBLIC_PREFIXES = ("/api/v1/auth/", "/api/v1/health")
+_TELEGRAM_WEBHOOK = "/api/v1/telegram/webhook"
+
+
+@app.middleware("http")
+async def enforce_session_auth(request: Request, call_next):
+    """Require a signed session cookie for every non-public API request."""
+    path = request.url.path
+    is_public = (
+        not settings.AUTH_ENABLED
+        or request.method == "OPTIONS"
+        or path in _PUBLIC_PATHS
+        or path.startswith(_PUBLIC_PREFIXES)
+        or path == _TELEGRAM_WEBHOOK
+    )
+    if is_public:
+        return await call_next(request)
+
+    claims = decode_session_token(request.cookies.get(settings.SESSION_COOKIE_NAME))
+    if claims is None:
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+    request.state.user = claims
+    return await call_next(request)
 
 
 # Include API Routers

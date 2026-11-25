@@ -20,6 +20,7 @@ import app.models.structure
 import app.models.liquidity
 import app.models.backtest
 import app.models.api_usage
+import app.models.user
 
 config = context.config
 

@@ -22,6 +22,7 @@ export interface SidebarProps {
   isBlackout: boolean;
   isApiConnected?: boolean;
   isScannerRunning?: boolean;
+  isAdmin?: boolean;
   /** Drawer variant (mobile overlay): labels always visible, nav taps close the drawer. */
   isDrawer?: boolean;
   onCloseMobile?: () => void;
@@ -30,7 +31,8 @@ export interface SidebarProps {
 const navItemsFor = (
   signalsCount: number,
   positionsCount: number,
-  isBlackout: boolean
+  isBlackout: boolean,
+  isAdmin: boolean
 ) => [
   {
     id: 'dashboard' as NavigationTab,
@@ -64,12 +66,12 @@ const navItemsFor = (
   },
   {
     id: 'settings' as NavigationTab,
-    label: 'Settings',
+    label: 'Daemon Settings',
     icon: Bell,
-    badge: null as string | null,
-    badgeColor: '',
+    badge: isAdmin ? 'ADMIN' : null as string | null,
+    badgeColor: 'bg-amber-500/10 text-amber-400 border-amber-500/25',
   },
-];
+].filter((item) => item.id !== 'settings' || isAdmin);
 
 /**
  * Shared sidebar body. Rendered inside the persistent rail (tablet/desktop)
@@ -83,6 +85,7 @@ export const SidebarContent: React.FC<SidebarProps> = ({
   isBlackout,
   isApiConnected = false,
   isScannerRunning = false,
+  isAdmin = false,
   isDrawer = false,
   onCloseMobile,
 }) => {
@@ -92,7 +95,7 @@ export const SidebarContent: React.FC<SidebarProps> = ({
   const showLabel = isDrawer ? '' : 'hidden lg:inline md:group-hover:inline md:group-focus-within:inline';
   const showBlock = isDrawer ? '' : 'hidden lg:block md:group-hover:block md:group-focus-within:block';
 
-  const navItems = navItemsFor(signalsCount, positionsCount, isBlackout);
+  const navItems = navItemsFor(signalsCount, positionsCount, isBlackout, isAdmin);
 
   const handleNav = (tab: NavigationTab) => {
     onTabChange(tab);

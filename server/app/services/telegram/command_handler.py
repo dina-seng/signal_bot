@@ -1,12 +1,13 @@
 """Interactive Telegram Bot Commands Processor."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
 from app.core.config import ACTIVE_SYMBOLS, settings
 from app.core.logging import logger
+from app.services.auth_service import AuthService
 from app.models.candle import Candle
 from app.models.news import NewsEvent
 from app.schemas.news import NewsEventResponse
@@ -74,6 +75,7 @@ class TelegramCommandHandler:
         raw_cmd = request.command.strip()
         parts = raw_cmd.split()
         cmd_name = parts[0].lower() if parts else "/help"
+        reply_markup: Optional[Dict[str, Any]] = None
 
         # -------------------------------------------------------------
         # 1. Help & Start Menu
@@ -386,14 +388,53 @@ class TelegramCommandHandler:
             reply += "<i>Database updated. Staleness blocks cleared. Ready to scan!</i>"
 
         # -------------------------------------------------------------
-        # 10. Fallback for Unknown Commands (MUST BE LAST)
+        # 10. Magic-link dashboard login
+        # -------------------------------------------------------------
+        elif cmd_name == "/login":
+            telegram_id = request.user_id
+            if telegram_id is None and request.chat_id and str(request.chat_id).lstrip("-").isdigit():
+                telegram_id = int(request.chat_id)
+            if telegram_id is None:
+                reply = "⚠️ Could not identify your Telegram account. Try again from a private chat."
+            else:
+                try:
+                    login_url, ttl = AuthService().create_login_link(
+                        db,
+                        telegram_id,
+                        username=request.user_name,
+                        first_name=getattr(request, "user_first_name", None),
+                    )
+                    reply = (
+                        "🔐 <b>QuantView Login</b>\n"
+                        f"Use the button below within {ttl // 60} minutes to open your "
+                        "authenticated dashboard."
+                    )
+                    reply_markup = {
+                        "inline_keyboard": [[
+                            {
+                                "text": "🔐 Click here to log in to QuantView",
+                                "url": login_url,
+                            }
+                        ]]
+                    }
+                except Exception as exc:
+                    logger.error(f"Failed to create login link for {telegram_id}: {exc}")
+                    reply = "❌ Could not create a login link. Please try again."
+
+        # -------------------------------------------------------------
+        # 11. Fallback for Unknown Commands (MUST BE LAST)
         # -------------------------------------------------------------
         else:
             raw_escaped = self.formatter.escape_html(raw_cmd)
             reply = f"❓ Unknown command <code>{raw_escaped}</code>. Type <code>/help</code> for available options."
 
         if request.chat_id:
-            await self.telegram_client.send_message(text=reply, chat_id=request.chat_id, parse_mode="HTML")
+            await self.telegram_client.send_message(
+                text=reply,
+                chat_id=request.chat_id,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
 
         return TelegramCommandResponse(
             command=raw_cmd,

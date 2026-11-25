@@ -51,6 +51,29 @@ export interface AppConfig {
   active_symbols: string[];
 }
 
+export interface AuthUser {
+  id: string;
+  telegram_id: number | null;
+  username: string | null;
+  first_name: string | null;
+  is_admin: boolean;
+  created_at?: string | null;
+}
+
+export interface SessionResponse {
+  authenticated: boolean;
+  user: AuthUser | null;
+}
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export interface PaperSummary {
   account: BackendAccount;
   positions: BackendPosition[];
@@ -425,6 +448,7 @@ async function fetchWithTiming<T>(url: string, options: RequestInit = {}, timeou
     const hasBody = method !== 'GET' && method !== 'HEAD' && options.body !== undefined;
     const res = await fetch(url, {
       ...options,
+      credentials: 'include',
       signal: controller.signal,
       headers: {
         // Only send Content-Type when there is a body. On bodyless GETs this
@@ -445,7 +469,7 @@ async function fetchWithTiming<T>(url: string, options: RequestInit = {}, timeou
       } catch {
         detail = res.statusText;
       }
-      throw new Error(`HTTP ${res.status}: ${detail || res.statusText}`);
+      throw new ApiError(res.status, `HTTP ${res.status}: ${detail || res.statusText}`);
     }
 
     const data = await res.json();
@@ -593,7 +617,7 @@ export const quantViewApi = {
   // without it the backend stretches the quote cache to the idle TTL.
   async sendPresenceHeartbeat(): Promise<void> {
     try {
-      await fetch(`${API_BASE}/market/presence`, { method: 'POST' });
+      await fetch(`${API_BASE}/market/presence`, { method: 'POST', credentials: 'include' });
     } catch {
       // Presence is best-effort; never break the dashboard on a heartbeat failure.
     }
@@ -675,5 +699,25 @@ export const quantViewApi = {
       `${API_BASE}/telegram/scanner/trigger?timeframe=${timeframe}&broadcast=${broadcast}&auto_trade=${autoTrade}`,
       { method: 'POST' }
     );
+  },
+
+  // 24. Telegram magic-link session
+  async verifyLogin(token: string): Promise<{ data: SessionResponse; durationMs: number }> {
+    return fetchWithTiming<SessionResponse>(`${API_BASE}/auth/verify`, {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  },
+
+  async getSession(): Promise<{ data: SessionResponse; durationMs: number }> {
+    return fetchWithTiming<SessionResponse>(`${API_BASE}/auth/me`);
+  },
+
+  async logout(): Promise<void> {
+    try {
+      await fetchWithTiming(`${API_BASE}/auth/logout`, { method: 'POST' });
+    } catch {
+      // Best effort — local state is cleared by the caller regardless.
+    }
   },
 };

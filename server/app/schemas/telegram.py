@@ -29,6 +29,7 @@ class TelegramCommandRequest(BaseModel):
     chat_id: Optional[str] = None
     user_id: Optional[int] = None
     user_name: Optional[str] = None
+    user_first_name: Optional[str] = None
 
 
 class TelegramCommandResponse(BaseModel):

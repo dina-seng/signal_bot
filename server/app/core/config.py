@@ -1,8 +1,8 @@
 """Application configuration management using Pydantic Settings."""
 
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 import json
 
 # Centralized single source of truth for active traded instruments
@@ -144,9 +144,16 @@ class Settings(BaseSettings):
     QUOTE_MAX_DEVIATION_PCT: float = 0.05
 
     # API transport / dashboard aggregation (all tunables are env-driven)
-    # Exact cross-origin frontend origin. Comma-separated values are supported
-    # for multi-origin dev setups; no wildcard when credentials are enabled.
-    FRONTEND_ORIGIN: str = "http://localhost:3000"
+    # Exact cross-origin frontend origins. Env values may be a single URL, a
+    # comma-separated list, or a JSON list. Never empty: a silent empty value
+    # makes CORSMiddleware reject every preflight with "no ACAO header".
+    FRONTEND_ORIGIN: Annotated[List[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "https://quanview.dinacreator.space",
+            "http://localhost:3000",
+        ],
+        description="Allowed browser origins for credentialed CORS requests",
+    )
     CORS_MAX_AGE_SECONDS: int = Field(
         default=86400,
         ge=0,
@@ -215,6 +222,22 @@ class Settings(BaseSettings):
     # Paper Trading mode
     PAPER_TRADING: bool = True
 
+    # Milestone 2 — Telegram authentication & multi-user broadcasting
+    AUTH_ENABLED: bool = True
+    JWT_SECRET_KEY: str = Field(
+        default="dev-only-session-secret-change-me",
+        min_length=8,
+        description="HS256 signing secret for dashboard session cookies",
+    )
+    SESSION_TTL_SECONDS: int = Field(default=7 * 24 * 3600, ge=60)
+    SESSION_COOKIE_NAME: str = "quantview_session"
+    SESSION_COOKIE_SECURE: bool = False
+    SESSION_COOKIE_SAMESITE: str = "lax"
+    LOGIN_LINK_TTL_SECONDS: int = Field(default=300, ge=30)
+    MAGIC_LINK_BASE_URL: str = "https://quanview.dinacreator.space"
+    ADMIN_TELEGRAM_ID: Optional[int] = None
+    TELEGRAM_BROADCAST_DELAY_SECONDS: float = Field(default=0.5, ge=0.0)
+
     model_config = SettingsConfigDict(
         env_file=[".env", "server/.env"],
         env_file_encoding="utf-8",
@@ -222,7 +245,13 @@ class Settings(BaseSettings):
         case_sensitive=True,
     )
 
-    @field_validator("SUPPORTED_SYMBOLS", "SUPPORTED_TIMEFRAMES", "SCANNER_TIMEFRAMES", mode="before")
+    @field_validator(
+        "SUPPORTED_SYMBOLS",
+        "SUPPORTED_TIMEFRAMES",
+        "SCANNER_TIMEFRAMES",
+        "FRONTEND_ORIGIN",
+        mode="before",
+    )
     @classmethod
     def parse_list_from_str(cls, value):
         if isinstance(value, str):
@@ -234,6 +263,14 @@ class Settings(BaseSettings):
                     pass
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("FRONTEND_ORIGIN", mode="after")
+    @classmethod
+    def ensure_frontend_origins(cls, value: List[str]) -> List[str]:
+        cleaned = [str(item).strip().rstrip("/") for item in value if str(item).strip()]
+        if not cleaned:
+            return ["https://quanview.dinacreator.space", "http://localhost:3000"]
+        return cleaned
 
     @field_validator("SUPPORTED_SYMBOLS", mode="after")
     @classmethod

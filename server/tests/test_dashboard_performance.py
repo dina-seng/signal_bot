@@ -163,7 +163,7 @@ def test_latency_endpoint(client):
 
 def test_preflight_cached(client):
     """OPTIONS preflight must advertise a long cache lifetime."""
-    origin = settings.FRONTEND_ORIGIN.split(",")[0].strip()
+    origin = settings.FRONTEND_ORIGIN[0]
     resp = client.options(
         "/api/v1/paper/summary",
         headers={

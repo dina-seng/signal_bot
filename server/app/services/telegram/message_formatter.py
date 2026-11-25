@@ -724,6 +724,7 @@ class TelegramMessageFormatter:
             "🤖 <b>FOREX SIGNAL BOT - COMMAND MENU</b> 🤖\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"📡 <code>/scan</code> - Scan active markets ({escape_html(symbols_str)})\n"
+            "🔐 <code>/login</code> - Open your authenticated QuantView dashboard\n"
             "🔄 <code>/sync</code> - Force fresh market data sync\n"
             "🎯 <code>/signal &lt;pair&gt;</code> - Deep setup analysis (e.g. <code>/signal XAU/USD</code>)\n"
             "📰 <code>/news</code> - Economic calendar &amp; news blackout check\n"

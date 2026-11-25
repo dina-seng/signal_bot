@@ -20,6 +20,7 @@ class BaseTelegramClient:
         parse_mode: str = "HTML",
         disable_web_page_preview: bool = True,
         signal_id: Optional[Union[int, str]] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
     ) -> TelegramMessageResponse:
         raise NotImplementedError
 
@@ -41,6 +42,7 @@ class MockTelegramClient(BaseTelegramClient):
         parse_mode: str = "HTML",
         disable_web_page_preview: bool = True,
         signal_id: Optional[Union[int, str]] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
     ) -> TelegramMessageResponse:
         now = datetime.now(timezone.utc)
         self._message_counter += 1
@@ -52,6 +54,7 @@ class MockTelegramClient(BaseTelegramClient):
             "chat_id": target_chat,
             "text": text,
             "parse_mode": parse_mode,
+            "reply_markup": reply_markup,
             "sent_at": now,
         }
         self.sent_messages.append(msg_record)
@@ -104,6 +107,7 @@ class TelegramClient(BaseTelegramClient):
         parse_mode: str = "HTML",
         disable_web_page_preview: bool = True,
         signal_id: Optional[Union[int, str]] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
     ) -> TelegramMessageResponse:
         now = datetime.now(timezone.utc)
         target_chat = chat_id or self.default_chat_id
@@ -126,6 +130,8 @@ class TelegramClient(BaseTelegramClient):
             "parse_mode": parse_mode,
             "disable_web_page_preview": disable_web_page_preview,
         }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
 
         max_retries = 3
         backoff = 1.0
