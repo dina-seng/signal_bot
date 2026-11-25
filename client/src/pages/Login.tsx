@@ -1,11 +1,13 @@
 import React, { useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { LockKeyhole, ShieldCheck } from 'lucide-react';
 import logoImg from '../../assets/logo.png';
 import { TELEGRAM_WIDGET_AUTH_URL } from '../config/sameOrigin';
+import { getAuthToken } from '../services/authToken';
+import { useAuth } from '../contexts/AuthContext';
 
 const botUsername = (
-  import.meta.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || 'signalTheBEST_bot'
+  import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'signalTheBEST_bot'
 ).trim().replace(/^@/, '');
 
 // The widget callback MUST be first-party: the session cookie is issued by the
@@ -13,7 +15,12 @@ const botUsername = (
 const widgetAuthUrl = TELEGRAM_WIDGET_AUTH_URL;
 
 export const Login: React.FC = () => {
+  const { isAuthenticated, isLoading } = useAuth();
+  const hasToken = Boolean(getAuthToken());
+
   useEffect(() => {
+    // While a token is being validated the widget container isn't rendered.
+    if (hasToken && isLoading) return;
     const container = document.getElementById('telegram-login-widget');
     if (!container) return;
 
@@ -31,7 +38,17 @@ export const Login: React.FC = () => {
       script.remove();
       container.replaceChildren();
     };
-  }, [botUsername, widgetAuthUrl]);
+  }, [botUsername, widgetAuthUrl, hasToken, isLoading]);
+
+  // Valid session already in localStorage: never show /login again.
+  if (!isLoading && isAuthenticated) return <Navigate to="/dashboard" replace />;
+  if (hasToken && isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300">
+        Loading session...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
