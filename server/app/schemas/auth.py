@@ -22,6 +22,22 @@ class VerifyTokenRequest(BaseModel):
     token: str = Field(..., min_length=10)
 
 
+class TelegramWidgetPayload(BaseModel):
+    """Data sent by the official Telegram Login Widget (auth_url redirect)."""
+
+    id: int
+    first_name: str = ""
+    username: Optional[str] = None
+    photo_url: Optional[str] = None
+    auth_date: int
+    hash: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    def signing_data(self) -> dict:
+        return self.model_dump(exclude={"hash"}, exclude_none=True, by_alias=True)
+
+
 class UserResponse(BaseModel):
     id: UUID
     telegram_id: Optional[int] = None

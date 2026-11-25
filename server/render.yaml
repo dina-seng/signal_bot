@@ -19,3 +19,5 @@ services:
       # Shared by backend (bot/deep-link config) and frontend build (deep-link button)
       - key: NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
         sync: false
+      - key: NEXT_PUBLIC_API_URL
+        sync: false

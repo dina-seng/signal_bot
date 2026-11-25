@@ -245,6 +245,12 @@ class Settings(BaseSettings):
     MAGIC_LINK_BASE_URL: str = "https://quanview.dinacreator.space"
     ADMIN_TELEGRAM_ID: Optional[int] = None
     TELEGRAM_BROADCAST_DELAY_SECONDS: float = Field(default=0.5, ge=0.0)
+    # Official Telegram Login Widget verification
+    WIDGET_AUTH_MAX_AGE_SECONDS: int = Field(default=3600, ge=30)
+    WIDGET_SESSION_TTL_SECONDS: int = Field(default=30 * 24 * 3600, ge=60)
+    WIDGET_COOKIE_SECURE: bool = True
+    WIDGET_COOKIE_SAMESITE: str = "none"
+    DASHBOARD_REDIRECT_URL: str = "https://quanview.dinacreator.space/dashboard"
 
     model_config = SettingsConfigDict(
         env_file=[".env", "server/.env"],

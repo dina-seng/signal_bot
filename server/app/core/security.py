@@ -69,6 +69,32 @@ def decode_session_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
 
+def verify_telegram_widget_signature(payload: Dict[str, Any], provided_hash: str) -> bool:
+    """Verify a Telegram Login Widget payload.
+
+    Telegram signs the alphabetically sorted ``key=value`` lines with
+    HMAC-SHA256 keyed by SHA256(bot token). We also accept the literal-token
+    variant documented by some deployments, then use constant-time comparison.
+    """
+    data_check_string = "\n".join(
+        f"{key}={value}"
+        for key, value in sorted(payload.items())
+        if key != "hash" and value is not None
+    )
+    token = settings.TELEGRAM_BOT_TOKEN or ""
+    if not token:
+        return False
+    secret_variants = (
+        hashlib.sha256(token.encode("utf-8")).digest(),  # official Telegram spec
+        token.encode("utf-8"),  # deployments that key with the raw token
+    )
+    for secret in secret_variants:
+        computed = hmac.new(secret, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(computed, provided_hash or ""):
+            return True
+    return False
+
+
 def generate_login_token() -> str:
     """High-entropy, URL-safe opaque token for the Telegram magic link."""
     return secrets.token_urlsafe(32)

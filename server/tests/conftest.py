@@ -86,14 +86,20 @@ def disable_http_session_auth():
     original = settings.AUTH_ENABLED
     original_secure = settings.SESSION_COOKIE_SECURE
     original_samesite = settings.SESSION_COOKIE_SAMESITE
+    original_widget_secure = settings.WIDGET_COOKIE_SECURE
+    original_widget_samesite = settings.WIDGET_COOKIE_SAMESITE
     settings.AUTH_ENABLED = False
     # TestClient speaks plain HTTP; a Secure cookie would never be sent back.
     settings.SESSION_COOKIE_SECURE = False
     settings.SESSION_COOKIE_SAMESITE = "lax"
+    settings.WIDGET_COOKIE_SECURE = False
+    settings.WIDGET_COOKIE_SAMESITE = "lax"
     yield
     settings.AUTH_ENABLED = original
     settings.SESSION_COOKIE_SECURE = original_secure
     settings.SESSION_COOKIE_SAMESITE = original_samesite
+    settings.WIDGET_COOKIE_SECURE = original_widget_secure
+    settings.WIDGET_COOKIE_SAMESITE = original_widget_samesite
 
 
 @pytest.fixture(autouse=True)

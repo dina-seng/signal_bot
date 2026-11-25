@@ -81,6 +81,47 @@ class AuthService:
         db.refresh(user)
         return user
 
+    def get_or_create_widget_user(
+        self,
+        db: Session,
+        telegram_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+    ) -> User:
+        """Find or create a user verified by the official Telegram widget."""
+        user = db.scalars(
+            select(User).where(User.telegram_id == telegram_id)
+        ).first()
+        is_admin = settings.ADMIN_TELEGRAM_ID == telegram_id
+        if user is None:
+            user = User(
+                id=uuid.uuid4(),
+                telegram_id=telegram_id,
+                username=username,
+                first_name=first_name,
+                is_admin=is_admin,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            logger.info("Created widget-authenticated user for Telegram id %s", telegram_id)
+            return user
+
+        changed = False
+        if username and user.username != username:
+            user.username = username
+            changed = True
+        if first_name and user.first_name != first_name:
+            user.first_name = first_name
+            changed = True
+        if is_admin and not user.is_admin:
+            user.is_admin = True
+            changed = True
+        if changed:
+            db.commit()
+            db.refresh(user)
+        return user
+
     @staticmethod
     def get_user(db: Session, user_id: str) -> Optional[User]:
         try:

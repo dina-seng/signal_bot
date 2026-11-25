@@ -1,15 +1,25 @@
-"""Telegram magic-link authentication endpoints."""
+"""Telegram magic-link and official Login Widget authentication endpoints."""
+
+import time
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.core.config import settings
-from app.core.security import create_session_token, decode_session_token
+from app.core.logging import logger
+from app.core.security import (
+    create_session_token,
+    decode_session_token,
+    verify_telegram_widget_signature,
+)
 from app.schemas.auth import (
     LoginLinkRequest,
     LoginLinkResponse,
     SessionResponse,
+    TelegramWidgetPayload,
     UserResponse,
     VerifyTokenRequest,
 )
@@ -55,6 +65,64 @@ def verify_login_token(
         path="/",
     )
     return SessionResponse(authenticated=True, user=UserResponse.model_validate(user))
+
+
+def _widget_redirect(payload: TelegramWidgetPayload, db: Session) -> RedirectResponse:
+    """Validate Telegram's signed payload and issue a 30-day session cookie."""
+    if not verify_telegram_widget_signature(payload.signing_data(), payload.hash):
+        logger.warning("Rejected Telegram widget login: invalid hash for id %s", payload.id)
+        raise HTTPException(status_code=401, detail="Invalid Telegram widget signature")
+
+    age_seconds = int(time.time()) - payload.auth_date
+    if age_seconds > settings.WIDGET_AUTH_MAX_AGE_SECONDS:
+        logger.warning("Rejected Telegram widget login: auth_date is %ss old", age_seconds)
+        raise HTTPException(status_code=401, detail="Telegram widget payload expired")
+
+    user = AuthService().get_or_create_widget_user(
+        db, payload.id, username=payload.username, first_name=payload.first_name
+    )
+    redirect = RedirectResponse(url=settings.DASHBOARD_REDIRECT_URL, status_code=302)
+    redirect.set_cookie(
+        key=settings.SESSION_COOKIE_NAME,
+        value=create_session_token(str(user.id), bool(user.is_admin)),
+        max_age=settings.WIDGET_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=settings.WIDGET_COOKIE_SECURE,
+        samesite=settings.WIDGET_COOKIE_SAMESITE,
+        path="/",
+    )
+    return redirect
+
+
+@router.post("/telegram-widget-verify")
+def telegram_widget_verify_post(
+    payload: TelegramWidgetPayload,
+    db: Session = Depends(get_db),
+):
+    """JSON fallback for the Telegram Login Widget callback."""
+    return _widget_redirect(payload, db)
+
+
+@router.get("/telegram-widget-verify")
+def telegram_widget_verify_get(
+    id: int,
+    auth_date: int,
+    hash: str,
+    first_name: str = "",
+    username: Optional[str] = None,
+    photo_url: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Primary callback: the widget navigates here with query parameters."""
+    payload = TelegramWidgetPayload(
+        id=id,
+        first_name=first_name,
+        username=username,
+        photo_url=photo_url,
+        auth_date=auth_date,
+        hash=hash,
+    )
+    return _widget_redirect(payload, db)
 
 
 @router.get("/me", response_model=SessionResponse)
