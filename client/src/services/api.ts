@@ -747,7 +747,8 @@ export const quantViewApi = {
   },
 
   async getSession(): Promise<{ data: SessionResponse; durationMs: number }> {
-    return fetchWithTiming<SessionResponse>(`${API_BASE}/auth/me`);
+    // Cold starts / proxy hiccups must not abort the session bootstrap early.
+    return fetchWithTiming<SessionResponse>(`${API_BASE}/auth/me`, {}, 15000);
   },
 
   async logout(): Promise<void> {

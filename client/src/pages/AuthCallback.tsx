@@ -38,7 +38,11 @@ export const AuthCallback: React.FC = () => {
         setAuthToken(jwt);
         // Never leave the token in the address bar / history / referrer.
         window.history.replaceState(null, '', window.location.pathname);
-        await refresh();
+        const authenticated = await refresh();
+        if (!authenticated) {
+          setError('Signed in, but the server did not respond in time. Please try again.');
+          return;
+        }
         navigate('/dashboard', { replace: true });
       } catch (err: any) {
         setError(err?.message || 'Login link is invalid or expired.');
