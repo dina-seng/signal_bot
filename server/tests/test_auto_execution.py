@@ -91,6 +91,14 @@ def test_auto_execution_creates_trade_and_notifies_telegram(test_db_session):
 
     assert trade is not None
     assert test_db_session.query(PaperTrade).count() == 1
+    # Ghost-trade regression: auto fills must be OPEN, not PENDING, so the
+    # dashboard's ?status=OPEN query can see them.
+    assert trade.status == "OPEN"
+    assert test_db_session.get(PaperTrade, trade.id).status == "OPEN"
+    assert any(
+        p.id == trade.id
+        for p in PaperTradingService().get_positions(test_db_session, status="OPEN")
+    )
     assert trade.initial_position_size == pytest.approx(0.01)
     # Risk Engine anchors levels to the Signal Engine entry (3590), not the fill.
     sl_distance = abs(3590.0 - trade.stop_loss)

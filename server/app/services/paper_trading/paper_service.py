@@ -133,7 +133,14 @@ class PaperTradingService:
 
         stmt = select(PaperTrade).where(PaperTrade.account_id == acc.id)
         if status:
-            stmt = stmt.where(PaperTrade.status == status.upper().strip())
+            normalized = status.upper().strip()
+            if normalized == "OPEN":
+                # A partially closed runner is still a running position. The
+                # dashboard asks for ?status=OPEN, so it must include both open
+                # states or TP1 partials vanish from the Positions tab.
+                stmt = stmt.where(PaperTrade.status.in_(["OPEN", "PARTIALLY_CLOSED"]))
+            else:
+                stmt = stmt.where(PaperTrade.status == normalized)
         else:
             stmt = stmt.where(PaperTrade.status.in_(["OPEN", "PARTIALLY_CLOSED", "PENDING"]))
 

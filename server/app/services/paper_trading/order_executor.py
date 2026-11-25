@@ -576,6 +576,47 @@ class PaperOrderExecutor:
         )
         return paper_trade
 
+    def _ensure_auto_trade_open(
+        self, db: Session, trade: PaperTrade, fallback_price: Optional[float]
+    ) -> PaperTrade:
+        """Guarantee an auto-executed MARKET trade is stored as OPEN.
+
+        Market orders fill immediately. A stale PENDING market row is invisible
+        to ``/paper/positions?status=OPEN`` and to the account/summary snapshots,
+        which produced the "ghost trade" dashboard bug. Only PENDING MARKET rows
+        are repaired; CANCELLED/CLOSED history and genuine LIMIT/STOP orders are
+        left untouched.
+        """
+        if trade.status == "OPEN" or trade.status == "PARTIALLY_CLOSED":
+            return trade
+        if (
+            trade.status != "PENDING"
+            or str(trade.order_type or "").upper().strip() != "MARKET"
+        ):
+            return trade
+
+        account = db.get(VirtualAccount, trade.account_id)
+        logger.warning(
+            f"Auto-executed MARKET trade #{trade.id} was persisted as PENDING; "
+            "forcing OPEN so the dashboard can see the running position."
+        )
+        trade.status = "OPEN"
+        trade.target_entry_price = None
+        trade.entry_price = trade.entry_price or fallback_price or trade.current_price
+        trade.current_price = trade.current_price or trade.entry_price
+        if account is not None and not trade.margin_used:
+            trade.margin_used = self.account_manager.calculate_required_margin(
+                symbol=trade.symbol,
+                lots=trade.remaining_position_size,
+                price=trade.entry_price,
+                leverage=account.leverage,
+            )
+        db.commit()
+        db.refresh(trade)
+        if account is not None:
+            self.account_manager.recalculate_account_financials(db, account)
+        return trade
+
     def open_trade_from_signal(
         self,
         db: Session,
@@ -631,7 +672,9 @@ class PaperOrderExecutor:
                     f"Paper trade #{existing_trade.id} already exists for Signal #{target_signal.id}. "
                     f"Returning existing position idempotently."
                 )
-                return existing_trade
+                return self._ensure_auto_trade_open(
+                    db, existing_trade, existing_trade.current_price or target_signal.entry_price
+                )
 
         # 2. Resolve live market price NOW (before validation and order placement).
         #    Do NOT reuse target_signal.entry_price — that price was captured at
@@ -696,4 +739,9 @@ class PaperOrderExecutor:
         )
 
         # 4. Execute at live market price with the fixed profile lot (0.01).
-        return self.execute_order(db=db, order=order, current_market_price=live_price)
+        trade = self.execute_order(db=db, order=order, current_market_price=live_price)
+
+        # 5. Explicitly persist the running position as OPEN. This is the single
+        #    source of truth consumed by /paper/positions?status=OPEN, the atomic
+        #    /paper/summary snapshot and the account open-position counter.
+        return self._ensure_auto_trade_open(db, trade, live_price)

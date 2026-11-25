@@ -39,6 +39,60 @@ def _ensure_required_columns() -> None:
                     )
 
 
+def _heal_pending_market_trades() -> None:
+    """Repair legacy auto-executed MARKET rows left in PENDING.
+
+    Older deployments could persist a signal fill as PENDING, which made the
+    position invisible to /paper/positions?status=OPEN and to the atomic
+    /paper/summary snapshot ("ghost trade"). Genuine LIMIT/STOP orders and
+    historical CLOSED/CANCELLED rows are never touched.
+    """
+    try:
+        # Imported lazily so the test suite's patched SessionLocal is honoured.
+        from app.core.database import SessionLocal
+        from app.models.paper import PaperTrade, VirtualAccount
+        from app.services.paper_trading.account_manager import VirtualAccountManager
+
+        db = SessionLocal()
+        try:
+            manager = VirtualAccountManager()
+            pending = db.query(PaperTrade).filter(PaperTrade.status == "PENDING").all()
+            ghosts = [
+                t for t in pending
+                if str(t.order_type or "").upper().strip() == "MARKET"
+            ]
+            if not ghosts:
+                return
+
+            touched_accounts = set()
+            for trade in ghosts:
+                account = db.get(VirtualAccount, trade.account_id)
+                trade.status = "OPEN"
+                trade.target_entry_price = None
+                if account is not None and not trade.margin_used:
+                    trade.margin_used = manager.calculate_required_margin(
+                        symbol=trade.symbol,
+                        lots=trade.remaining_position_size,
+                        price=trade.entry_price,
+                        leverage=account.leverage,
+                    )
+                touched_accounts.add(trade.account_id)
+                logger.warning(
+                    f"[startup] Healed ghost trade #{trade.id} ({trade.symbol}): "
+                    "PENDING MARKET order -> OPEN."
+                )
+            db.commit()
+            for account_id in touched_accounts:
+                account = db.get(VirtualAccount, account_id)
+                if account is not None:
+                    manager.recalculate_account_financials(db, account)
+        finally:
+            db.close()
+    except Exception as exc:
+        # Startup should never fail because of a data-repair best effort.
+        logger.warning(f"[startup] Could not heal PENDING market trades: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
@@ -51,6 +105,7 @@ async def lifespan(app: FastAPI):
         
     init_db()
     _ensure_required_columns()
+    _heal_pending_market_trades()
 
     # Persistent shared HTTP client — eliminates per-request TCP/TLS handshake overhead.
     # Providers receive this via dependency injection for high-frequency paths.

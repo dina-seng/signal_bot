@@ -511,6 +511,46 @@ class TelegramMessageFormatter:
         )
 
     @classmethod
+    def format_take_profit_hit(
+        cls,
+        symbol: str,
+        price: float,
+        total_pnl: float,
+        return_r: float,
+        closed_lots: Optional[float] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> str:
+        """Format a generic winning exit (e.g. a full exit at TP1 with no TP2).
+
+        Wins must never be announced as stop-losses. This template is used
+        whenever a position closes at a take-profit target but neither the
+        partial TP1 nor the TP2-specific template applies.
+        """
+        sym = escape_html(symbol)
+        formatted_price = format_price(price, symbol)
+        pnl_str = (
+            f"+${abs(total_pnl):,.2f}" if total_pnl >= 0
+            else f"-${abs(total_pnl):,.2f}"
+        )
+        r_str = f"{return_r:+.2f}R"
+        lots_str = f" ({closed_lots:.2f} lots)" if closed_lots is not None else ""
+        ts_str = (
+            timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if timestamp
+            else "N/A"
+        )
+        return (
+            f"🎯 <b>TAKE PROFIT HIT</b> 🎯\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <b>Pair:</b> <code>{sym}</code>\n"
+            f"💰 <b>Exit Price:</b> <code>{formatted_price}</code>\n"
+            f"💵 <b>Realized PnL:</b> <code>{pnl_str}</code>\n"
+            f"📈 <b>R-Multiple:</b> <code>{r_str}</code>\n"
+            f"🎉 <b>Status:</b> <code>Position closed{lots_str} at take profit.</code>\n"
+            f"🕒 <code>{ts_str}</code>"
+        )
+
+    @classmethod
     def format_sl_hit(
         cls,
         symbol: str,

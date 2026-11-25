@@ -142,8 +142,8 @@ export const Dashboard: React.FC = () => {
         currency: bAcc.currency,
       });
 
-      if (Array.isArray(bPositions)) {
-        const mappedPositions: Position[] = bPositions.map((p) => {
+      const mapBackendPositions = (rows: BackendPosition[]): Position[] =>
+        rows.map((p) => {
           const entry = p.entry_price;
           const current = p.current_price;
           const pnl = p.unrealized_pnl ?? 0;
@@ -168,8 +168,25 @@ export const Dashboard: React.FC = () => {
           };
         });
 
-        setPositions(mappedPositions);
+      let positionsToRender: Position[] = Array.isArray(bPositions)
+        ? mapBackendPositions(bPositions)
+        : [];
+
+      // Fallback for "ghost trades": if the atomic snapshot shows none, ask the
+      // authoritative open-positions endpoint directly so a freshly executed
+      // (or partially closed) paper trade is never hidden from the Positions tab.
+      if (positionsToRender.length === 0) {
+        try {
+          const openRes = await quantViewApi.getPositions();
+          if (Array.isArray(openRes.data) && openRes.data.length > 0) {
+            positionsToRender = mapBackendPositions(openRes.data);
+          }
+        } catch (posErr: any) {
+          console.warn('[QuantView API] Open positions fallback failed:', posErr?.message);
+        }
       }
+
+      setPositions(positionsToRender);
 
       // Fetch Closed Trade History
       try {

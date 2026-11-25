@@ -112,6 +112,113 @@ class AutomatedMarketScanner:
         stmt = select(PaperTrade.id).where(PaperTrade.signal_id == signal_id).limit(1)
         return db.scalars(stmt).first() is not None
 
+    @staticmethod
+    def _is_near_level(
+        price: Optional[float], level: Optional[float], entry: Optional[float]
+    ) -> bool:
+        """True when an exit price sits at (or very near) a target level."""
+        if price is None or level is None:
+            return False
+        # Targets are recorded at exact prices; a small relative tolerance also
+        # covers legacy rows with rounded prices or tiny execution slippage.
+        tolerance = max(0.05, abs(float(level) - float(entry or level)) * 0.02)
+        return abs(float(price) - float(level)) <= tolerance
+
+    @classmethod
+    def _classify_exit(cls, trade: PaperTrade, ev: str = "") -> str:
+        """Classify a position exit as 'TP' or 'SL'.
+
+        The persisted ``exit_reason`` is authoritative. Only when that field is
+        missing do we fall back to lifecycle-event text, exit-price proximity to
+        the TP/SL levels, and finally the sign of realized PnL. This ordering is
+        critical: a profitable TP1 full exit used to fall through to the SL
+        template because its event text ("hit TP1 (no TP2 set)") matched no
+        specific TP branch.
+        """
+        reason = str(getattr(trade, "exit_reason", "") or "").upper()
+        if reason in {"TP1_HIT", "TP1_FULL_EXIT", "TP2_HIT", "TAKE_PROFIT", "TP"}:
+            return "TP"
+        if reason in {"SL_HIT", "BREAK_EVEN", "STOP_LOSS", "MARGIN_STOP_OUT"}:
+            return "SL"
+
+        event_text = ev or ""
+        if "BREAK_EVEN" in event_text or "SL_HIT" in event_text:
+            return "SL"
+        if "TP2" in event_text or "TP1" in event_text:
+            return "TP"
+
+        exit_price = getattr(trade, "exit_price", None) or getattr(trade, "current_price", None)
+        entry = getattr(trade, "entry_price", None)
+        if cls._is_near_level(exit_price, getattr(trade, "take_profit_1", None), entry):
+            return "TP"
+        if cls._is_near_level(exit_price, getattr(trade, "take_profit_2", None), entry):
+            return "TP"
+        if cls._is_near_level(exit_price, getattr(trade, "stop_loss", None), entry):
+            return "SL"
+
+        pnl = float(getattr(trade, "realized_pnl", 0.0) or 0.0)
+        return "TP" if pnl > 0 else "SL"
+
+    async def _send_trade_exit_alert(self, trade: PaperTrade, ev: str = "") -> bool:
+        """Broadcast the correct TP/SL template for one closed position."""
+        reason = str(getattr(trade, "exit_reason", "") or "").upper()
+        exit_kind = self._classify_exit(trade, ev)
+        timestamp = trade.closed_at or trade.opened_at
+
+        if exit_kind == "TP":
+            remaining = float(trade.remaining_position_size or 0.0)
+            if (reason == "TP1_HIT" or "reached TP1" in ev) and remaining > 1e-9:
+                closed_l = round(trade.initial_position_size - remaining, 2)
+                if closed_l <= 0:
+                    closed_l = trade.initial_position_size
+                msg_text = self.formatter.format_tp1_hit(
+                    symbol=trade.symbol,
+                    price=trade.exit_price or trade.take_profit_1,
+                    realized_pnl=trade.realized_pnl,
+                    new_sl=trade.stop_loss,
+                    closed_lots=closed_l,
+                    remaining_lots=remaining,
+                    timestamp=timestamp,
+                )
+            elif reason == "TP2_HIT" or "hit TP2" in ev:
+                msg_text = self.formatter.format_tp2_hit(
+                    symbol=trade.symbol,
+                    price=trade.exit_price or trade.take_profit_2,
+                    total_pnl=trade.realized_pnl,
+                    return_r=trade.return_r,
+                    closed_lots=trade.initial_position_size,
+                    timestamp=timestamp,
+                )
+            else:
+                # Full exit at TP1 (single-target execution) or any other TP
+                # close that is not the partial-TP1 / TP2 lifecycle event.
+                msg_text = self.formatter.format_take_profit_hit(
+                    symbol=trade.symbol,
+                    price=trade.exit_price or trade.current_price or trade.take_profit_1,
+                    total_pnl=trade.realized_pnl,
+                    return_r=trade.return_r,
+                    closed_lots=trade.initial_position_size,
+                    timestamp=timestamp,
+                )
+        else:
+            is_be = reason == "BREAK_EVEN" or "BREAK_EVEN" in ev
+            msg_text = self.formatter.format_sl_hit(
+                symbol=trade.symbol,
+                price=trade.exit_price or trade.stop_loss,
+                loss_pnl=trade.realized_pnl,
+                is_be=is_be,
+                closed_lots=trade.initial_position_size,
+                return_r=trade.return_r,
+                timestamp=timestamp,
+            )
+
+        await self.telegram_client.send_message(
+            text=msg_text,
+            parse_mode="HTML",
+            signal_id=trade.signal_id,
+        )
+        return True
+
     async def _auto_execute_signal(
         self,
         db: Session,
@@ -643,50 +750,7 @@ class AutomatedMarketScanner:
                                     trade_id = int(match.group(1))
                                     trade = db.get(PaperTrade, trade_id)
                                     if trade:
-                                        if "reached TP1" in ev:
-                                            # Derive the closed volume from the position itself;
-                                            # in full-3R mode TP1 closes the whole position.
-                                            closed_l = round(
-                                                trade.initial_position_size - trade.remaining_position_size,
-                                                2,
-                                            )
-                                            if closed_l <= 0:
-                                                closed_l = trade.initial_position_size
-                                            msg_text = self.formatter.format_tp1_hit(
-                                                symbol=trade.symbol,
-                                                price=trade.take_profit_1,
-                                                realized_pnl=trade.realized_pnl,
-                                                new_sl=trade.stop_loss,
-                                                closed_lots=closed_l,
-                                                remaining_lots=trade.remaining_position_size,
-                                                timestamp=trade.opened_at,
-                                            )
-                                        elif "hit TP2" in ev:
-                                            msg_text = self.formatter.format_tp2_hit(
-                                                symbol=trade.symbol,
-                                                price=trade.exit_price or trade.take_profit_2,
-                                                total_pnl=trade.realized_pnl,
-                                                return_r=trade.return_r,
-                                                closed_lots=trade.initial_position_size,
-                                                timestamp=trade.closed_at or trade.opened_at,
-                                            )
-                                        else:  # SL_HIT or BREAK_EVEN
-                                            is_be = "BREAK_EVEN" in ev
-                                            msg_text = self.formatter.format_sl_hit(
-                                                symbol=trade.symbol,
-                                                price=trade.exit_price or trade.stop_loss,
-                                                loss_pnl=trade.realized_pnl,
-                                                is_be=is_be,
-                                                closed_lots=trade.initial_position_size,
-                                                return_r=trade.return_r,
-                                                timestamp=trade.closed_at or trade.opened_at,
-                                            )
-                                        await self.telegram_client.send_message(
-                                            text=msg_text,
-                                            parse_mode="HTML",
-                                            signal_id=trade.signal_id,
-                                        )
-                                        msg_sent = True
+                                        msg_sent = await self._send_trade_exit_alert(trade, ev)
                                 if not msg_sent:
                                     await self.telegram_client.send_message(
                                         text=f"🔔 <b>POSITION UPDATE:</b> <code>{self.formatter.escape_html(ev)}</code>",
