@@ -7,6 +7,8 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.metrics import metrics
@@ -164,6 +166,16 @@ app = FastAPI(
     description=settings.API_DESCRIPTION,
     lifespan=lifespan,
 )
+
+# ── Reverse-proxy trust (MUST be outermost — added last in Starlette) ─────────
+# Netlify proxies /api/* to this Render backend and sets X-Forwarded-Proto,
+# X-Forwarded-For, and X-Forwarded-Host.  Without this middleware FastAPI sees
+# scheme=http and host=signal-bot-hemp.onrender.com, which causes:
+#   • secure=True cookies to be silently dropped (http context)
+#   • redirects that point at the Render domain instead of the frontend
+# trusted_hosts="*" is safe here: Render's inbound network already constrains
+# who can reach the backend; the middleware only strips/reorders headers.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # CORS Middleware — exact frontend origin(s) only, no wildcard with credentials.
 # settings.FRONTEND_ORIGIN is normalised to a non-empty List[str] by config.py,

@@ -6,12 +6,19 @@
 # Same-origin API proxy: /api/* is served by the Render backend but appears to
 # come from quanview.dinacreator.space, keeping the session cookie first-party.
 # This rule must stay ABOVE the SPA catch-all rewrite.
+#
+# Header notes:
+#   Host              – required by Render's routing to find the right service
+#   X-Forwarded-Proto – tells FastAPI (via ProxyHeadersMiddleware) the original
+#                       scheme is https, so secure=True cookies are set correctly
+#   X-Forwarded-Host  – tells FastAPI the original Host header the browser sent;
+#                       used for redirect URL construction and debugging logs
 [[redirects]]
   from = "/api/*"
   to = "https://signal-bot-hemp.onrender.com/api/:splat"
   status = 200
   force = true
-  headers = { Host = "signal-bot-hemp.onrender.com" }
+  headers = { Host = "signal-bot-hemp.onrender.com", X-Forwarded-Proto = "https", X-Forwarded-Host = "quanview.dinacreator.space" }
 
 [[redirects]]
   from = "/*"

@@ -91,8 +91,26 @@ def verify_login_token(
     return SessionResponse(authenticated=True, user=UserResponse.model_validate(user))
 
 
-def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session) -> RedirectResponse:
+def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session, request: Request | None = None) -> RedirectResponse:
     """Validate Telegram's signed payload and issue a 30-day session cookie."""
+    # ── Temporary proxy-debug log (remove once login is confirmed working) ────
+    if request is not None:
+        fwd_proto = request.headers.get("x-forwarded-proto", "<not set>")
+        fwd_host  = request.headers.get("x-forwarded-host", "<not set>")
+        host      = request.headers.get("host", "<not set>")
+        scheme    = request.url.scheme          # reflects ProxyHeadersMiddleware
+        logger.info(
+            "[AUTH_PROXY_DEBUG] scheme=%s host=%s X-Forwarded-Proto=%s X-Forwarded-Host=%s",
+            scheme, host, fwd_proto, fwd_host,
+        )
+        logger.info(
+            "[AUTH_PROXY_DEBUG] will set cookie: name=%s secure=%s samesite=%s → redirect=%s",
+            settings.SESSION_COOKIE_NAME,
+            settings.WIDGET_COOKIE_SECURE,
+            settings.WIDGET_COOKIE_SAMESITE,
+            settings.DASHBOARD_REDIRECT_URL,
+        )
+
     if not verify_telegram_widget_signature(data, received_hash):
         if settings.AUTH_DEBUG:
             logger.debug(
@@ -125,7 +143,11 @@ def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session) -> R
     )
     # Same-origin /dashboard: the widget posts to quanview.dinacreator.space
     # (Netlify proxies /api), so the host-only cookie survives the redirect.
-    redirect = RedirectResponse(url=settings.DASHBOARD_REDIRECT_URL, status_code=302)
+    # DASHBOARD_REDIRECT_URL must be an absolute URL to the frontend domain —
+    # never a relative path, which would redirect to the Render backend domain.
+    redirect_url = settings.DASHBOARD_REDIRECT_URL
+    logger.info("[AUTH] Redirecting authenticated user to %s", redirect_url)
+    redirect = RedirectResponse(url=redirect_url, status_code=302)
     _set_session_cookie(
         redirect,
         create_session_token(str(user.id), bool(user.is_admin)),
@@ -139,10 +161,11 @@ def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session) -> R
 @router.post("/telegram-widget-verify")
 def telegram_widget_verify_post(
     payload: TelegramWidgetPayload,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """JSON fallback for the Telegram Login Widget callback."""
-    return _widget_redirect(payload.signing_data(), payload.hash, db)
+    return _widget_redirect(payload.signing_data(), payload.hash, db, request)
 
 
 @router.get("/telegram-widget-verify")
@@ -157,7 +180,7 @@ def telegram_widget_verify_get(request: Request, db: Session = Depends(get_db)):
         for key, value in request.query_params.items()
         if key != "hash"
     }
-    return _widget_redirect(data, request.query_params.get("hash", ""), db)
+    return _widget_redirect(data, request.query_params.get("hash", ""), db, request)
 
 
 @router.get("/me", response_model=SessionResponse)

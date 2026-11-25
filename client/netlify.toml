@@ -5,12 +5,19 @@
 # Same-origin API proxy: the browser only ever talks to this frontend domain,
 # so the session cookie stays first-party on mobile (no ITP/STP third-party drop)
 # and there is no CORS preflight. Must precede the SPA catch-all below.
+#
+# Header notes:
+#   Host              – required by Render's routing to find the right service
+#   X-Forwarded-Proto – tells FastAPI (via ProxyHeadersMiddleware) the original
+#                       scheme is https, so secure=True cookies are set correctly
+#   X-Forwarded-Host  – tells FastAPI the original Host header the browser sent;
+#                       used for redirect URL construction and debugging logs
 [[redirects]]
   from = "/api/*"
   to = "https://signal-bot-hemp.onrender.com/api/:splat"
   status = 200
   force = true
-  headers = { Host = "signal-bot-hemp.onrender.com" }
+  headers = { Host = "signal-bot-hemp.onrender.com", X-Forwarded-Proto = "https", X-Forwarded-Host = "quanview.dinacreator.space" }
 
 [[redirects]]
   from = "/*"
