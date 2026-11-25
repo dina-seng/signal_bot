@@ -150,6 +150,26 @@ def test_netlify_toml_client_proxy_order():
     _check_netlify_toml_rule_order(toml_path)
 
 
+def test_redirects_file_api_proxy_precedes_spa_catch_all():
+    """_redirects rules win over netlify.toml, so the proxy must live here first."""
+    redirects_path = REPO_ROOT / "client" / "public" / "_redirects"
+    content = redirects_path.read_text(encoding="utf-8")
+    rules = [
+        line.split() for line in content.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    api_rule = next((r for r in rules if r[0] == "/api/*"), None)
+    spa_rule = next((r for r in rules if r[0] == "/*"), None)
+    assert api_rule is not None, "public/_redirects is missing the /api/* proxy"
+    assert spa_rule is not None, "public/_redirects is missing the SPA catch-all"
+    assert rules.index(api_rule) < rules.index(spa_rule), (
+        "The SPA catch-all in _redirects would swallow /api/* before netlify.toml "
+        "is read, serving index.html (200 text/html) for the Telegram widget callback."
+    )
+    assert api_rule[1].startswith("https://signal-bot-hemp.onrender.com/api/"), api_rule
+    assert "200!" in api_rule, "The API proxy needs forced rewrite (200!)"
+
+
 # ── Client-side guard documentation ───────────────────────────────────────────
 
 def test_session_check_non_json_guard_in_api_ts():

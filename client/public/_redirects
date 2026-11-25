@@ -1,1 +1,4 @@
-/*    /index.html   200
+# _redirects rules are processed BEFORE netlify.toml rules. The API proxy must
+# come first or the SPA catch-all below turns /api/* into index.html (200 HTML).
+/api/*  https://signal-bot-hemp.onrender.com/api/:splat  200!
+/*      /index.html  200
