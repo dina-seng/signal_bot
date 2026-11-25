@@ -126,6 +126,7 @@ def test_snapshot_shape(client):
 
     required = {
         "quote",
+        "live_quote",
         "candles",
         "indicators",
         "structure",

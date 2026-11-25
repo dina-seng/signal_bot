@@ -2,6 +2,16 @@
   publish = "dist"
   command = "npm run build"
 
+# Same-origin API proxy: the browser only ever talks to this frontend domain,
+# so the session cookie stays first-party on mobile (no ITP/STP third-party drop)
+# and there is no CORS preflight. Must precede the SPA catch-all below.
+[[redirects]]
+  from = "/api/*"
+  to = "https://signal-bot-hemp.onrender.com/api/:splat"
+  status = 200
+  force = true
+  headers = { Host = "signal-bot-hemp.onrender.com" }
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

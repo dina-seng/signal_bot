@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -66,6 +67,36 @@ async def _section(
         metrics.record_stage(stage, elapsed_ms)
 
 
+def _overlay_forming_quote(candles: list, quote: Any) -> list:
+    """Project the fast quote tick onto the newest cached bar.
+
+    The cached array holds CLOSED history (30s derived cache). Only its last bar
+    is re-based onto the live quote so the chart's forming close/bid equals the
+    number the left panel renders. Never mutate cached objects in place: a
+    snapshot must not contaminate the cache shared by later requests.
+    """
+    price = getattr(quote, "price", None)
+    if not candles or not isinstance(price, (int, float)) or price <= 0:
+        return candles
+
+    price = float(price)
+    last = candles[-1]
+    if isinstance(last, BaseModel):
+        updated = last.model_copy()
+        updated.high = max(float(updated.high), price)
+        updated.low = min(float(updated.low), price)
+        updated.close = price
+    elif isinstance(last, dict):
+        updated = dict(last)
+        updated["high"] = max(float(updated.get("high", price)), price)
+        updated["low"] = min(float(updated.get("low", price)), price)
+        updated["close"] = price
+    else:
+        return candles
+
+    return [*candles[:-1], updated]
+
+
 @router.get("/snapshot", response_model=DashboardSnapshotResponse)
 async def get_dashboard_snapshot(
     symbol: str = Query("XAU/USD", description="Primary dashboard symbol"),
@@ -89,10 +120,20 @@ async def get_dashboard_snapshot(
         return await market_api._resolve_quote(symbol, provider, db=db)
 
     async def candles_section():
-        rows = market_api.get_candles(
-            symbol, timeframe, candle_limit, True, None, None, db
+        # CLOSED bars only: they change on candle close, so a 30s derived cache
+        # is correct here. The currently-open bar is overlaid from the fast
+        # quote path after gather() (see _overlay_forming_quote).
+        key = ("candles", symbol, timeframe, candle_limit)
+
+        async def compute():
+            rows = market_api.get_candles(
+                symbol, timeframe, candle_limit, True, None, None, db
+            )
+            return [CandleResponse.model_validate(row) for row in rows]
+
+        return await derived_cache.get_or_fetch(
+            key, settings.DERIVED_CACHE_TTL_SECONDS, compute
         )
-        return [CandleResponse.model_validate(row) for row in rows]
 
     async def indicators_section():
         key = ("indicators", symbol, timeframe, derived_limit)
@@ -227,12 +268,19 @@ async def get_dashboard_snapshot(
     # disagree with each other (same tick, same transaction state).
     positions = summary.positions if summary is not None else []
 
+    # Two candle layers in one response: `candles` is the 30s cached CLOSED
+    # history with its newest bar projected onto the fast quote, while
+    # `live_quote` is the same fast tick the left panel shows. The chart uses
+    # live_quote for the forming bar and never re-derives it from stale candles.
+    live_candles = _overlay_forming_quote(candles, quote)
+
     serialize_started = time.perf_counter()
     response = DashboardSnapshotResponse(
         symbol=symbol,
         timeframe=timeframe,
         quote=quote,
-        candles=candles,
+        live_quote=quote,
+        candles=live_candles,
         indicators=indicators,
         structure=structure,
         liquidity=liquidity,

@@ -15,7 +15,13 @@
  * - /api/v1/telegram/broadcast
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api/v1';
+import { API_BASE_PATH } from '../config/sameOrigin';
+
+// Same-origin only. Netlify (prod) and Vite (dev) proxy /api/* to the backend,
+// so the session cookie stays first-party and no CORS preflight is needed.
+// An absolute backend host in env is deliberately ignored.
+const configuredBase = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+const API_BASE = configuredBase.startsWith('/api') ? configuredBase : API_BASE_PATH;
 
 export interface HealthResponse {
   status: string;
@@ -88,6 +94,8 @@ export interface DashboardSnapshot {
   symbol: string;
   timeframe: string;
   quote: BackendQuote | null;
+  /** Fast quote tick for the chart's forming bar (separate from cached candles). */
+  live_quote: BackendQuote | null;
   candles: any[];
   indicators: any | null;
   structure: any | null;

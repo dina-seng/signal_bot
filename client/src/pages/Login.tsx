@@ -2,14 +2,15 @@ import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { LockKeyhole, ShieldCheck } from 'lucide-react';
 import logoImg from '../../assets/logo.png';
+import { TELEGRAM_WIDGET_AUTH_URL } from '../config/sameOrigin';
 
 const botUsername = (
   import.meta.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || 'signalTheBEST_bot'
 ).trim().replace(/^@/, '');
 
-const apiBase = (import.meta.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
-  .trim().replace(/\/+$/, '');
-const widgetAuthUrl = `${apiBase}/api/v1/auth/telegram-widget-verify`;
+// The widget callback MUST be first-party: the session cookie is issued by the
+// proxied /api path on quanview.dinacreator.space, not by the Render host.
+const widgetAuthUrl = TELEGRAM_WIDGET_AUTH_URL;
 
 export const Login: React.FC = () => {
   useEffect(() => {

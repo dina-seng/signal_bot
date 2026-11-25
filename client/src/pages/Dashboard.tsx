@@ -497,11 +497,12 @@ export const Dashboard: React.FC = () => {
 
       if (snap.config) setAppConfig(snap.config);
 
-      // Quote — same freshness rules as the dedicated quote poll.
-      if (snap.quote) {
+      // Quote — left panel and chart share the SAME fast quote field.
+      const fastQuote = snap.live_quote || snap.quote;
+      if (fastQuote) {
         const quote = {
-          ...snap.quote,
-          fetched_at: snap.quote.fetched_at || new Date().toISOString(),
+          ...fastQuote,
+          fetched_at: fastQuote.fetched_at || new Date().toISOString(),
         };
         setLatestQuote(quote);
         const quoteIsFresh = quote.is_stale !== true;
@@ -509,8 +510,8 @@ export const Dashboard: React.FC = () => {
       }
 
       const prices: Record<string, number> = {};
-      if (typeof snap.quote?.price === 'number' && snap.quote.price > 0 && !snap.quote.is_stale) {
-        prices['XAU/USD'] = snap.quote.price;
+      if (typeof fastQuote?.price === 'number' && fastQuote.price > 0 && !fastQuote.is_stale) {
+        prices['XAU/USD'] = fastQuote.price;
       } else if (Array.isArray(snap.candles) && snap.candles.length > 0) {
         const last = snap.candles[snap.candles.length - 1];
         if (typeof last?.close === 'number') prices['XAU/USD'] = last.close;

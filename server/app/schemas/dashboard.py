@@ -12,6 +12,9 @@ class DashboardSnapshotResponse(BaseModel):
     symbol: str
     timeframe: str
     quote: Any = None
+    # Fast quote tick (QUOTE_CACHE_TTL_SECONDS) used by the chart's forming bar.
+    # Kept separate from `candles`, which is the 30s derived-cache history layer.
+    live_quote: Any = None
     candles: List[Any] = Field(default_factory=list)
     indicators: Any = None
     structure: Any = None

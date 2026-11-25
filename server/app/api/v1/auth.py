@@ -30,6 +30,30 @@ from app.services.auth_service import AuthService
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+def _set_session_cookie(
+    response: Response,
+    token: str,
+    max_age: int,
+    *,
+    secure: bool,
+    samesite: str,
+) -> None:
+    """Issue a HOST-ONLY session cookie for the same-origin /api proxy.
+
+    Deliberately no `domain=` argument: the browser attaches the cookie to
+    whatever host it sees (quanview.dinacreator.space), never to onrender.com.
+    """
+    response.set_cookie(
+        key=settings.SESSION_COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        secure=secure,
+        samesite=samesite,
+        path="/",
+    )
+
+
 @router.post("/generate-login-link", response_model=LoginLinkResponse)
 def generate_login_link(
     payload: LoginLinkRequest,
@@ -57,14 +81,12 @@ def verify_login_token(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    response.set_cookie(
-        key=settings.SESSION_COOKIE_NAME,
-        value=create_session_token(str(user.id), bool(user.is_admin)),
-        max_age=settings.SESSION_TTL_SECONDS,
-        httponly=True,
+    _set_session_cookie(
+        response,
+        create_session_token(str(user.id), bool(user.is_admin)),
+        settings.SESSION_TTL_SECONDS,
         secure=settings.SESSION_COOKIE_SECURE,
         samesite=settings.SESSION_COOKIE_SAMESITE,
-        path="/",
     )
     return SessionResponse(authenticated=True, user=UserResponse.model_validate(user))
 
@@ -101,15 +123,15 @@ def _widget_redirect(data: Dict[str, Any], received_hash: str, db: Session) -> R
         username=data.get("username"),
         first_name=data.get("first_name"),
     )
+    # Same-origin /dashboard: the widget posts to quanview.dinacreator.space
+    # (Netlify proxies /api), so the host-only cookie survives the redirect.
     redirect = RedirectResponse(url=settings.DASHBOARD_REDIRECT_URL, status_code=302)
-    redirect.set_cookie(
-        key=settings.SESSION_COOKIE_NAME,
-        value=create_session_token(str(user.id), bool(user.is_admin)),
-        max_age=settings.WIDGET_SESSION_TTL_SECONDS,
-        httponly=True,
+    _set_session_cookie(
+        redirect,
+        create_session_token(str(user.id), bool(user.is_admin)),
+        settings.WIDGET_SESSION_TTL_SECONDS,
         secure=settings.WIDGET_COOKIE_SECURE,
         samesite=settings.WIDGET_COOKIE_SAMESITE,
-        path="/",
     )
     return redirect
 

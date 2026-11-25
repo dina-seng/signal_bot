@@ -254,6 +254,17 @@ def root():
     }
 
 
+@app.get("/dashboard", include_in_schema=False)
+def dashboard_entry():
+    """Authenticated SPA entry route.
+
+    Netlify serves the built React app from this path on the frontend origin.
+    Keeping a light backend counterpart lets the same-origin session guard be
+    verified end-to-end (cookie -> 200, no bounce to /login).
+    """
+    return {"spa": "/dashboard", "authenticated": True}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

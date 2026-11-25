@@ -115,6 +115,19 @@ function deduplicateAndSortCandles(candles: FormedCandle[]): FormedCandle[] {
   return Array.from(map.values()).sort((a, b) => a.time - b.time);
 }
 
+// Project the fast quote onto the newest bar. History is cached at 30s; only
+// this forming close/high/low comes from the 5s quote tick the left panel uses.
+function projectFormingQuote(bar: FormedCandle, quote: BackendQuote | null): FormedCandle {
+  if (!quote || typeof quote.price !== 'number' || quote.price <= 0) return bar;
+  const price = quote.price;
+  return {
+    ...bar,
+    high: Math.max(bar.high, price),
+    low: Math.min(bar.low, price),
+    close: price,
+  };
+}
+
 export const TradingChart: React.FC<TradingChartProps> = ({
   selectedSymbol,
   onSymbolChange,
@@ -127,6 +140,12 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [showSR, setShowSR] = useState<boolean>(true);
   const [showFVG, setShowFVG] = useState<boolean>(true);
   const [candles, setCandles] = useState<FormedCandle[]>([]);
+  // Fast quote from the SAME endpoint/cache as the left panel. It alone drives
+  // the forming bar; snapshot candles are used only for CLOSED history.
+  const [fastQuote, setFastQuote] = useState<BackendQuote | null>(null);
+  const liveQuoteRef = useRef<BackendQuote | null>(null);
+  const isFetchingQuoteRef = useRef(false);
+  const isLoadingHistoryRef = useRef(false);
   const [isRealData, setIsRealData] = useState<boolean>(false);
   const [hoveredCandle, setHoveredCandle] = useState<{
     open: number;
@@ -323,8 +342,12 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     };
   }, []);
 
-  // 2. Fetch Base Historical Candlesticks from FastAPI backend
+  // 2. Fetch Base Historical (CLOSED) Candlesticks from FastAPI backend.
+  // The snapshot's live_quote is only used to seed the forming bar immediately
+  // after a history reload — never as a source for CLOSED candles.
   const loadChartData = useCallback(async () => {
+    if (isLoadingHistoryRef.current) return;
+    isLoadingHistoryRef.current = true;
     try {
       let rawCandles: any[] = [];
       let indData: any = null;
@@ -335,6 +358,10 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         // One cached round-trip instead of four parallel GETs.
         const snapRes = await quantViewApi.getDashboardSnapshot(selectedSymbol, selectedTimeframe);
         rawCandles = snapRes.data.candles || [];
+        const snapLiveQuote = snapRes.data.live_quote;
+        if (snapLiveQuote && typeof snapLiveQuote.price === 'number' && snapLiveQuote.price > 0) {
+          liveQuoteRef.current = snapLiveQuote;
+        }
         indData = snapRes.data.indicators;
         liqData = snapRes.data.liquidity;
         structData = snapRes.data.structure;
@@ -363,6 +390,16 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         }));
 
         const cleanCandles = deduplicateAndSortCandles(mapped);
+
+        // Re-base only the newest bar onto the live quote so a history reload
+        // cannot flash the stale cached close back into the chart/panel gap.
+        if (cleanCandles.length > 0) {
+          const lastIndex = cleanCandles.length - 1;
+          cleanCandles[lastIndex] = projectFormingQuote(
+            cleanCandles[lastIndex],
+            liveQuoteRef.current
+          );
+        }
 
         // Compute EMAs
         const closes = cleanCandles.map((c) => c.close);
@@ -418,44 +455,81 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       if (structData) setStructureData(structData);
     } catch (err) {
       console.warn('[TradingChart] Error loading candle data:', err);
+    } finally {
+      isLoadingHistoryRef.current = false;
     }
   }, [selectedSymbol, selectedTimeframe, priceDecimals]);
 
-  // Periodic historical refresh every 60s
-  useEffect(() => {
-    loadChartData();
-    const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      loadChartData();
-    }, 60000);
+  // Preferred forming source: this chart's 5s fast-quote tick, with the
+  // dashboard's panel quote as a bootstrap fallback. NEVER snapshot candles.
+  const activeQuote: BackendQuote | null = fastQuote ?? latestQuote ?? null;
 
+  useEffect(() => {
+    liveQuoteRef.current = activeQuote;
+  }, [activeQuote]);
+
+  // Fast quote tick from the SAME endpoint/cache the left panel reads.
+  const fetchFastQuote = useCallback(async () => {
+    if (isFetchingQuoteRef.current) return;
+    isFetchingQuoteRef.current = true;
+    try {
+      const res = await quantViewApi.getQuote(selectedSymbol);
+      const quote = res.data;
+      if (quote && typeof quote.price === 'number' && quote.price > 0) {
+        if (!quote.symbol || quote.symbol === selectedSymbol) setFastQuote(quote);
+      }
+    } catch {
+      // Keep the last good fast quote; the forming bar must never fall back to
+      // the stale candle close.
+    } finally {
+      isFetchingQuoteRef.current = false;
+    }
+  }, [selectedSymbol]);
+
+  // One poll loop, two refresh rates: every 5s the fast quote patches the
+  // forming bar; every 6th tick (30s) the cached CLOSED history is refreshed.
+  useEffect(() => {
+    let historyTicks = 0;
+    const tick = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      await fetchFastQuote();
+      historyTicks += 1;
+      if (historyTicks % 6 === 0) await loadChartData();
+    };
+
+    fetchFastQuote();
+    loadChartData();
+
+    const timer = setInterval(tick, 5000);
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') loadChartData();
+      if (document.visibilityState === 'visible') {
+        fetchFastQuote();
+        loadChartData();
+      }
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      clearInterval(interval);
+      clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [loadChartData]);
+  }, [fetchFastQuote, loadChartData]);
 
-  // 3. TASK 1: The "Forming Candle" Illusion with 15s Live Quotes
-  // Logic:
-  // - If the quote timestamp is within the current 1-minute window (or selected timeframe window),
-  //   update the `close`, `high`, and `low` of the last candle in the chart array.
-  // - Do not push a new candle until the minute actually rolls over.
-  // - This makes the chart "tick" in real-time without backend changes.
+  // 3. Forming candle: driven by the fast quote tick (5s), never by the 30s
+  // cached candle array. The cached bar only supplies open/volume/history.
+  // - If the quote timestamp is within the current timeframe window, update
+  //   the `close`, `high`, and `low` of the last bar to the live quote.
+  // - Do not push a new candle until the window actually rolls over.
   useEffect(() => {
-    if (!latestQuote || typeof latestQuote.price !== 'number' || latestQuote.price <= 0) return;
-    if (latestQuote.symbol && latestQuote.symbol !== selectedSymbol) return;
+    if (!activeQuote || typeof activeQuote.price !== 'number' || activeQuote.price <= 0) return;
+    if (activeQuote.symbol && activeQuote.symbol !== selectedSymbol) return;
 
     setCandles((prevCandles) => {
       if (prevCandles.length === 0) return prevCandles;
 
-      const quotePrice = latestQuote.price;
+      const quotePrice = activeQuote.price;
       const quoteTimeSec = parseToUnixSeconds(
-        latestQuote.timestamp || latestQuote.fetched_at || Date.now()
+        activeQuote.timestamp || activeQuote.fetched_at || Date.now()
       );
 
       const windowSec = getTimeframeDurationSeconds(selectedTimeframe);
@@ -549,7 +623,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         return [...prevCandles, newCandle];
       }
     });
-  }, [latestQuote, selectedSymbol, selectedTimeframe, showEMA]);
+  }, [activeQuote, selectedSymbol, selectedTimeframe, showEMA]);
 
   // 4. TASK 4: SMC Setup Overlays (Visual Only)
   // Horizontal dashed lines on TradingView chart for entry_price, stop_loss, take_profit_1
@@ -904,7 +978,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
           <span className="flex items-center gap-1 text-[#00e676]">
             <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
-            <span>Forming Candle (15s Tick)</span>
+            <span>Forming Candle (5s Tick)</span>
           </span>
         </div>
       </div>

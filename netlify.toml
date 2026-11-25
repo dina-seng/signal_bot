@@ -3,6 +3,16 @@
   publish = "dist"
   command = "npm run build"
 
+# Same-origin API proxy: /api/* is served by the Render backend but appears to
+# come from quanview.dinacreator.space, keeping the session cookie first-party.
+# This rule must stay ABOVE the SPA catch-all rewrite.
+[[redirects]]
+  from = "/api/*"
+  to = "https://signal-bot-hemp.onrender.com/api/:splat"
+  status = 200
+  force = true
+  headers = { Host = "signal-bot-hemp.onrender.com" }
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

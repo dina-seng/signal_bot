@@ -256,7 +256,9 @@ class Settings(BaseSettings):
     WIDGET_AUTH_MAX_AGE_SECONDS: int = Field(default=3600, ge=30)
     WIDGET_SESSION_TTL_SECONDS: int = Field(default=30 * 24 * 3600, ge=60)
     WIDGET_COOKIE_SECURE: bool = True
-    WIDGET_COOKIE_SAMESITE: str = "none"
+    # Lax is correct now that /api is same-origin (Netlify proxy). "none" made
+    # the widget cookie third-party and mobile ITP/STP dropped it on redirect.
+    WIDGET_COOKIE_SAMESITE: str = "lax"
     DASHBOARD_REDIRECT_URL: str = "https://quanview.dinacreator.space/dashboard"
 
     model_config = SettingsConfigDict(
