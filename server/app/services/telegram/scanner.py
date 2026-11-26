@@ -36,6 +36,7 @@ from app.services.paper_trading import PaperTradingService
 from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
 from app.services.signals import SignalGenerator
 from app.services.signals import lifecycle as signal_lifecycle
+from app.services.signals.lifecycle import skip_signal_from_response
 from app.services.telegram.broadcast import broadcast_to_subscribers
 from app.services.telegram.client import BaseTelegramClient, get_telegram_client
 from app.services.telegram.message_formatter import TelegramMessageFormatter
@@ -248,6 +249,7 @@ class AutomatedMarketScanner:
             logger.info(
                 f"Auto-execution skipped: not a 15m signal ({sig.symbol} [{sig.timeframe}])."
             )
+            skip_signal_from_response(db, sig, "non-15m timeframe")
             return None
 
         # Consumed setups never re-fire, even after a fast SL_HIT close.
@@ -256,16 +258,19 @@ class AutomatedMarketScanner:
                 f"Auto-execution skipped: candle setup already consumed for {sig.symbol} "
                 f"[{sig.timeframe}] {sig.direction}."
             )
+            skip_signal_from_response(db, sig, "candle setup already consumed")
             return None
 
         if sig.id and self.has_trade_for_signal(db, sig.id):
             logger.info(
                 f"Auto-execution skipped: trade already exists for Signal #{sig.id} ({sig.symbol})."
             )
+            skip_signal_from_response(db, sig, "trade already exists")
             return None
 
         if self.open_position_count(db) >= settings.MAX_OPEN_POSITIONS:
             logger.warning("Auto-execution skipped: Position cap reached.")
+            skip_signal_from_response(db, sig, "single-slot position cap")
             return None
 
         db_signal: Optional[Signal] = db.get(Signal, sig.id) if sig.id else None
@@ -294,6 +299,7 @@ class AutomatedMarketScanner:
                 f"Auto-execution skipped: 15m structural SL {levels.sl_distance:.2f} points "
                 f"exceeds cap {settings.AUTO_EXEC_MAX_SL_POINTS:.2f} for {sig.symbol}."
             )
+            skip_signal_from_response(db, sig, "SL beyond auto-execution cap")
             return None
 
         rejection_reason: Optional[str] = None
@@ -352,6 +358,9 @@ class AutomatedMarketScanner:
                     text=self.formatter.format_auto_execution(trade),
                     signal_id=sig.id or sig.fingerprint,
                 )
+                if db_signal is not None and not db_signal.is_broadcasted:
+                    db_signal.is_broadcasted = True
+                    db.commit()
             except Exception as e:
                 logger.error(f"Failed to send auto-execution alert for {sig.symbol}: {e}")
         return trade
@@ -683,14 +692,11 @@ class AutomatedMarketScanner:
 
                     signals_found += 1
 
-                    # 1. Active position is an ALERT-ONLY suppression. Auto-execution
-                    #    uses the global MAX_OPEN_POSITIONS cap plus per-signal
-                    #    idempotency, so one open position cannot block the next setup.
-                    position_active = self.has_active_position(db, sig.symbol)
-                    if position_active:
-                        logger.info(f"Skipping signal alert for {sig.symbol}: Position already active.")
+                    # Single dispatch mode: every qualified signal goes through
+                    # auto-execution + its Telegram execution alert. There is no
+                    # separate alert-only / pending-fill broadcast path.
 
-                    # 2. Qualification gate — live dispatch floor matches Baseline v2.
+                    # Qualification gate — live dispatch floor matches Baseline v2.
                     breakdown = getattr(sig, "score_breakdown", None)
                     is_qualified = (
                         bool(getattr(breakdown, "is_qualified", True))
@@ -705,52 +711,9 @@ class AutomatedMarketScanner:
                         )
                         continue
 
-                    # 3. Telegram broadcast. Cooldown / fingerprint dedup are
-                    #    ALERT-ONLY concerns and must NOT gate paper trading.
-                    if broadcast_to_telegram and not position_active:
-                        if self.is_signal_in_cooldown(db, sig):
-                            logger.debug(
-                                f"Skipping Telegram broadcast for {sig.symbol}: signal in cooldown."
-                            )
-                        elif sig.fingerprint in self._broadcasted_fingerprints:
-                            logger.debug(
-                                f"Skipping Telegram broadcast for {sig.symbol}: "
-                                "fingerprint already broadcasted."
-                            )
-                        else:
-                            self._broadcasted_fingerprints.add(sig.fingerprint)
-                            try:
-                                msg_text = self.formatter.format_signal_alert(sig)
-                                results = await broadcast_to_subscribers(
-                                    db,
-                                    self.telegram_client,
-                                    text=msg_text,
-                                    signal_id=sig.id or sig.fingerprint,
-                                )
-                                send_res = results[0] if results else None
-                                if send_res is not None and send_res.success:
-                                    signals_broadcast += 1
-                                    if sig.id:
-                                        db_sig = db.get(Signal, sig.id)
-                                        if db_sig:
-                                            db_sig.is_broadcasted = True
-                                            db.commit()
-                                    logger.info(
-                                        f"BROADCASTED NEW SIGNAL: [{sig.direction.value}] {sig.symbol} "
-                                        f"[{sig.timeframe}] (Score: {sig.setup_score:.1f})"
-                                    )
-                                else:
-                                    error_detail = (
-                                        send_res.error if send_res is not None else "no recipients"
-                                    )
-                                    logger.error(
-                                        f"Telegram delivery failed for {sig.symbol}: {error_detail}"
-                                    )
-                            except Exception as e:
-                                logger.error(f"Telegram delivery failed for {sig.symbol}: {e}")
-
-                    # 4. Fully automatic paper execution. No frontend POST required:
-                    #    all safety gates, DB write, and Telegram alert live here.
+                    # Auto-execution + its Telegram alert are the ONLY dispatch path.
+                    # Cooldown / fingerprint dedup are alert-only concerns and no
+                    # longer gate or replace paper execution.
                     if (
                         auto_paper_trade
                         and settings.PAPER_TRADING
@@ -762,11 +725,14 @@ class AutomatedMarketScanner:
                         if auto_trade is not None:
                             paper_trades_opened += 1
                     else:
+                        # Global kill switches suppress the whole dispatch, never
+                        # an alert-only fallback.
                         logger.debug(
                             f"Paper trade skipped for {sig.symbol} (auto_trade={auto_paper_trade}, "
                             f"PAPER_TRADING={settings.PAPER_TRADING}, "
                             f"SCANNER_AUTO_TRADE_PAPER={settings.SCANNER_AUTO_TRADE_PAPER})"
                         )
+                        skip_signal_from_response(db, sig, "paper trading disabled")
 
             # 5. Synchronize Open Paper Trading Positions & Trigger TP/SL Alerts
             updated_pos_count = 0

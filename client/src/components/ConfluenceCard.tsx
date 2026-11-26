@@ -358,7 +358,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                 }`}
               >
                 <Bot className="h-3.5 w-3.5" />
-                <span>{autoExecuted ? 'AUTO-EXECUTED' : 'PENDING FILL'}</span>
+                <span>{autoExecuted ? 'AUTO-EXECUTED' : 'AUTO-EXECUTE ON SIGNAL'}</span>
               </div>
             )}
           </div>
