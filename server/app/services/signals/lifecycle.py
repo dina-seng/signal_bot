@@ -161,6 +161,34 @@ def mark_signal_closed(
     logger.info("SIGNAL_LIFECYCLE_CLOSED signal=%s reason=%s", signal.id, exit_reason)
 
 
+def skip_signal(db: Session, signal: Signal, reason: str) -> None:
+    """Retire an unexecuted signal so it cannot linger as a pending fill.
+
+    Used when auto-execution is blocked (single-slot cap, consumed candle,
+    non-executable timeframe, etc.). There is only one dispatch mode: a signal
+    that cannot be executed is not an active signal.
+    """
+    if signal is None or signal.status != SignalStatus.ACTIVE.value:
+        return
+    signal.status = SignalStatus.EXPIRED.value
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    logger.info("SIGNAL_LIFECYCLE_SKIPPED signal=%s reason=%s", signal.id, reason)
+
+
+def skip_signal_from_response(db: Session, sig: object, reason: str) -> None:
+    """Resolve a scanner SignalResponse to its persisted row and skip it."""
+    signal_id = getattr(sig, "id", None)
+    signal = db.get(Signal, signal_id) if signal_id else None
+    if signal is None and getattr(sig, "fingerprint", None):
+        signal = db.scalars(
+            select(Signal).where(Signal.fingerprint == sig.fingerprint).limit(1)
+        ).first()
+    skip_signal(db, signal, reason)
+
+
 def executed_setup_keys(db: Session) -> Set[SetupKey]:
     keys: Set[SetupKey] = set()
     for row in db.scalars(select(ExecutedSetup)).all():

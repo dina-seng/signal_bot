@@ -56,7 +56,11 @@ def get_signals(
     db: Session = Depends(get_db),
     generator: SignalGenerator = Depends(get_signal_generator),
 ):
-    """Retrieve active signals via Unified Multi-Timeframe Scanner or historical database signals."""
+    """Retrieve active signals from the single auto-execution feed.
+
+    There is no alert-only / pending-fill signal type: a qualified signal either
+    opened a paper trade (EXECUTED/CLOSED) or was skipped and is not active.
+    """
     if unified:
         target_symbols = [_normalize_symbol(symbol)] if symbol else settings.SUPPORTED_SYMBOLS
         scan_res = generator.scan_unified_all(
