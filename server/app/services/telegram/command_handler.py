@@ -32,6 +32,8 @@ from app.services.news import (
 )
 from app.services.paper_trading import PaperTradingService
 from app.services.signals import SignalGenerator
+from app.services.signals import lifecycle as signal_lifecycle
+from app.services.signals.lifecycle import filter_consumed_scan_results
 from app.services.telegram.client import BaseTelegramClient, get_telegram_client
 from app.services.telegram.message_formatter import TelegramMessageFormatter
 
@@ -207,6 +209,7 @@ class TelegramCommandHandler:
                 risk_percent=settings.MAX_RISK_PERCENT,
                 persist_qualified=True,
             )
+            scan_res = filter_consumed_scan_results(db, scan_res)
             reply = self.formatter.format_market_scan_summary(scan_res)
 
         # -------------------------------------------------------------
@@ -257,6 +260,12 @@ class TelegramCommandHandler:
                         risk_percent=settings.MAX_RISK_PERCENT,
                         persist_qualified=True,
                     )
+
+                    # A consumed setup is not an active alert, even if the
+                    # evaluator just re-produced the same candle again.
+                    if signal_lifecycle.is_consumed_scan_result(db, scan_res):
+                        scan_res.is_actionable = False
+                        scan_res.signal = None
 
                     if scan_res.is_actionable and scan_res.signal:
                         reply = self.formatter.format_signal_alert(scan_res.signal)

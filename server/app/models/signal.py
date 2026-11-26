@@ -19,7 +19,7 @@ class Signal(Base):
     risk_reward = Column(Float, nullable=True)
     fingerprint = Column(String(128), unique=True, nullable=False, index=True)
     reasons = Column(JSON, nullable=False)
-    status = Column(String(20), default="ACTIVE", nullable=False)  # "ACTIVE", "INVALIDATED", "TP1_HIT", "TP2_HIT", "SL_HIT", "EXPIRED"
+    status = Column(String(20), default="ACTIVE", nullable=False)  # "ACTIVE", "SUPERSEDED", "EXECUTED", "INVALIDATED", "TP1_HIT", "TP2_HIT", "SL_HIT", "CLOSED", "EXPIRED"
     trend_alignment = Column(String(50), nullable=True)  # "TREND FOLLOWING", "COUNTER-TREND SCALP"
     htf_trend = Column(String(20), nullable=True)  # "BULLISH", "BEARISH", "RANGING"
     strategy_name = Column(String(50), nullable=True)  # "SMC Confluence", "Momentum", etc.

@@ -35,6 +35,7 @@ from app.services.news import (
 from app.services.paper_trading import PaperTradingService
 from app.services.paper_trading.order_executor import InsufficientRiskBudgetError
 from app.services.signals import SignalGenerator
+from app.services.signals import lifecycle as signal_lifecycle
 from app.services.telegram.broadcast import broadcast_to_subscribers
 from app.services.telegram.client import BaseTelegramClient, get_telegram_client
 from app.services.telegram.message_formatter import TelegramMessageFormatter
@@ -246,6 +247,14 @@ class AutomatedMarketScanner:
         if timeframe != "15m":
             logger.info(
                 f"Auto-execution skipped: not a 15m signal ({sig.symbol} [{sig.timeframe}])."
+            )
+            return None
+
+        # Consumed setups never re-fire, even after a fast SL_HIT close.
+        if signal_lifecycle.is_setup_executed(db, sig):
+            logger.info(
+                f"Auto-execution skipped: candle setup already consumed for {sig.symbol} "
+                f"[{sig.timeframe}] {sig.direction}."
             )
             return None
 
@@ -656,10 +665,20 @@ class AutomatedMarketScanner:
                         db.rollback()
                     logger.info("Unified signal analysis completed")
 
+            consumed_keys = signal_lifecycle.consumed_setup_keys(db)
+            consumed_ids = signal_lifecycle.consumed_signal_ids(db)
+
             for scan_res in scan_batches:
                 for result in scan_res.results:
                     sig = result.signal
                     if not sig or not result.is_actionable or result.blackout_blocked:
+                        continue
+
+                    if signal_lifecycle.is_consumed_signal(sig, consumed_keys, consumed_ids):
+                        logger.info(
+                            f"Skipping dispatch: consumed setup {sig.symbol} "
+                            f"[{sig.timeframe}] {sig.direction}."
+                        )
                         continue
 
                     signals_found += 1

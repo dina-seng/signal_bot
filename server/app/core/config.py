@@ -72,9 +72,9 @@ class Settings(BaseSettings):
         description="Upper lot bound for paper execution (config-driven, never hardcoded at call sites)",
     )
     MAX_OPEN_POSITIONS: int = Field(
-        default=6,
+        default=1,
         ge=1,
-        description="Global cap on simultaneously open paper positions for auto-execution",
+        description="Single-slot desk: global cap on simultaneously open paper positions",
     )
     AUTO_EXEC_MAX_SL_POINTS: float = Field(
         default=15.0,

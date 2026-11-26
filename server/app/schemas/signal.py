@@ -21,6 +21,8 @@ class SignalStatus(str, Enum):
     TP1_HIT = "TP1_HIT"
     TP2_HIT = "TP2_HIT"
     SL_HIT = "SL_HIT"
+    EXECUTED = "EXECUTED"
+    CLOSED = "CLOSED"
     EXPIRED = "EXPIRED"
 
 

@@ -29,6 +29,7 @@ import {
   BackendIndicatorAnalysis,
   BackendLiquidityZones,
   BackendStructureAnalysis,
+  BackendPosition,
   BackendQuote,
 } from '../services/api';
 import { formatPrice } from '../utils/formatters';
@@ -140,11 +141,14 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [showSR, setShowSR] = useState<boolean>(true);
   const [showFVG, setShowFVG] = useState<boolean>(true);
   const [candles, setCandles] = useState<FormedCandle[]>([]);
+  // Trade overlay source of truth: /api/v1/paper/positions?status=OPEN only.
+  const [openPositions, setOpenPositions] = useState<BackendPosition[]>([]);
   // Fast quote from the SAME endpoint/cache as the left panel. It alone drives
   // the forming bar; snapshot candles are used only for CLOSED history.
   const [fastQuote, setFastQuote] = useState<BackendQuote | null>(null);
   const liveQuoteRef = useRef<BackendQuote | null>(null);
   const isFetchingQuoteRef = useRef(false);
+  const isFetchingPositionsRef = useRef(false);
   const isLoadingHistoryRef = useRef(false);
   const [isRealData, setIsRealData] = useState<boolean>(false);
   const [hoveredCandle, setHoveredCandle] = useState<{
@@ -162,6 +166,18 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [structureData, setStructureData] = useState<BackendStructureAnalysis | null>(null);
 
   const priceDecimals = 2;
+
+  // Open positions are the ONLY source for the trade overlay. A full exit
+  // removes the row from the ledger and clears the overlay on the next sync.
+  const activePosition = useMemo(
+    () =>
+      openPositions.find(
+        (p) =>
+          p.symbol === selectedSymbol &&
+          (p.status === 'OPEN' || p.status === 'PARTIALLY_CLOSED'),
+      ) ?? null,
+    [openPositions, selectedSymbol],
+  );
 
   // Chart DOM container and series references
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -333,6 +349,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
     return () => {
       resizeObserver.disconnect();
+      smcLinesRef.current = [];
+      srLinesRef.current = [];
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -486,6 +504,19 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     }
   }, [selectedSymbol]);
 
+  const fetchOpenPositions = useCallback(async () => {
+    if (isFetchingPositionsRef.current) return;
+    isFetchingPositionsRef.current = true;
+    try {
+      const res = await quantViewApi.getPositions();
+      setOpenPositions(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      // Keep the last known ledger; never invent or resurrect an overlay.
+    } finally {
+      isFetchingPositionsRef.current = false;
+    }
+  }, []);
+
   // One poll loop, two refresh rates: every 5s the fast quote patches the
   // forming bar; every 6th tick (30s) the cached CLOSED history is refreshed.
   useEffect(() => {
@@ -493,17 +524,20 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     const tick = async () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       await fetchFastQuote();
+      await fetchOpenPositions();
       historyTicks += 1;
       if (historyTicks % 6 === 0) await loadChartData();
     };
 
     fetchFastQuote();
+    fetchOpenPositions();
     loadChartData();
 
     const timer = setInterval(tick, 5000);
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         fetchFastQuote();
+        fetchOpenPositions();
         loadChartData();
       }
     };
@@ -513,7 +547,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
       clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [fetchFastQuote, loadChartData]);
+  }, [fetchFastQuote, fetchOpenPositions, loadChartData]);
 
   // 3. Forming candle: driven by the fast quote tick (5s), never by the 30s
   // cached candle array. The cached bar only supplies open/volume/history.
@@ -625,13 +659,14 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     });
   }, [activeQuote, selectedSymbol, selectedTimeframe, showEMA]);
 
-  // 4. TASK 4: SMC Setup Overlays (Visual Only)
-  // Horizontal dashed lines on TradingView chart for entry_price, stop_loss, take_profit_1
+  // 4. Trade overlay — bound exclusively to the open-position ledger.
+  // Raw/historical signals are NEVER a source. Every tracked price line is
+  // explicitly removed when no open position exists for this symbol.
   useEffect(() => {
     if (!candleSeriesRef.current) return;
     const series = candleSeriesRef.current;
 
-    // Clear previous SMC overlay lines
+    // Always clear first, including the zero-open-positions case.
     smcLinesRef.current.forEach((line) => {
       try {
         series.removePriceLine(line);
@@ -639,75 +674,61 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     });
     smcLinesRef.current = [];
 
-    // Identify active signal for current symbol
-    const signal =
-      activeSignal ||
-      signals?.find(
-        (s) =>
-          s.symbol === selectedSymbol &&
-          s.hasActiveSignal &&
-          (s.status === 'ACTIVE' || s.direction === 'BUY' || s.direction === 'SELL')
-      );
+    if (!activePosition) return;
 
-    if (signal && signal.hasActiveSignal) {
-      const entry = signal.entryPrice ?? (signal as any).entry_price;
-      const sl = signal.stopLoss ?? (signal as any).stop_loss;
-      const tp1 = signal.takeProfit1 ?? (signal as any).take_profit_1;
-      const tp2 = signal.takeProfit2 ?? (signal as any).take_profit_2;
+    const entry = activePosition.entry_price;
+    const sl = activePosition.stop_loss;
+    const tp1 = activePosition.take_profit_1;
+    const tp2 = activePosition.take_profit_2;
 
-      // 1. Entry Price Line (Cyan dashed)
-      if (typeof entry === 'number' && entry > 0) {
-        const entryLine = series.createPriceLine({
-          price: entry,
-          color: '#00e5ff',
-          lineWidth: 2,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `ENTRY: ${formatPrice(selectedSymbol, entry)}`,
-        });
-        smcLinesRef.current.push(entryLine);
-      }
-
-      // 2. Stop Loss Line (Neon Red dashed)
-      if (typeof sl === 'number' && sl > 0) {
-        const slLine = series.createPriceLine({
-          price: sl,
-          color: '#ff3366',
-          lineWidth: 2,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `SL: ${formatPrice(selectedSymbol, sl)}`,
-        });
-        smcLinesRef.current.push(slLine);
-      }
-
-      // 3. Take Profit 1 Line (Neon Green dashed)
-      if (typeof tp1 === 'number' && tp1 > 0) {
-        const tp1Line = series.createPriceLine({
-          price: tp1,
-          color: '#00e676',
-          lineWidth: 2,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `TP1: ${formatPrice(selectedSymbol, tp1)}`,
-        });
-        smcLinesRef.current.push(tp1Line);
-      }
-
-      // Optional: Take Profit 2 Line (Emerald Dotted)
-      if (typeof tp2 === 'number' && tp2 > 0) {
-        const tp2Line = series.createPriceLine({
-          price: tp2,
-          color: '#00b0ff',
-          lineWidth: 1,
-          lineStyle: LineStyle.Dotted,
-          axisLabelVisible: true,
-          title: `TP2: ${formatPrice(selectedSymbol, tp2)}`,
-        });
-        smcLinesRef.current.push(tp2Line);
-      }
+    if (typeof entry === 'number' && entry > 0) {
+      const entryLine = series.createPriceLine({
+        price: entry,
+        color: '#00e5ff',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `ENTRY: ${formatPrice(selectedSymbol, entry)}`,
+      });
+      smcLinesRef.current.push(entryLine);
     }
-  }, [signals, activeSignal, selectedSymbol, candles]);
+
+    if (typeof sl === 'number' && sl > 0) {
+      const slLine = series.createPriceLine({
+        price: sl,
+        color: '#ff3366',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `SL: ${formatPrice(selectedSymbol, sl)}`,
+      });
+      smcLinesRef.current.push(slLine);
+    }
+
+    if (typeof tp1 === 'number' && tp1 > 0) {
+      const tp1Line = series.createPriceLine({
+        price: tp1,
+        color: '#00e676',
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `TP1: ${formatPrice(selectedSymbol, tp1)}`,
+      });
+      smcLinesRef.current.push(tp1Line);
+    }
+
+    if (typeof tp2 === 'number' && tp2 > 0) {
+      const tp2Line = series.createPriceLine({
+        price: tp2,
+        color: '#00b0ff',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: `TP2: ${formatPrice(selectedSymbol, tp2)}`,
+      });
+      smcLinesRef.current.push(tp2Line);
+    }
+  }, [activePosition, selectedSymbol, candles]);
 
   // 5. Support / Resistance Levels on Chart
   useEffect(() => {
@@ -749,15 +770,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const displayCandle = hoveredCandle || lastCandle;
   const isDisplayGreen = displayCandle ? displayCandle.close >= displayCandle.open : true;
 
-  // Active signal for badge
-  const currentSignal =
-    activeSignal ||
-    signals?.find(
-      (s) =>
-        s.symbol === selectedSymbol &&
-        s.hasActiveSignal &&
-        (s.status === 'ACTIVE' || s.direction === 'BUY' || s.direction === 'SELL')
-    );
+  // Badge and legend follow the open-position ledger, never signal props.
+  // `signals` / `activeSignal` are intentionally unused for overlay state.
 
   return (
     <div className="relative min-w-0 w-full overflow-hidden p-3.5 sm:p-5 space-y-3 font-sans">
@@ -798,15 +812,15 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             ))}
           </div>
 
-          {/* Active SMC Signal Banner Pill if present */}
-          {currentSignal && (
+          {/* Trade overlay badge: only while an open position exists */}
+          {activePosition && (
             <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-950 border border-cyan-500/30 text-[10px] shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
               <span className="text-cyan-300 font-bold">
-                {currentSignal.direction} OVERLAY ACTIVE
+                {activePosition.direction} OVERLAY ACTIVE
               </span>
               <span className="text-zinc-500 hidden sm:inline">
-                (TP1: {currentSignal.takeProfit1 ? formatPrice(selectedSymbol, currentSignal.takeProfit1) : '--'})
+                (TP1: {activePosition.take_profit_1 ? formatPrice(selectedSymbol, activePosition.take_profit_1) : '--'})
               </span>
             </div>
           )}
@@ -1015,7 +1029,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               </span>
             </>
           )}
-          {currentSignal && (
+          {activePosition && (
             <>
               <span className="flex items-center gap-1 text-cyan-300">
                 <span className="w-2.5 h-0.5 border-t-2 border-dashed border-cyan-400 inline-block" /> Entry
