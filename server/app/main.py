@@ -152,9 +152,17 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Automated market scanner disabled (SCANNER_ENABLED=False).")
 
+    from app.services.paper_trading.exit_monitor import (
+        start_exit_monitor,
+        stop_exit_monitor,
+    )
+
+    exit_monitor_task = await start_exit_monitor(app.state.http_client)
+
     logger.info("Application startup complete.")
     yield
     logger.info("Application shutting down...")
+    await stop_exit_monitor(exit_monitor_task)
     stop_scanner_scheduler()
     await app.state.http_client.aclose()
     logger.info("Application shutdown complete.")

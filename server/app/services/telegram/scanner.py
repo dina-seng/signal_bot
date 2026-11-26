@@ -752,7 +752,21 @@ class AutomatedMarketScanner:
             # 5. Synchronize Open Paper Trading Positions & Trigger TP/SL Alerts
             updated_pos_count = 0
             try:
-                sync_report = self.paper_service.sync_prices(db=db)
+                # Feed the cached live quote so TP/SL use a real tick instead of
+                # the last stored candle close (the fast exit monitor does the
+                # same on every tick between scanner cycles).
+                live_prices = None
+                try:
+                    from app.api.v1.market import get_cached_quote
+
+                    quote = get_cached_quote(settings.POSITION_MONITOR_SYMBOL)
+                    if quote is not None and float(quote.price) > 0 and not quote.is_stale:
+                        live_prices = {quote.symbol: float(quote.price)}
+                except Exception as quote_exc:
+                    logger.debug(f"Live quote unavailable for position sync: {quote_exc}")
+                sync_report = self.paper_service.sync_prices(
+                    db=db, symbol_prices=live_prices
+                )
                 updated_pos_count = sync_report.updated_positions_count
                 if broadcast_to_telegram and sync_report.events:
                     import re

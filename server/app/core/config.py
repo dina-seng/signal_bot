@@ -176,6 +176,11 @@ class Settings(BaseSettings):
     DASHBOARD_SIGNALS_LIMIT: int = Field(default=25, ge=1, le=500)
     DASHBOARD_TRADE_HISTORY_LIMIT: int = Field(default=50, ge=1, le=500)
 
+    # Fast exit monitor (app-side fallback; no external broker integration exists)
+    POSITION_MONITOR_ENABLED: bool = True
+    POSITION_MONITOR_INTERVAL_SECONDS: float = Field(default=0.5, gt=0)
+    POSITION_MONITOR_SYMBOL: str = "XAU/USD"
+
     # Provider cache + request coalescing
     PROVIDER_CACHE_ENABLED: bool = True
     DERIVED_CACHE_TTL_SECONDS: float = Field(

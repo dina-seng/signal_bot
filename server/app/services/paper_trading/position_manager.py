@@ -1,8 +1,11 @@
 """Paper Position Management, SL/TP Auto-monitoring, and Price Synchronization."""
 
+import threading
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Dict, List, Optional
+from functools import wraps
+from typing import Dict, List, Optional, Set
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
@@ -15,6 +18,35 @@ from app.schemas.signal import SignalDirection
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import get_broker_spec
 from app.services.signals import RiskManager
+
+
+# In-process guard: scanner, REST closes and the fast monitor must never apply
+# the same position's PnL twice. The DB has no CLOSING state, so this lock is
+# the minimal way to make closes atomic without changing persisted statuses.
+_close_lock = threading.Lock()
+_closing_trade_ids: Set[int] = set()
+
+
+def _single_close(func):
+    @wraps(func)
+    def wrapper(self, db: Session, trade_id: int, *args, **kwargs):
+        with _close_lock:
+            if trade_id in _closing_trade_ids:
+                raise ValueError(f"Position #{trade_id} is already being closed.")
+            _closing_trade_ids.add(trade_id)
+        started = time.perf_counter()
+        try:
+            return func(self, db, trade_id, *args, **kwargs)
+        finally:
+            with _close_lock:
+                _closing_trade_ids.discard(trade_id)
+            logger.debug(
+                "EXIT_LATENCY position=%s close_completed_ms=%.2f",
+                trade_id,
+                (time.perf_counter() - started) * 1000.0,
+            )
+
+    return wrapper
 
 
 class PaperPositionManager:
@@ -56,6 +88,7 @@ class PaperPositionManager:
         logger.info(f"MODIFIED POSITION #{trade.id}: SL={trade.stop_loss}, TP1={trade.take_profit_1}, TP2={trade.take_profit_2}")
         return trade
 
+    @_single_close
     def close_position(
         self,
         db: Session,
@@ -153,6 +186,12 @@ class PaperPositionManager:
         logger.info(
             f"CLOSED POSITION #{trade.id}: Closed {close_lots} Lots of {trade.symbol} @ {current_price:.5f} "
             f"(Leg PnL: ${realized_leg_pnl:+,.2f}, Total Realized: ${trade.realized_pnl:+,.2f}, Reason: {exit_reason})"
+        )
+        logger.info(
+            "EXIT_LATENCY position=%s reason=%s broker_ack_db_commit=%s",
+            trade.id,
+            exit_reason,
+            datetime.now(timezone.utc).isoformat(),
         )
         return trade
 

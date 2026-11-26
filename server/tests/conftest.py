@@ -19,6 +19,9 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 settings.DATABASE_URL = "sqlite:///:memory:"
+# The fast exit monitor is tested explicitly; keep it off for unit tests so it
+# cannot race with deterministic price-sync assertions.
+settings.POSITION_MONITOR_ENABLED = False
 
 import app.core.database as db_core
 from app.models.base import Base
