@@ -120,6 +120,17 @@ class ProviderCache:
         finally:
             self._inflight.pop(key, None)
 
+    def invalidate_prefix(self, prefix: tuple) -> None:
+        """Drop cached entries whose key starts with ``prefix``.
+
+        Used when a consumed setup closes: the cached dashboard signal view for
+        that symbol must not survive into the next poll.
+        """
+        for key in list(self._entries):
+            if isinstance(key, tuple) and key[: len(prefix)] == tuple(prefix):
+                self._entries.pop(key, None)
+                self._last_good.pop(key, None)
+
     def stats(self) -> Dict[str, Any]:
         total = self._hits + self._misses
         return {

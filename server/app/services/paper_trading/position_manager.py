@@ -13,11 +13,14 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.models.candle import Candle
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
+from app.models.signal import Signal
 from app.schemas.paper_trading import PositionSyncReport
 from app.schemas.signal import SignalDirection
+from app.services.market_data.cache import derived_cache
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import get_broker_spec
 from app.services.signals import RiskManager
+from app.services.signals.lifecycle import mark_signal_closed
 
 
 # In-process guard: scanner, REST closes and the fast monitor must never apply
@@ -156,6 +159,12 @@ class PaperPositionManager:
             initial_risk_pips = abs(trade.entry_price - trade.stop_loss) / pip_size
             initial_risk_usd = max(1.0, initial_risk_pips * pip_val * trade.initial_position_size)
             trade.return_r = round(trade.realized_pnl / initial_risk_usd, 2)
+
+            # Lifecycle cleanup only: retire the consumed signal and drop the
+            # cached dashboard signal view so no stale score/overlay survives.
+            linked_signal = db.get(Signal, trade.signal_id) if trade.signal_id else None
+            mark_signal_closed(db, linked_signal, exit_reason)
+            derived_cache.invalidate_prefix(("signals", trade.symbol))
         else:
             trade.status = "PARTIALLY_CLOSED"
             # Update margin used proportionally

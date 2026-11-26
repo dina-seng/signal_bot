@@ -16,6 +16,13 @@ from app.schemas.signal import (
     StatelessSignalRequest,
 )
 from app.services.signals import SignalGenerator
+from app.services.signals.lifecycle import (
+    filter_consumed_scan_results,
+    filter_consumed_signals,
+    is_consumed_signal,
+    consumed_setup_keys,
+    consumed_signal_ids,
+)
 
 router = APIRouter(prefix="/signals", tags=["Trading Signals & Scanner"])
 
@@ -58,6 +65,8 @@ def get_signals(
             persist_qualified=True,
         )
         unified_signals: List[SignalResponse] = []
+        consumed_keys = consumed_setup_keys(db)
+        consumed_ids = consumed_signal_ids(db)
         for r in scan_res.results:
             sig = r.signal
             if not sig:
@@ -83,6 +92,8 @@ def get_signals(
                 continue
             if status and sig.status.value != status.upper().strip():
                 continue
+            if is_consumed_signal(sig, consumed_keys, consumed_ids):
+                continue
             unified_signals.append(sig)
         return unified_signals
 
@@ -94,9 +105,12 @@ def get_signals(
         stmt = stmt.where(Signal.direction == direction.upper().strip())
     if status:
         stmt = stmt.where(Signal.status == status.upper().strip())
+    else:
+        # Active feed only. EXECUTED/CLOSED/history is not an active signal.
+        stmt = stmt.where(Signal.status == SignalStatus.ACTIVE.value)
 
     stmt = stmt.order_by(desc(Signal.timestamp)).limit(limit)
-    return list(db.scalars(stmt).all())
+    return filter_consumed_signals(db, list(db.scalars(stmt).all()))
 
 
 @router.get("/scan", response_model=MarketScanResponse)
@@ -115,22 +129,23 @@ def scan_markets(
     """
     account_balance, risk_percent = _authoritative_signal_context(db, service)
     if unified:
-        return generator.scan_unified_all(
+        scan_result = generator.scan_unified_all(
             db=db,
             symbols=settings.SUPPORTED_SYMBOLS,
             account_balance=account_balance,
             risk_percent=risk_percent,
             persist_qualified=persist_qualified,
         )
-
-    return generator.scan_all_symbols(
-        db=db,
-        symbols=settings.SUPPORTED_SYMBOLS,
-        timeframe=timeframe.lower().strip(),
-        account_balance=account_balance,
-        risk_percent=risk_percent,
-        persist_qualified=persist_qualified,
-    )
+    else:
+        scan_result = generator.scan_all_symbols(
+            db=db,
+            symbols=settings.SUPPORTED_SYMBOLS,
+            timeframe=timeframe.lower().strip(),
+            account_balance=account_balance,
+            risk_percent=risk_percent,
+            persist_qualified=persist_qualified,
+        )
+    return filter_consumed_scan_results(db, scan_result)
 
 
 @router.get("/unified", response_model=MarketScanResponse)
@@ -142,13 +157,14 @@ def get_unified_signals(
 ):
     """Unified Multi-Timeframe Scanner endpoint; balance/risk come from the paper account."""
     account_balance, risk_percent = _authoritative_signal_context(db, service)
-    return generator.scan_unified_all(
+    scan_result = generator.scan_unified_all(
         db=db,
         symbols=settings.SUPPORTED_SYMBOLS,
         account_balance=account_balance,
         risk_percent=risk_percent,
         persist_qualified=persist_qualified,
     )
+    return filter_consumed_scan_results(db, scan_result)
 
 
 @router.post("/evaluate", response_model=SignalResponse)

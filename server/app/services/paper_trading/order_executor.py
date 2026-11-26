@@ -13,11 +13,12 @@ from app.models.candle import Candle
 from app.models.paper import VirtualAccount, PaperTrade
 from app.models.signal import Signal
 from app.schemas.paper_trading import AutoTradeSignalRequest, PaperOrderCreate
-from app.schemas.signal import SignalDirection
+from app.schemas.signal import SignalDirection, SignalStatus
 from app.services.market_data.freshness import filter_closed_candles
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import BrokerSpec, get_broker_spec
 from app.services.signals import RiskEngine, RiskLevels, RiskManager, SignalGenerator
+from app.services.signals import lifecycle as signal_lifecycle
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +414,33 @@ class PaperOrderExecutor:
                 logger.warning(msg)
                 raise ValueError(msg)
 
+    @staticmethod
+    def _assert_execution_slot_available(db: Session, symbol: str) -> None:
+        """Single-slot gate: never stack a second open position on a symbol."""
+        same_symbol = db.scalars(
+            select(PaperTrade.id).where(
+                PaperTrade.symbol == symbol,
+                PaperTrade.status.in_(["OPEN", "PARTIALLY_CLOSED"]),
+            )
+        ).first()
+        if same_symbol is not None:
+            raise ValueError(
+                f"Position slot unavailable: {symbol} already has an open paper trade."
+            )
+
+        active_count = len(
+            db.scalars(
+                select(PaperTrade.id).where(
+                    PaperTrade.status.in_(["OPEN", "PARTIALLY_CLOSED"])
+                )
+            ).all()
+        )
+        if active_count >= settings.MAX_OPEN_POSITIONS:
+            raise ValueError(
+                f"Position slot unavailable: {active_count} open position(s) already active "
+                f"(cap={settings.MAX_OPEN_POSITIONS})."
+            )
+
     def execute_order(
         self,
         db: Session,
@@ -420,6 +448,21 @@ class PaperOrderExecutor:
         current_market_price: Optional[float] = None,
     ) -> PaperTrade:
         """Execute a MARKET, LIMIT, or STOP paper order."""
+        # 0. Concurrency + consumed-setup locks BEFORE any DB write or pricing.
+        self._assert_execution_slot_available(db, order.symbol)
+
+        signal = db.get(Signal, order.signal_id) if order.signal_id else None
+        if signal is not None:
+            if signal.status != SignalStatus.ACTIVE.value:
+                raise ValueError(
+                    f"Signal #{signal.id} is {signal.status}, not ACTIVE; order aborted."
+                )
+            if signal_lifecycle.is_setup_executed(db, signal):
+                raise ValueError(
+                    f"Setup for {signal.symbol} [{signal.timeframe}] at {signal.timestamp} "
+                    f"({signal.direction}) was already executed; order aborted."
+                )
+
         # 1. Resolve Virtual Account
         if order.account_id:
             account = db.get(VirtualAccount, order.account_id)
@@ -564,6 +607,10 @@ class PaperOrderExecutor:
             opened_at=now,
         )
         db.add(paper_trade)
+        # Flush so the trade id can be linked atomically to the consumed setup.
+        db.flush()
+        if signal is not None and paper_trade.status == "OPEN":
+            signal_lifecycle.mark_signal_executed(db, signal, paper_trade.id)
         db.commit()
         db.refresh(paper_trade)
 
@@ -650,9 +697,15 @@ class PaperOrderExecutor:
                     Signal.direction.in_(["BUY", "SELL"]),
                 )
                 .order_by(desc(Signal.timestamp))
-                .limit(1)
             )
-            target_signal = db.scalars(stmt).first()
+            consumed = signal_lifecycle.executed_setup_keys(db)
+            target_signal = None
+            for candidate in db.scalars(stmt).all():
+                key = signal_lifecycle.setup_key_of(candidate)
+                if key is not None and key in consumed:
+                    continue
+                target_signal = candidate
+                break
 
         if not target_signal:
             raise ValueError(f"No active qualifying trading signal found for {request.symbol}.")
