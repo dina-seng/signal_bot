@@ -11,7 +11,6 @@ from app.services.signals.evaluators import (
 )
 from app.services.signals.path_validator import PathValidator
 from app.services.signals.risk_engine import RiskEngine, RiskLevels
-from app.services.signals.risk_manager import RiskManager
 from app.services.signals.scoring_engine import SignalScoringEngine
 from app.services.signals.signal_generator import SignalGenerator
 from app.services.signals.structural_levels import StructuralLevelEngine, StructuralLevels
@@ -27,7 +26,6 @@ __all__ = [
     "PriceActionConsensusEvaluator",
     "RiskEngine",
     "RiskLevels",
-    "RiskManager",
     "SignalGenerator",
     "SignalScoringEngine",
     "StrategyManager",

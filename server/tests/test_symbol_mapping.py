@@ -10,7 +10,7 @@ from app.services.market_data.symbols import (
     calculate_pips,
     format_price,
 )
-from app.services.signals.risk_manager import RiskManager
+from app.services.signals.risk_engine import RiskEngine
 
 
 def test_every_configured_instrument_resolves_for_every_provider():
@@ -56,9 +56,9 @@ def test_pip_distance_and_price_formatting():
 
 
 def test_risk_manager_lot_sizing_by_instrument():
-    """Verify RiskManager dynamically sizes positions based on instrument specs."""
+    """Verify RiskEngine dynamically sizes positions based on instrument specs."""
     from app.schemas.signal import SignalDirection
-    rm = RiskManager()
+    rm = RiskEngine()
 
     # Gold: balance $10,000, risk 0.5% = $50. SL distance ~500 pips ($5.00 distance)
     # Sizing uses centralized instrument pip specs

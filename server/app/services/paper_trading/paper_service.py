@@ -23,6 +23,7 @@ from app.schemas.paper_trading import (
     VirtualAccountResponse,
 )
 from app.schemas.signal import SignalDirection
+from app.services.signals import RiskEngine
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.order_executor import PaperOrderExecutor
 from app.services.paper_trading.position_manager import PaperPositionManager
@@ -110,7 +111,7 @@ class PaperTradingService:
         Used by the scanner's pre-execution safety gates so eligibility is based
         on the exact same 15m structural stop that execution will apply.
         """
-        pip_size = self.order_executor.risk_manager.get_pip_size(signal.symbol)
+        pip_size = RiskEngine.get_pip_size(signal.symbol)
         return self.order_executor.resolve_signal_levels(
             db=db,
             signal=signal,

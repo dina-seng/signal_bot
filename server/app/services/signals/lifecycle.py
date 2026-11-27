@@ -7,12 +7,13 @@ the output layer may show; it never generates signals or touches scoring, veto
 or risk logic.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Sequence, Set, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.logging import logger
 from app.models.executed_setup import ExecutedSetup
 from app.models.paper import PaperTrade
@@ -187,6 +188,31 @@ def skip_signal_from_response(db: Session, sig: object, reason: str) -> None:
             select(Signal).where(Signal.fingerprint == sig.fingerprint).limit(1)
         ).first()
     skip_signal(db, signal, reason)
+
+
+def has_recent_sl_hit(
+    db: Session, symbol: str, now: Optional[datetime] = None
+) -> bool:
+    """True when this symbol had an SL_HIT inside the post-SL cooldown window."""
+    minutes = int(getattr(settings, "POST_SL_COOLDOWN_MINUTES", 0))
+    if minutes <= 0:
+        return False
+    reference = now or datetime.now(timezone.utc)
+    cutoff = reference - timedelta(minutes=minutes)
+    trade = db.scalars(
+        select(PaperTrade)
+        .where(
+            PaperTrade.symbol == symbol,
+            PaperTrade.exit_reason == "SL_HIT",
+            PaperTrade.closed_at.is_not(None),
+        )
+        .order_by(desc(PaperTrade.closed_at))
+        .limit(1)
+    ).first()
+    if trade is None:
+        return False
+    closed_at = ensure_utc_datetime(trade.closed_at)
+    return closed_at is not None and closed_at >= cutoff
 
 
 def executed_setup_keys(db: Session) -> Set[SetupKey]:

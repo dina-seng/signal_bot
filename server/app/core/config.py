@@ -81,6 +81,11 @@ class Settings(BaseSettings):
         gt=0,
         description="Max 15m structural SL distance (price points) eligible for auto-execution",
     )
+    POST_SL_COOLDOWN_MINUTES: int = Field(
+        default=30,
+        ge=0,
+        description="Minutes to block a new trade on a symbol after its last SL_HIT",
+    )
     MAX_RISK_PERCENT: float = Field(
         default=5.0,
         ge=0.1,

@@ -13,7 +13,7 @@ from app.services.paper_trading.broker_spec import get_broker_spec
 from app.services.paper_trading.order_executor import PaperOrderExecutor
 from app.services.paper_trading.paper_service import PaperTradingService
 from app.services.paper_trading.account_manager import VirtualAccountManager
-from app.services.signals import RiskManager
+from app.services.signals import RiskEngine
 
 MARKET = 4000.0
 HALF_SPREAD = 0.05
@@ -63,7 +63,7 @@ def test_a_valid_min_lot_execution(test_db_session):
 
     # Force an exact 8.82 price-unit stop via structural support (ATR default 6.0
     # contributes 0.5*ATR = 3.0 below the support level).
-    rp = RiskManager().calculate_trade_risk(
+    rp = RiskEngine().calculate_trade_risk(
         symbol="XAU/USD", direction=SignalDirection.BUY,
         entry_price=MARKET, key_support_low=MARKET - distance + 3.0,
         account_balance=200.0, risk_percent=5.0,
@@ -84,7 +84,7 @@ def test_b_min_lot_is_executed_regardless_of_budget(test_db_session):
     assert trade.status == "OPEN"
     assert trade.initial_position_size == pytest.approx(0.01)
 
-    rp = RiskManager().calculate_trade_risk(
+    rp = RiskEngine().calculate_trade_risk(
         symbol="XAU/USD", direction=SignalDirection.BUY,
         entry_price=MARKET, atr_value=30.38, account_balance=200.0,
         risk_percent=5.0,
@@ -228,7 +228,7 @@ def test_f_full_3r_exit_is_15_percent(test_db_session):
     assert closed.realized_pnl == pytest.approx(30.0, abs=0.01)
     assert closed.realized_pnl / 200.0 == pytest.approx(0.15, abs=0.001)
 
-    rp = RiskManager().calculate_trade_risk(
+    rp = RiskEngine().calculate_trade_risk(
         symbol="XAU/USD", direction=SignalDirection.BUY,
         entry_price=MARKET, atr_value=10.0, account_balance=200.0,
         risk_percent=5.0,

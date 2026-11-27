@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.api.deps import get_paper_trading_service
 from app.models.candle import Candle
 from app.models.paper import PaperTrade, VirtualAccount
-from app.services.signals.risk_manager import RiskManager
+from app.services.signals.risk_engine import RiskEngine
 from app.schemas.paper_trading import (
     AccountDepositRequest,
     AccountResetRequest,
@@ -63,8 +63,8 @@ def _resolve_live_tick(db: Session) -> Tuple[Optional[float], str]:
 
 def _mark_trade_entities_to_tick(trades: List[PaperTrade], price: float) -> None:
     """Write the shared tick into the ORM entities that feed account equity."""
-    pip_size = RiskManager.get_pip_size("XAU/USD")
-    pip_value = RiskManager.get_pip_value_per_lot("XAU/USD")
+    pip_size = RiskEngine.get_pip_size("XAU/USD")
+    pip_value = RiskEngine.get_pip_value_per_lot("XAU/USD")
     for t in trades:
         if t.symbol != "XAU/USD" or t.status not in _OPEN_TRADE_STATUSES:
             continue
@@ -279,8 +279,8 @@ def _mark_positions_with_quote(db: Session, positions: List[PaperTradeResponse])
             continue
 
         pos.current_price = price
-        pip_size = RiskManager.get_pip_size(pos.symbol)
-        pip_value = RiskManager.get_pip_value_per_lot(pos.symbol)
+        pip_size = RiskEngine.get_pip_size(pos.symbol)
+        pip_value = RiskEngine.get_pip_value_per_lot(pos.symbol)
         if pip_size > 0:
             direction = getattr(pos.direction, "value", pos.direction)
             pips = (price - pos.entry_price) / pip_size if direction == "BUY" else (pos.entry_price - price) / pip_size

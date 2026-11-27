@@ -42,7 +42,6 @@ from app.services.signals.evaluators import (
 )
 from app.services.signals.path_validator import PathValidator
 from app.services.signals.risk_engine import RiskEngine
-from app.services.signals.risk_manager import RiskManager
 from app.services.structure import MultiTimeframeStructureEngine
 from app.services.strategies.base import StrategyResult
 
@@ -68,7 +67,7 @@ class ConfluenceEngine:
         mtf_engine: Optional[MultiTimeframeStructureEngine] = None,
         indicator_service: Optional[IndicatorService] = None,
         news_filter: Optional[NewsFilterEngine] = None,
-        risk_manager: Optional[RiskManager] = None,
+        risk_engine: Optional[RiskEngine] = None,
         min_score_threshold: Optional[float] = None,
         strategy_manager: Optional["StrategyManager"] = None,
     ):
@@ -76,9 +75,8 @@ class ConfluenceEngine:
         self.mtf_engine = mtf_engine or MultiTimeframeStructureEngine()
         self.indicator_service = indicator_service or IndicatorService()
         self.news_filter = news_filter or NewsFilterEngine()
-        self.risk_manager = risk_manager or RiskManager()
         # The Risk Engine is the only SL/TP/lot calculator in the pipeline.
-        self.risk_engine = RiskEngine()
+        self.risk_engine = risk_engine or RiskEngine()
         self.path_validator = PathValidator()
         self.min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
 
@@ -375,7 +373,7 @@ class ConfluenceEngine:
                 risk_percent=risk_percent,
             )
 
-            pip_size = self.risk_manager.get_pip_size(symbol)
+            pip_size = RiskEngine.get_pip_size(symbol)
             risk_pips = round(levels.sl_distance / pip_size, 1)
             reward_pips_tp1 = round(levels.tp_distance / pip_size, 1)
             rr_tp1 = round(levels.rr_multiple, 2)
@@ -395,7 +393,7 @@ class ConfluenceEngine:
                 risk_percent=levels.risk_percent,
                 risk_amount_usd=levels.risk_amount_usd,
                 suggested_lot_size=levels.lot_size,
-                raw_lot_size=levels.lot_size,
+                raw_lot_size=levels.raw_lot_size,
                 is_executable=True,
                 min_lot_risk_usd=levels.min_lot_risk_usd,
                 volume_step=float(spec.lot_step),
@@ -417,18 +415,26 @@ class ConfluenceEngine:
                 )
 
                 if not path_result.is_clear:
-                    obstacle_price = path_result.nearest_obstacle_price
+                    obstacle_price = float(path_result.nearest_obstacle_price or 0.0)
                     obstacle_type = path_result.obstacle_type or "Unknown Obstacle"
                     obstacle_count = getattr(path_result, "obstacle_count", 0) or 1
 
                     # 🎯 LIQUIDITY EXCEPTION: Equal Highs/Lows are magnets, not walls.
-                    if "Equal Highs" in obstacle_type or "Equal Lows" in obstacle_type:
-                        logger.info(f"🎯 Liquidity Magnet Detected: Allowing TP to target {obstacle_type} at {obstacle_price:.5f}")
-                        reasons.append(f"🎯 Targeting Liquidity Sweep at {obstacle_price:.5f}")
+                    is_liquidity_magnet = (
+                        "Equal Highs" in obstacle_type or "Equal Lows" in obstacle_type
+                    )
+                    if is_liquidity_magnet:
+                        logger.info(
+                            f"🎯 Liquidity Magnet Detected: Allowing TP to target "
+                            f"{obstacle_type} at {obstacle_price:.5f}"
+                        )
+                        reasons.append(
+                            f"🎯 Targeting Liquidity Sweep at {obstacle_price:.5f}"
+                        )
 
-                    # Calculate projected R:R if TP front-ran the barrier
-                    pip_size = self.risk_manager.get_pip_size(symbol)
-                    buffer_price = 2.0 * pip_size  # 2 pip safety buffer
+                    # Calculate projected R:R if TP front-ran the barrier.
+                    pip_size = RiskEngine.get_pip_size(symbol)
+                    buffer_price = 2.0 * pip_size
 
                     if direction == SignalDirection.BUY:
                         projected_tp1 = obstacle_price - buffer_price
@@ -437,26 +443,42 @@ class ConfluenceEngine:
                         projected_tp1 = obstacle_price + buffer_price
                         distance_pips = abs(risk_params.entry_price - obstacle_price) / pip_size
 
-                    # Recalculate projected R:R with the obstacle front-run target
                     risk_distance = abs(risk_params.entry_price - risk_params.stop_loss)
                     reward_distance = abs(projected_tp1 - risk_params.entry_price)
                     projected_rr = reward_distance / risk_distance if risk_distance > 0 else 0.0
 
-                    # 🛡️ INFORMATIONAL ADVISORY — signal stays qualified
-                    logger.info(
-                        f"⚠️ Path Advisory: {obstacle_type} at {obstacle_price:.5f} "
-                        f"({distance_pips:.1f} pips away). Projected R:R: {projected_rr:.2f}. "
-                        f"Total barriers: {obstacle_count}. Signal remains qualified."
+                    is_structural_wall = any(
+                        token in obstacle_type for token in ("Zone", "FVG")
                     )
-                    advisory_msg = (
-                        f"⚠️ Path Advisory:\n"
-                        f"  • Nearest Obstacle: {obstacle_type} at {obstacle_price:.5f} ({distance_pips:.1f} pips away)\n"
-                        f"  • Projected Obstacle R:R: {projected_rr:.2f} (Target reduced if front-running obstacle)\n"
-                        f"  • Total Path Barriers: {obstacle_count}\n"
-                        f"  • Recommendation: Manual management recommended around barrier."
-                    )
-                    reasons.append(advisory_msg)
-                    warnings.append(advisory_msg)
+                    if not is_liquidity_magnet and is_structural_wall and projected_rr < 1.0:
+                        # Hard gate: buying under resistance / selling into support
+                        # with less than 1R of room is not executable.
+                        risk_params.is_executable = False
+                        rejection_msg = (
+                            f"🚫 PATH BLOCK REJECTION: {obstacle_type} at {obstacle_price:.5f} "
+                            f"({distance_pips:.1f} pips away). Projected obstacle R:R "
+                            f"{projected_rr:.2f} < 1.0."
+                        )
+                        reasons.append(rejection_msg)
+                        # Sentinel consumed by the execution engine.
+                        reasons.append("PATH_BLOCK_REJECTION")
+                        warnings.append(rejection_msg)
+                        logger.warning(rejection_msg)
+                    else:
+                        # Liquidity magnets and >=1R paths remain advisory only.
+                        logger.info(
+                            f"⚠️ Path Advisory: {obstacle_type} at {obstacle_price:.5f} "
+                            f"({distance_pips:.1f} pips away). Projected R:R: {projected_rr:.2f}."
+                        )
+                        advisory_msg = (
+                            f"⚠️ Path Advisory:\n"
+                            f"  • Nearest Obstacle: {obstacle_type} at {obstacle_price:.5f} "
+                            f"({distance_pips:.1f} pips away)\n"
+                            f"  • Projected Obstacle R:R: {projected_rr:.2f}\n"
+                            f"  • Total Path Barriers: {obstacle_count}"
+                        )
+                        reasons.append(advisory_msg)
+                        warnings.append(advisory_msg)
 
         # 8. Build Final Response
         entry_p = risk_params.entry_price if risk_params else current_price

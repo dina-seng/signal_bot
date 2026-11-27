@@ -285,6 +285,24 @@ class AutomatedMarketScanner:
             )
             return None
 
+        # Hard risk/path gates: never dispatch a blocked or non-executable setup.
+        risk_params = getattr(sig, "risk_parameters", None)
+        if risk_params is not None and getattr(risk_params, "is_executable", True) is False:
+            logger.info(f"Auto-execution skipped: non-executable setup for {sig.symbol}.")
+            skip_signal_from_response(db, sig, "non-executable risk parameters")
+            return None
+        sig_reasons = getattr(sig, "reasons", None) or []
+        if "PATH_BLOCK_REJECTION" in sig_reasons or "PATH_BLOCK_REJECTION" in (
+            db_signal.reasons or []
+        ):
+            logger.info(f"Auto-execution skipped: path-blocked setup for {sig.symbol}.")
+            skip_signal_from_response(db, sig, "path block rejection")
+            return None
+        if signal_lifecycle.has_recent_sl_hit(db, sig.symbol):
+            logger.info(f"Auto-execution skipped: post-SL cooldown for {sig.symbol}.")
+            skip_signal_from_response(db, sig, "post-SL cooldown")
+            return None
+
         live_price = self.paper_service.order_executor.get_latest_market_price(
             db, db_signal.symbol
         )
