@@ -15,7 +15,7 @@ from app.schemas.backtesting import (
 from app.schemas.candle import CandleBase
 from app.schemas.signal import SignalDirection
 from app.services.backtesting.performance_metrics import PerformanceMetricsCalculator
-from app.services.signals import RiskManager, SignalGenerator
+from app.services.signals import RiskEngine, SignalGenerator
 
 
 @dataclass
@@ -44,10 +44,10 @@ class BacktestEngine:
     def __init__(
         self,
         signal_generator: Optional[SignalGenerator] = None,
-        risk_manager: Optional[RiskManager] = None,
+        risk_engine: Optional[RiskEngine] = None,
     ):
         self.signal_generator = signal_generator or SignalGenerator()
-        self.risk_manager = risk_manager or RiskManager()
+        self.risk_engine = risk_engine or RiskEngine()
 
     def run_simulation(
         self,
@@ -74,8 +74,8 @@ class BacktestEngine:
             BacktestResultResponse containing metrics, equity curve, and trade logs.
         """
         cfg = config or BacktestConfig()
-        pip_size = self.risk_manager.get_pip_size(symbol)
-        pip_val = self.risk_manager.get_pip_value_per_lot(symbol)
+        pip_size = RiskEngine.get_pip_size(symbol)
+        pip_val = RiskEngine.get_pip_value_per_lot(symbol)
         half_spread_and_slippage = (cfg.spread_pips / 2.0 + cfg.slippage_pips) * pip_size
 
         current_balance = float(cfg.initial_balance)

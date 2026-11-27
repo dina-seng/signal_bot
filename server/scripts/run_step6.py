@@ -43,7 +43,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
 
 from app.schemas.signal import SignalDirection
 from app.services.signals.confluence_engine import ConfluenceEngine
-from app.services.signals.risk_manager import RiskManager
+from app.services.signals.risk_engine import RiskEngine
 from app.services.strategies.smc_strategy import SMCStrategy
 from replay_harness import (
     SignalRecord,
@@ -419,7 +419,7 @@ def run_step6() -> None:
 
     engine = ConfluenceEngine()
     smc = SMCStrategy()
-    risk_manager = RiskManager()
+    risk_engine = RiskEngine()
 
     c2_raw_signals: List[Dict[str, Any]] = []
     c5_raw_signals: List[Dict[str, Any]] = []
@@ -477,7 +477,7 @@ def run_step6() -> None:
                 supp = getattr(base, "key_support", None)
                 res_p = getattr(base, "key_resistance", None)
                 try:
-                    params = risk_manager.calculate_trade_risk(
+                    params = risk_engine.calculate_trade_risk(
                         symbol="XAU/USD",
                         direction=res.direction,
                         entry_price=entry,

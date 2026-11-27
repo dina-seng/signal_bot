@@ -98,16 +98,16 @@ def get_news_filter_engine() -> NewsFilterEngine:
 
 from app.services.signals import (
     ConfluenceEngine,
-    RiskManager,
+    RiskEngine,
     SignalGenerator,
     SignalScoringEngine,
     StrategyManager,
 )
 
 
-def get_risk_manager() -> RiskManager:
-    """Dependency for trade risk and position sizing manager."""
-    return RiskManager()
+def get_risk_engine() -> RiskEngine:
+    """Dependency for the single SL/TP and position-sizing engine."""
+    return RiskEngine()
 
 
 def get_scoring_engine() -> SignalScoringEngine:
@@ -125,7 +125,7 @@ def get_confluence_engine(
     mtf_engine: MultiTimeframeStructureEngine = Depends(get_mtf_structure_engine),
     indicator_service: IndicatorService = Depends(get_indicator_service),
     news_filter: NewsFilterEngine = Depends(get_news_filter_engine),
-    risk_manager: RiskManager = Depends(get_risk_manager),
+    risk_engine: RiskEngine = Depends(get_risk_engine),
     strategy_manager: StrategyManager = Depends(get_strategy_manager),
 ) -> ConfluenceEngine:
     """Dependency for unified multi-strategy consensus engine."""
@@ -134,7 +134,7 @@ def get_confluence_engine(
         mtf_engine=mtf_engine,
         indicator_service=indicator_service,
         news_filter=news_filter,
-        risk_manager=risk_manager,
+        risk_engine=risk_engine,
         min_score_threshold=settings.MIN_SETUP_SCORE,
         strategy_manager=strategy_manager,
     )
@@ -156,10 +156,10 @@ from app.services.backtesting import BacktestEngine, ParameterOptimizer, Backtes
 
 def get_backtest_engine(
     signal_generator: SignalGenerator = Depends(get_signal_generator),
-    risk_manager: RiskManager = Depends(get_risk_manager),
+    risk_engine: RiskEngine = Depends(get_risk_engine),
 ) -> BacktestEngine:
     """Dependency for BacktestEngine."""
-    return BacktestEngine(signal_generator=signal_generator, risk_manager=risk_manager)
+    return BacktestEngine(signal_generator=signal_generator, risk_engine=risk_engine)
 
 
 def get_backtest_service(
@@ -184,18 +184,18 @@ def get_virtual_account_manager() -> VirtualAccountManager:
 
 def get_paper_trading_service(
     account_manager: VirtualAccountManager = Depends(get_virtual_account_manager),
-    risk_manager: RiskManager = Depends(get_risk_manager),
+    risk_engine: RiskEngine = Depends(get_risk_engine),
     signal_generator: SignalGenerator = Depends(get_signal_generator),
 ) -> PaperTradingService:
     """Dependency for PaperTradingService."""
     order_executor = PaperOrderExecutor(
         account_manager=account_manager,
-        risk_manager=risk_manager,
+        risk_engine=risk_engine,
         signal_generator=signal_generator,
     )
     position_manager = PaperPositionManager(
         account_manager=account_manager,
-        risk_manager=risk_manager,
+        risk_engine=risk_engine,
     )
     return PaperTradingService(
         account_manager=account_manager,

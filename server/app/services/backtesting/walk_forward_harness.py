@@ -21,7 +21,7 @@ from app.core.logging import logger
 from app.models.signal_candidate import SignalCandidate
 from app.schemas.candle import CandleBase
 from app.schemas.signal import SignalDirection, SignalResponse
-from app.services.signals import RiskManager, SignalGenerator
+from app.services.signals import RiskEngine, SignalGenerator
 
 
 def get_utc_session(dt: datetime) -> str:
@@ -104,10 +104,10 @@ class WalkForwardHarness:
     def __init__(
         self,
         signal_generator: Optional[SignalGenerator] = None,
-        risk_manager: Optional[RiskManager] = None,
+        risk_engine: Optional[RiskEngine] = None,
     ):
         self.signal_generator = signal_generator or SignalGenerator()
-        self.risk_manager = risk_manager or RiskManager()
+        self.risk_engine = risk_engine or RiskEngine()
 
     @staticmethod
     def _extract_candle_ts(candle: Any) -> datetime:

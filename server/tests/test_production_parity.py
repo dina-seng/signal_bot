@@ -15,7 +15,7 @@ from app.schemas.candle import CandleBase
 from app.schemas.news import NewsBlackoutCheckResponse, NewsEventResponse, NewsImpact
 from app.schemas.signal import SignalDirection
 from app.services.backtesting import BacktestEngine
-from app.services.signals import RiskManager, SignalGenerator
+from app.services.signals import RiskEngine, SignalGenerator
 
 
 def _make_candles(count: int = 80, symbol: str = "EUR/USD", trend: str = "BULLISH") -> list[CandleBase]:

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.core.logging import logger
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
 from app.schemas.paper_trading import VirtualAccountCreate, VirtualAccountResponse
-from app.services.signals import RiskManager
+from app.services.signals import RiskEngine
 
 
 class VirtualAccountManager:

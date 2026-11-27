@@ -551,7 +551,7 @@ def run_step_c1() -> None:
     lines.append("> **Scope note.** The canonical baseline is a fixed-1R, capacity-filtered "
       "simulation with no account equity, margin, lot sizing or compounding. The figures "
       "below are an *illustrative* sensitivity using the instrument spec and the "
-      "RiskManager's **unused** sizing formula; they are not part of the headline R "
+      "RiskEngine's **unused** sizing formula; they are not part of the headline R "
       "results and must not be read as account-level backtest output.")
     lines.append("")
     lines.append("- **Instrument**: `XAU/USD` (Gold Spot / US Dollar)")
@@ -559,7 +559,7 @@ def run_step_c1() -> None:
     lines.append("  - Contract size: 100 oz")
     lines.append("  - Minimum broker lot size: **0.01 lots**")
     lines.append("  - Dollar per point: 1.00 USD per 0.01 lot per $1.00 Gold price move")
-    lines.append("- **Risk Management Rules Used** (from `server/app/services/signals/risk_manager.py:122-125`):")
+    lines.append("- **Risk Management Rules Used** (from `server/app/services/signals/risk_engine.py:calculate_trade_risk`):")
     lines.append("  ```python")
     lines.append("  risk_amount_usd = round(balance * (risk_pct / 100.0), 2)")
     lines.append("  pip_val = self.get_pip_value_per_lot(symbol)")

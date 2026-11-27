@@ -19,7 +19,7 @@ from app.schemas.signal import SignalDirection
 from app.services.market_data.cache import derived_cache
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import get_broker_spec
-from app.services.signals import RiskManager
+from app.services.signals import RiskEngine
 from app.services.signals.lifecycle import mark_signal_closed
 
 
@@ -58,10 +58,10 @@ class PaperPositionManager:
     def __init__(
         self,
         account_manager: Optional[VirtualAccountManager] = None,
-        risk_manager: Optional[RiskManager] = None,
+        risk_engine: Optional[RiskEngine] = None,
     ):
         self.account_manager = account_manager or VirtualAccountManager()
-        self.risk_manager = risk_manager or RiskManager()
+        self.risk_engine = risk_engine or RiskEngine()
         self.broker_spec = get_broker_spec(settings.BROKER_SPEC)
 
     def modify_position(
@@ -112,8 +112,8 @@ class PaperPositionManager:
             raise ValueError(f"Virtual account #{trade.account_id} not found.")
 
         # Resolve exit price
-        pip_size = self.risk_manager.get_pip_size(trade.symbol)
-        pip_val = self.risk_manager.get_pip_value_per_lot(trade.symbol)
+        pip_size = self.risk_engine.get_pip_size(trade.symbol)
+        pip_val = self.risk_engine.get_pip_value_per_lot(trade.symbol)
         if current_price is None:
             stmt = select(Candle).where(Candle.symbol == trade.symbol).order_by(desc(Candle.timestamp)).limit(1)
             c = db.scalars(stmt).first()
@@ -272,8 +272,8 @@ class PaperPositionManager:
         # Process each trade
         for t in trades:
             price = prices.get(t.symbol, t.current_price)
-            pip_size = self.risk_manager.get_pip_size(t.symbol)
-            pip_val = self.risk_manager.get_pip_value_per_lot(t.symbol)
+            pip_size = self.risk_engine.get_pip_size(t.symbol)
+            pip_val = self.risk_engine.get_pip_value_per_lot(t.symbol)
             account = db.get(VirtualAccount, t.account_id)
 
             # -------------------------------------------------------------

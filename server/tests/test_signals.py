@@ -20,14 +20,14 @@ from app.schemas.liquidity import (
 from app.schemas.news import NewsBlackoutCheckResponse
 from app.schemas.signal import SignalDirection, SignalStatus
 from app.schemas.structure import StructureAnalysisResponse, TrendDirection
-from app.services.signals.risk_manager import RiskManager
+from app.services.signals.risk_engine import RiskEngine
 from app.services.signals.scoring_engine import SignalScoringEngine
 from app.services.signals.signal_generator import SignalGenerator
 
 
 def test_risk_manager_buy_and_sell_calculations():
-    """Test RiskManager SL, TP1, TP2, R:R, and lot sizing."""
-    rm = RiskManager()
+    """Test RiskEngine SL, TP1, TP2, R:R, and lot sizing."""
+    rm = RiskEngine()
 
     # 1. BUY Test
     risk_buy = rm.calculate_trade_risk(
@@ -551,11 +551,11 @@ def test_path_validator_advisory_warning_keeps_signal_qualified():
 
 
 def test_risk_manager_gold_structural_distance():
-    """Verify that RiskManager allows up to $25.00 (2500 pips) of structural distance on Gold (XAU/USD)."""
-    from app.services.signals.risk_manager import RiskManager
+    """Verify that RiskEngine allows up to $25.00 (2500 pips) of structural distance on Gold (XAU/USD)."""
+    from app.services.signals.risk_engine import RiskEngine
     from app.schemas.signal import SignalDirection
 
-    rm = RiskManager()
+    rm = RiskEngine()
     atr_val = 2.0  # $2.00 ATR on Gold
 
     # 1. Gold BUY with $15.00 structural swing (1500 pips)
@@ -575,7 +575,7 @@ def test_risk_manager_gold_structural_distance():
     # Canonical instrument spec uses pip_size=0.10 for XAU/USD (symbols.py),
     # so 16.00 price units = 160 pips. The 0.01 convention used by the ATR
     # module is a separate, documented inconsistency (BT-010); this test must
-    # assert the canonical RiskManager spec, not silently change it.
+    # assert the canonical RiskEngine spec, not silently change it.
     assert params_gold_valid.risk_pips == 160.0  # (2000 - 1984) / 0.10
 
     # 2. Gold BUY with genuinely excessive structural swing under the canonical

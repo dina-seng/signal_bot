@@ -17,7 +17,7 @@ from app.schemas.signal import SignalDirection, SignalStatus
 from app.services.market_data.freshness import filter_closed_candles
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import BrokerSpec, get_broker_spec
-from app.services.signals import RiskEngine, RiskLevels, RiskManager, SignalGenerator
+from app.services.signals import RiskEngine, RiskLevels, SignalGenerator
 from app.services.signals import lifecycle as signal_lifecycle
 
 
@@ -177,14 +177,12 @@ class PaperOrderExecutor:
     def __init__(
         self,
         account_manager: Optional[VirtualAccountManager] = None,
-        risk_manager: Optional[RiskManager] = None,
-        signal_generator: Optional[SignalGenerator] = None,
         risk_engine: Optional[RiskEngine] = None,
+        signal_generator: Optional[SignalGenerator] = None,
     ):
         self.account_manager = account_manager or VirtualAccountManager()
-        self.risk_manager = risk_manager or RiskManager()
-        self.signal_generator = signal_generator or SignalGenerator()
         self.risk_engine = risk_engine or RiskEngine()
+        self.signal_generator = signal_generator or SignalGenerator()
         self.broker_spec: BrokerSpec = get_broker_spec(settings.BROKER_SPEC)
 
     # ------------------------------------------------------------------
@@ -199,8 +197,8 @@ class PaperOrderExecutor:
         persisted virtual account, risk % from live settings, and lot size plus
         contract value from the dynamically selected broker profile.
         """
-        pip_size = self.risk_manager.get_pip_size(symbol)
-        pip_value = self.risk_manager.get_pip_value_per_lot(symbol)
+        pip_size = self.risk_engine.get_pip_size(symbol)
+        pip_value = self.risk_engine.get_pip_value_per_lot(symbol)
         if symbol == "XAU/USD":
             contract_size = self.broker_spec.contract_size
         else:
@@ -452,10 +450,25 @@ class PaperOrderExecutor:
         self._assert_execution_slot_available(db, order.symbol)
 
         signal = db.get(Signal, order.signal_id) if order.signal_id else None
+
+        # Post-SL cooldown: no immediate re-entry on the same symbol.
+        if signal_lifecycle.has_recent_sl_hit(db, order.symbol):
+            signal_lifecycle.skip_signal(db, signal, "post-SL cooldown")
+            raise ValueError(
+                f"Post-SL cooldown active for {order.symbol}; order aborted."
+            )
+
         if signal is not None:
             if signal.status != SignalStatus.ACTIVE.value:
                 raise ValueError(
                     f"Signal #{signal.id} is {signal.status}, not ACTIVE; order aborted."
+                )
+            reasons = signal.reasons if isinstance(signal.reasons, list) else []
+            if "PATH_BLOCK_REJECTION" in reasons:
+                signal_lifecycle.skip_signal(db, signal, "path block rejection")
+                raise ValueError(
+                    f"Signal #{signal.id} is path-blocked (projected R:R < 1.0); "
+                    "order aborted."
                 )
             if signal_lifecycle.is_setup_executed(db, signal):
                 raise ValueError(
@@ -473,7 +486,7 @@ class PaperOrderExecutor:
 
         # 2. Resolve Market Price
         mkt_price = current_market_price or self.get_latest_market_price(db, order.symbol)
-        pip_size = self.risk_manager.get_pip_size(order.symbol)
+        pip_size = self.risk_engine.get_pip_size(order.symbol)
         order_type = order.order_type.upper().strip()
 
         # 3. Determine Entry Price
@@ -525,7 +538,7 @@ class PaperOrderExecutor:
             tp2 = None  # one final 3R target
         else:
             if not sl or not tp1:
-                risk_res = self.risk_manager.calculate_trade_risk(
+                risk_res = self.risk_engine.calculate_trade_risk(
                     symbol=order.symbol,
                     direction=order.direction,
                     entry_price=exec_entry,
@@ -741,7 +754,7 @@ class PaperOrderExecutor:
         entry_timeframe = (
             str(target_signal.timeframe or request.timeframe or "15m").lower().strip()
         )
-        pip_size = self.risk_manager.get_pip_size(target_signal.symbol)
+        pip_size = self.risk_engine.get_pip_size(target_signal.symbol)
         levels = self.resolve_signal_levels(
             db=db,
             signal=target_signal,

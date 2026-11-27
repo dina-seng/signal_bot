@@ -15,7 +15,7 @@ What it does
    (``bar.timestamp + timeframe_delta <= decision_time``) and runs the production
    ``ConfluenceEngine._prepare_market_data`` + ``SMCStrategy.analyze`` path.
 4. Because ``SMCStrategy`` returns no price levels (it delegates geometry), the
-   stop/targets are produced with the production ``RiskManager`` exactly as
+   stop/targets are produced with the production ``RiskEngine`` exactly as
    ``ConfluenceEngine._build_signal_response`` does for a market entry.
 5. Records, for every evaluated bar, the derived rejection gate, then simulates
    the accepted trade and a counterfactual trade for every near-miss rejection
@@ -70,7 +70,7 @@ from app.schemas.candle import CandleCreate  # noqa: E402
 from app.schemas.signal import SignalDirection  # noqa: E402
 from app.services.signals.confluence_engine import ConfluenceEngine  # noqa: E402
 from app.services.signals.evaluators import DIRECTIONAL_CONFLICT_PENALTY  # noqa: E402
-from app.services.signals.risk_manager import RiskManager  # noqa: E402
+from app.services.signals.risk_engine import RiskEngine  # noqa: E402
 from app.services.strategies.smc_strategy import (  # noqa: E402
     DEFAULT_MIN_SCORE,
     LTF_UNCONFIRMED_PENALTY,
@@ -163,7 +163,7 @@ class SmcStats:
 # Risk geometry (mirrors ConfluenceEngine._build_signal_response market path)
 # ---------------------------------------------------------------------------
 def build_market_trade(
-    risk_manager: RiskManager,
+    risk_engine: RiskEngine,
     symbol: str,
     direction: str,
     entry_price: float,
@@ -174,12 +174,12 @@ def build_market_trade(
     opportunity_key: str,
     score: float,
 ) -> Tuple[Optional[SignalRecord], str]:
-    """Build an SMC market-entry trade using the production RiskManager."""
+    """Build an SMC market-entry trade using the production RiskEngine."""
     if entry_price is None or not (entry_price > 0):
         return None, "NO_ENTRY_PRICE"
     sd = SignalDirection.BUY if direction == "BUY" else SignalDirection.SELL
     try:
-        params = risk_manager.calculate_trade_risk(
+        params = risk_engine.calculate_trade_risk(
             symbol=symbol,
             direction=sd,
             entry_price=entry_price,
@@ -355,7 +355,7 @@ def replay_chunk(
     """Evaluate only ``indices`` but with the full precomputed series as lookback."""
     smc = SMCStrategy()
     engine = ConfluenceEngine()
-    risk_manager = RiskManager()
+    risk_engine = RiskEngine()
     threshold = smc._min_score_threshold
     bar_close = [b.timestamp + TF_15M for b in bars]
     records: List[SmcRecord] = []
@@ -486,7 +486,7 @@ def replay_chunk(
 
         if accepted:
             trade, err = build_market_trade(
-                risk_manager,
+                risk_engine,
                 symbol,
                 direction,
                 current_price,
@@ -505,7 +505,7 @@ def replay_chunk(
         elif _is_near_miss(gate, pre_ltf, pa, struct_liq, threshold):
             rec.cf_candidate = True
             trade, err = build_market_trade(
-                risk_manager,
+                risk_engine,
                 symbol,
                 direction,
                 current_price,
@@ -718,7 +718,7 @@ def build_report(
     lines.append("")
     lines.append(
         "Production path: `resample_ohlc` → `ConfluenceEngine._prepare_market_data` → "
-        "`SMCStrategy.analyze` → `RiskManager.calculate_trade_risk` (market geometry) → "
+        "`SMCStrategy.analyze` → `RiskEngine.calculate_trade_risk` (market geometry) → "
         "shared `simulate_outcome` fill/TP1/TP2 friction model. "
         "`SMCStrategy` emits no gate or price levels; gates are derived from "
         "`ScoreBreakdown` + `metadata` in `_classify_smc()`."
@@ -793,7 +793,7 @@ def build_report(
     lines.append("")
     lines.append(
         "For near-miss rejections the trade is re-priced as if the gate had passed, using the "
-        "same `RiskManager` geometry and the same `simulate_outcome` friction. `n` counts "
+        "same `RiskEngine` geometry and the same `simulate_outcome` friction. `n` counts "
         "de-duplicated trades with valid geometry; `filled` is the subset that filled. "
         "Expectancy = average R per filled trade. Near-miss set: LTF penalty (all), fatal "
         "conflict (all), score within 5 pts, PA floor within 2 pts, confluence floor within 5 pts."
@@ -905,7 +905,7 @@ def _build_provenance(db_path: Path) -> Dict[str, Any]:
         "strategy_config_hash": hash_paths([
             SERVER_ROOT / "app/services/strategies/smc_strategy.py",
             SERVER_ROOT / "app/services/signals/evaluators.py",
-            SERVER_ROOT / "app/services/signals/risk_manager.py",
+            SERVER_ROOT / "app/services/signals/risk_engine.py",
         ]),
         "execution_config_hash": hash_paths([
             SCRIPTS_ROOT / "replay_harness.py",
