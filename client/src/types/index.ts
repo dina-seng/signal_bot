@@ -1,6 +1,7 @@
 export type TradeDirection = 'BUY' | 'SELL';
 
-export type PairSymbol = 'XAU/USD' | 'US100';
+export type PairSymbol = 'XAU/USD' | 'BTC/USD' | 'US100';
+export type AccountType = 'MAIN' | 'CENT';
 
 export interface PerformanceStats {
   winRate: number; // e.g. 68.4
@@ -45,6 +46,16 @@ export interface TradeSignal {
   hasActiveSignal: boolean;
   aiConfidence?: number; // 0 - 100%
   aiReasoning?: string;
+  /** Multi-account routing target (BTC/USD -> CENT, others -> MAIN). */
+  targetAccount?: AccountType;
+  /** BTC momentum-strategy fields (absent on SMC/XAU signals). */
+  strategyName?: string;
+  emaTrend?: string;
+  ema50?: number;
+  ema200?: number;
+  rsi14?: number;
+  adx14?: number;
+  heuristicProvenance?: string;
 }
 
 export interface Position {
@@ -60,6 +71,7 @@ export interface Position {
   pnlPercent: number;
   pips: number;
   openTime: string;
+  account?: AccountType;
 }
 
 export interface NewsEvent {
@@ -123,6 +135,7 @@ export interface ClosedTrade {
   exitReason: string;
   openedAt: string;
   closedAt: string;
+  account?: AccountType;
 }
 
 export type NavigationTab = 'dashboard' | 'signals' | 'positions' | 'news' | 'settings';

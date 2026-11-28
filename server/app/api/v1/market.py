@@ -139,6 +139,14 @@ async def _resolve_quote(
             detail=f"Unknown market symbol: '{symbol}'. Must be one of {list(INSTRUMENT_SPECS.keys())}.",
         )
 
+    # BTC/USD is sourced from Binance (single BTC provider); XAU/USD stays on
+    # Twelve Data. The injected provider remains Twelve Data for gold.
+    from app.services.market_data import get_provider_for_symbol
+    from app.services.market_data.cache import CachedMarketDataProvider
+
+    if canonical_symbol == "BTC/USD":
+        provider = CachedMarketDataProvider(get_provider_for_symbol(canonical_symbol))
+
     provider_name = getattr(provider, "name", None) or provider.__class__.__name__.lower().replace("provider", "")
     cache_key = (provider_name, canonical_symbol)
     now = time.time()

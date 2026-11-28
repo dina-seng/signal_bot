@@ -1,6 +1,6 @@
 """Trading Signals, Multi-Pillar Scoring, and Market Scanner API Endpoints."""
 
-from typing import List, Optional
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
@@ -8,6 +8,7 @@ from sqlalchemy import select, desc
 from app.core.database import get_db
 from app.core.config import settings
 from app.api.deps import get_paper_trading_service, get_signal_generator
+from app.services.market_data.symbols import target_account_for_symbol
 from app.models.signal import Signal
 from app.schemas.signal import (
     MarketScanResponse,
@@ -46,11 +47,21 @@ def _normalize_symbol(symbol: str) -> str:
     return clean_symbol
 
 
+def _signal_account(signal: Any) -> str:
+    """Executing account from signal metadata, with symbol routing fallback."""
+    meta = getattr(signal, "metadata", None)
+    if not isinstance(meta, dict):
+        meta = {}
+    symbol = getattr(signal, "symbol", "") or ""
+    return str(meta.get("target_account") or target_account_for_symbol(str(symbol))).upper()
+
+
 @router.get("", response_model=List[SignalResponse])
 def get_signals(
     symbol: Optional[str] = Query(None, description="Filter by currency pair (e.g. EUR/USD)"),
     direction: Optional[str] = Query(None, description="Filter by direction: BUY, SELL, WAIT"),
     status: Optional[str] = Query(None, description="Filter by status: ACTIVE, INVALIDATED, TP1_HIT, etc."),
+    account_type: Optional[str] = Query(None, description="Filter by executing account: MAIN (XAU/USD) or CENT (BTC/USD)"),
     unified: bool = Query(False, description="Return unified multi-timeframe signals across pairs"),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -96,6 +107,8 @@ def get_signals(
                 continue
             if status and sig.status.value != status.upper().strip():
                 continue
+            if account_type and _signal_account(sig) != account_type.upper().strip():
+                continue
             if is_consumed_signal(sig, consumed_keys, consumed_ids):
                 continue
             unified_signals.append(sig)
@@ -114,7 +127,11 @@ def get_signals(
         stmt = stmt.where(Signal.status == SignalStatus.ACTIVE.value)
 
     stmt = stmt.order_by(desc(Signal.timestamp)).limit(limit)
-    return filter_consumed_signals(db, list(db.scalars(stmt).all()))
+    results = filter_consumed_signals(db, list(db.scalars(stmt).all()))
+    if account_type:
+        wanted = account_type.upper().strip()
+        results = [s for s in results if _signal_account(s) == wanted]
+    return results
 
 
 @router.get("/scan", response_model=MarketScanResponse)

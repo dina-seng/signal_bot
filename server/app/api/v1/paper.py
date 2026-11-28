@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.api.deps import get_paper_trading_service
 from app.models.candle import Candle
 from app.models.paper import PaperTrade, VirtualAccount
+from app.services.market_data.symbols import target_account_for_symbol
 from app.services.signals.risk_engine import RiskEngine
 from app.schemas.paper_trading import (
     AccountDepositRequest,
@@ -107,6 +108,22 @@ def _sync_paper_state_to_live_tick(
     return account, trades, tick_price, tick_source
 
 
+def _attach_account_labels(positions: List[PaperTradeResponse]) -> List[PaperTradeResponse]:
+    """Label each position with its executing account (BTC -> CENT, else MAIN)."""
+    for pos in positions:
+        pos.account_name = target_account_for_symbol(str(pos.symbol or ""))
+    return positions
+
+
+def _filter_account_type(
+    positions: List[PaperTradeResponse], account_type: Optional[str]
+) -> List[PaperTradeResponse]:
+    if not account_type:
+        return positions
+    wanted = account_type.upper().strip()
+    return [p for p in positions if p.account_name == wanted]
+
+
 def _normalize_symbol(symbol: str) -> str:
     """Normalize currency pair symbol string."""
     clean_symbol = symbol.replace("%2F", "/").strip()
@@ -139,6 +156,7 @@ def get_virtual_account(
 @router.get("/summary", response_model=PaperSummaryResponse)
 def get_paper_summary(
     account_id: Optional[int] = Query(None, description="Optional account ID (defaults to primary account)"),
+    account_type: Optional[str] = Query(None, description="Filter positions by executing account: MAIN or CENT"),
     db: Session = Depends(get_db),
     service: PaperTradingService = Depends(get_paper_trading_service),
 ):
@@ -155,6 +173,7 @@ def get_paper_summary(
         positions = [PaperTradeResponse.model_validate(t) for t in trades]
         for pos in positions:
             pos.price_source = tick_source
+        positions = _filter_account_type(_attach_account_labels(positions), account_type)
         return PaperSummaryResponse(
             account=account_response,
             positions=positions,
@@ -294,13 +313,15 @@ def get_open_positions(
     symbol: Optional[str] = Query(None, description="Filter by symbol"),
     status: Optional[str] = Query(None, description="OPEN, PARTIALLY_CLOSED, or PENDING"),
     account_id: Optional[int] = Query(None),
+    account_type: Optional[str] = Query(None, description="Filter by executing account: MAIN or CENT"),
     db: Session = Depends(get_db),
     service: PaperTradingService = Depends(get_paper_trading_service),
 ):
     """Query currently open and pending paper trading positions."""
     norm_sym = _normalize_symbol(symbol) if symbol else None
     positions = service.get_positions(db=db, account_id=account_id, symbol=norm_sym, status=status)
-    return _mark_positions_with_quote(db, positions)
+    positions = _mark_positions_with_quote(db, positions)
+    return _filter_account_type(_attach_account_labels(positions), account_type)
 
 
 @router.get("/trades", response_model=List[PaperTradeResponse])
@@ -308,12 +329,14 @@ def get_trade_history(
     symbol: Optional[str] = Query(None, description="Filter by symbol"),
     limit: int = Query(50, ge=1, le=500),
     account_id: Optional[int] = Query(None),
+    account_type: Optional[str] = Query(None, description="Filter by executing account: MAIN or CENT"),
     db: Session = Depends(get_db),
     service: PaperTradingService = Depends(get_paper_trading_service),
 ):
     """Query historical closed paper trades."""
     norm_sym = _normalize_symbol(symbol) if symbol else None
-    return service.get_trade_history(db=db, account_id=account_id, symbol=norm_sym, limit=limit)
+    trades = service.get_trade_history(db=db, account_id=account_id, symbol=norm_sym, limit=limit)
+    return _filter_account_type(_attach_account_labels(trades), account_type)
 
 
 @router.get("/trades/{trade_id}", response_model=PaperTradeResponse)

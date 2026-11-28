@@ -20,6 +20,7 @@ import {
   AlertConfiguration,
   NewsEvent,
   RiskStatus,
+  AccountType,
 } from '../types';
 import {
   initialAccountSummary,
@@ -49,11 +50,36 @@ import { useAuth } from '../contexts/AuthContext';
 import { formatPrice, getTimeUntil } from '../utils/formatters';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
-const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD'];
+const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD', 'BTC/USD'];
+
+/** Workspace routing: BTC/USD trades on CENT, everything else on MAIN. */
+const accountForSymbol = (symbol: PairSymbol): AccountType =>
+  symbol === 'BTC/USD' ? 'CENT' : 'MAIN';
+
+/** Map backend signal metadata into the momentum fields used by the UI cards. */
+const momentumFields = (sig: BackendSignal, symbol: PairSymbol) => {
+  const meta = sig.metadata || {};
+  const ema50 = typeof meta.ema_50 === 'number' ? meta.ema_50 : undefined;
+  const ema200 = typeof meta.ema_200 === 'number' ? meta.ema_200 : undefined;
+  return {
+    targetAccount: (meta.target_account || accountForSymbol(symbol)) as AccountType,
+    strategyName: sig.strategy_name || undefined,
+    emaTrend: meta.ema_trend || (ema50 !== undefined && ema200 !== undefined
+      ? (ema50 > ema200 ? 'Bullish' : 'Bearish')
+      : undefined),
+    ema50,
+    ema200,
+    rsi14: typeof meta.rsi_14 === 'number' ? meta.rsi_14 : undefined,
+    adx14: typeof meta.adx_14 === 'number' ? meta.adx_14 : undefined,
+    heuristicProvenance: meta.heuristic_provenance,
+  };
+};
 
 export const Dashboard: React.FC = () => {
   const { isAdmin, user: authUser, signOut } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
+  const [workspaceSymbol, setWorkspaceSymbol] = useState<PairSymbol>('XAU/USD');
+  const accountType: AccountType = accountForSymbol(workspaceSymbol);
   const [account, setAccount] = useState(initialAccountSummary);
   const [stats, setStats] = useState(initialPerformanceStats);
   const [signals, setSignals] = useState<TradeSignal[]>(initialSignals);
@@ -122,7 +148,7 @@ export const Dashboard: React.FC = () => {
     try {
       // Atomic snapshot — account + positions from ONE shared live price tick,
       // so the header and the Position Ledger can never disagree by a tick.
-      const sumRes = await quantViewApi.getSummary();
+      const sumRes = await quantViewApi.getSummary(accountType);
       const bAcc: BackendAccount = sumRes.data.account;
       const bPositions: BackendPosition[] = sumRes.data.positions;
       console.log('[QuantView API] Summary snapshot:', sumRes.data);
@@ -170,6 +196,7 @@ export const Dashboard: React.FC = () => {
             openTime: p.opened_at
               ? new Date(p.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' UTC'
               : '--:-- UTC',
+            account: p.account_name || accountForSymbol(p.symbol as PairSymbol),
           };
         });
 
@@ -182,7 +209,7 @@ export const Dashboard: React.FC = () => {
       // (or partially closed) paper trade is never hidden from the Positions tab.
       if (positionsToRender.length === 0) {
         try {
-          const openRes = await quantViewApi.getPositions();
+          const openRes = await quantViewApi.getPositions(accountType);
           if (Array.isArray(openRes.data) && openRes.data.length > 0) {
             positionsToRender = mapBackendPositions(openRes.data);
           }
@@ -195,7 +222,7 @@ export const Dashboard: React.FC = () => {
 
       // Fetch Closed Trade History
       try {
-        const tradesRes = await quantViewApi.getTradeHistory(50);
+        const tradesRes = await quantViewApi.getTradeHistory(50, accountType);
         const bTrades: BackendPaperTrade[] = tradesRes.data;
         if (Array.isArray(bTrades)) {
           const mappedClosed: ClosedTrade[] = bTrades.map((t) => ({
@@ -213,6 +240,7 @@ export const Dashboard: React.FC = () => {
             exitReason: t.exit_reason || 'CLOSED',
             openedAt: t.opened_at,
             closedAt: t.closed_at || t.opened_at,
+            account: t.account_name || accountForSymbol(t.symbol as PairSymbol),
           }));
           setClosedTrades(mappedClosed);
         }
@@ -252,7 +280,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       isFetchingAccountRef.current = false;
     }
-  }, []);
+  }, [accountType]);
 
   // Real-Time Price Quote Poll (Every 15s; provider is ~1-min granular and the
   // backend caches for 60s, so this costs zero freshness and ~6x fewer credits).
@@ -260,7 +288,7 @@ export const Dashboard: React.FC = () => {
     if (isFetchingPricesRef.current) return;
     isFetchingPricesRef.current = true;
     try {
-      const quoteRes = await quantViewApi.getQuote('XAU/USD');
+      const quoteRes = await quantViewApi.getQuote(workspaceSymbol);
       if (quoteRes.data) {
         const quote = {
           ...quoteRes.data,
@@ -272,8 +300,8 @@ export const Dashboard: React.FC = () => {
         if (typeof quote.price === 'number' && quote.price > 0) {
           setLivePrices((prev) => {
             // Never replace a fresh quote mark with an older cached/candle value.
-            if (!quoteIsFresh && prev['XAU/USD'] !== undefined) return prev;
-            return { ...prev, 'XAU/USD': quote.price };
+            if (!quoteIsFresh && prev[workspaceSymbol] !== undefined) return prev;
+            return { ...prev, [workspaceSymbol]: quote.price };
           });
         }
       }
@@ -283,15 +311,15 @@ export const Dashboard: React.FC = () => {
         const prices = await quantViewApi.getLatestPrices();
         if (prices && Object.keys(prices).length > 0) {
           setLivePrices(prices);
-          if (prices['XAU/USD']) {
+          if (prices[workspaceSymbol]) {
             setLatestQuote((prev) => ({
               ...(prev || {
-                symbol: 'XAU/USD',
+                symbol: workspaceSymbol,
                 source: 'candle',
                 timestamp: new Date().toISOString(),
               }),
-              symbol: 'XAU/USD',
-              price: prices['XAU/USD'],
+              symbol: workspaceSymbol,
+              price: prices[workspaceSymbol],
               fetched_at: new Date().toISOString(),
             }));
           }
@@ -302,7 +330,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       isFetchingPricesRef.current = false;
     }
-  }, []);
+  }, [workspaceSymbol]);
 
   // 2. Fetch Signals & Latest Prices (Every 60 seconds)
   const fetchSignalsAndPrices = useCallback(async () => {
@@ -323,13 +351,13 @@ export const Dashboard: React.FC = () => {
       }
 
       // 2. Fetch signals
-      const sigRes = await quantViewApi.getSignals(25);
+      const sigRes = await quantViewApi.getSignals(25, true, workspaceSymbol, accountType);
       const bSignals: BackendSignal[] = sigRes.data;
       console.log('[QuantView API] Signals response:', bSignals);
 
       if (Array.isArray(bSignals)) {
         // Build cards matching SUPPORTED_PAIRS
-        const matrixSignals: TradeSignal[] = SUPPORTED_PAIRS.map((sym) => {
+        const matrixSignals: TradeSignal[] = [workspaceSymbol].map((sym) => {
           // Find matching unified signal for this symbol
           const matching = bSignals.find((s) => s.symbol === sym);
           const hasActiveActionable = matching && matching.status === 'ACTIVE' && (matching.direction === 'BUY' || matching.direction === 'SELL');
@@ -347,6 +375,7 @@ export const Dashboard: React.FC = () => {
 
             return {
               id: `SIG-${matching.id || sym}`,
+              ...momentumFields(matching, sym),
               symbol: sym,
               direction: matching.direction,
               confluenceScore: score,
@@ -383,6 +412,7 @@ export const Dashboard: React.FC = () => {
 
           return {
             id: `SCAN-${sym}`,
+            ...(matching ? momentumFields(matching, sym) : {}),
             symbol: sym,
             direction: 'SCANNING',
             confluenceScore: waitScore,
@@ -404,7 +434,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       isFetchingSignalsRef.current = false;
     }
-  }, []);
+  }, [workspaceSymbol, accountType]);
 
   // 3. Fetch News & Blackout Window (Every 60 seconds)
   const fetchNewsAndRisk = useCallback(async () => {
@@ -492,7 +522,7 @@ export const Dashboard: React.FC = () => {
     if (isFetchingSnapshotRef.current) return;
     isFetchingSnapshotRef.current = true;
     try {
-      const res = await quantViewApi.getDashboardSnapshot('XAU/USD', '15m');
+      const res = await quantViewApi.getDashboardSnapshot(workspaceSymbol, '15m', accountType);
       const snap: DashboardSnapshot = res.data;
 
       if (snap.config) setAppConfig(snap.config);
@@ -511,10 +541,10 @@ export const Dashboard: React.FC = () => {
 
       const prices: Record<string, number> = {};
       if (typeof fastQuote?.price === 'number' && fastQuote.price > 0 && !fastQuote.is_stale) {
-        prices['XAU/USD'] = fastQuote.price;
+        prices[workspaceSymbol] = fastQuote.price;
       } else if (Array.isArray(snap.candles) && snap.candles.length > 0) {
         const last = snap.candles[snap.candles.length - 1];
-        if (typeof last?.close === 'number') prices['XAU/USD'] = last.close;
+        if (typeof last?.close === 'number') prices[workspaceSymbol] = last.close;
       }
       setLivePrices((prev) => ({ ...prev, ...prices }));
 
@@ -559,6 +589,7 @@ export const Dashboard: React.FC = () => {
             openTime: p.opened_at
               ? new Date(p.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' UTC'
               : '--:-- UTC',
+            account: p.account_name || accountForSymbol(p.symbol as PairSymbol),
           };
         }));
       }
@@ -579,6 +610,7 @@ export const Dashboard: React.FC = () => {
           exitReason: t.exit_reason || 'CLOSED',
           openedAt: t.opened_at,
           closedAt: t.closed_at || t.opened_at,
+          account: t.account_name || accountForSymbol(t.symbol as PairSymbol),
         })));
       }
 
@@ -598,7 +630,7 @@ export const Dashboard: React.FC = () => {
 
       if (Array.isArray(snap.signals)) {
         const bSignals: BackendSignal[] = snap.signals;
-        setSignals(SUPPORTED_PAIRS.map((sym) => {
+        setSignals([workspaceSymbol].map((sym) => {
           const matching = bSignals.find((s) => s.symbol === sym);
           const actionable = matching && matching.status === 'ACTIVE' &&
             (matching.direction === 'BUY' || matching.direction === 'SELL');
@@ -613,6 +645,7 @@ export const Dashboard: React.FC = () => {
             const rawScore = matching.setup_score ?? matching.confluence_score;
             return {
               id: `SIG-${matching.id || sym}`,
+              ...momentumFields(matching, sym),
               symbol: sym,
               direction: matching.direction,
               confluenceScore: typeof rawScore === 'number' ? Math.round(rawScore) : 0,
@@ -639,6 +672,7 @@ export const Dashboard: React.FC = () => {
           const rawScore = matching ? (matching.setup_score ?? matching.confluence_score ?? 0) : 0;
           return {
             id: `SCAN-${sym}`,
+            ...(matching ? momentumFields(matching, sym) : {}),
             symbol: sym,
             direction: 'SCANNING' as const,
             confluenceScore: Math.round(rawScore),
@@ -718,7 +752,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       isFetchingSnapshotRef.current = false;
     }
-  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk, signOut]);
+  }, [fetchLiveQuotes, fetchAccountAndPositions, fetchSignalsAndPrices, fetchNewsAndRisk, signOut, workspaceSymbol, accountType]);
 
   // Master manual refresh function
   const handleManualRefresh = async () => {
@@ -1101,8 +1135,36 @@ export const Dashboard: React.FC = () => {
             >
               Dev: Quote Diagnostics
             </button>
+            {/* Workspace switcher — XAU/USD on MAIN, BTC/USD on CENT. */}
+            <div
+              role="group"
+              aria-label="Workspace instrument"
+              className="inline-flex items-center rounded-lg border border-white/10 bg-white/[0.03] p-0.5"
+            >
+              {(['XAU/USD', 'BTC/USD'] as PairSymbol[]).map((sym) => (
+                <button
+                  key={sym}
+                  onClick={() => {
+                    setWorkspaceSymbol(sym);
+                    setSelectedChartSymbol(sym);
+                  }}
+                  className={`min-h-[36px] md:min-h-0 px-2.5 py-1 rounded-md text-[10px] font-sans font-semibold tracking-wide transition-all cursor-pointer touch-manipulation ${
+                    workspaceSymbol === sym
+                      ? sym === 'BTC/USD'
+                        ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                        : 'bg-violet-500/15 text-violet-300 border border-violet-500/30'
+                      : 'text-zinc-500 hover:text-zinc-200 border border-transparent'
+                  }`}
+                  title={`Switch workspace to ${sym} (${accountForSymbol(sym)} account)`}
+                >
+                  {sym === 'XAU/USD' ? 'XAU/USD (Main)' : 'BTC/USD (Cent)'}
+                </button>
+              ))}
+            </div>
             <span className="hidden xl:inline text-zinc-400">
-              Active Instrument: <strong className="text-zinc-200">XAU/USD (Gold Focus)</strong>
+              Active Instrument: <strong className="text-zinc-200">
+                {workspaceSymbol === 'BTC/USD' ? 'BTC/USD (Momentum / Cent)' : 'XAU/USD (Gold Focus / Main)'}
+              </strong>
             </span>
             <span className="text-zinc-700 hidden xl:inline">|</span>
             <span
@@ -1218,6 +1280,7 @@ export const Dashboard: React.FC = () => {
                 <GlassCard className="order-1 w-full min-w-0" glowColor="green">
                   <SignalMatrix
                     signals={signals}
+                    activeSymbol={workspaceSymbol}
                     livePrices={livePrices}
                     isLoading={isInitialLoading}
                     isScanning={isScanningMarkets}
@@ -1291,6 +1354,7 @@ export const Dashboard: React.FC = () => {
               <GlassCard className="order-1 w-full min-w-0" glowColor="green">
                 <SignalMatrix
                   signals={signals}
+                  activeSymbol={workspaceSymbol}
                   livePrices={livePrices}
                   isLoading={isInitialLoading}
                   isScanning={isScanningMarkets}

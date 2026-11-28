@@ -2,8 +2,8 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.candle import CandleBase
 
 
@@ -75,6 +75,10 @@ class SignalBase(BaseModel):
     trend_alignment: Optional[str] = Field(default=None, description="Trend alignment status: TREND FOLLOWING or COUNTER-TREND SCALP")
     htf_trend: Optional[str] = Field(default=None, description="Higher timeframe (1H) trend bias: BULLISH, BEARISH, RANGING")
     strategy_name: Optional[str] = Field(default=None, description="Strategy that generated this signal (e.g. 'SMC Confluence', 'Momentum')")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Strategy metadata: target_account, EMA50/200, RSI14, ADX14, heuristic provenance",
+    )
     is_broadcasted: bool = False
     timestamp: datetime
 
@@ -87,6 +91,16 @@ class SignalResponse(SignalBase):
     risk_parameters: Optional[RiskParameters] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _coerce_metadata(cls, value: Any) -> Dict[str, Any]:
+        """SQLAlchemy models expose a class-level ``MetaData`` named metadata.
+
+        Legacy persisted signals have no metadata column, so treat any non-dict
+        attribute value as an empty metadata bag instead of failing validation.
+        """
+        return value if isinstance(value, dict) else {}
 
 
 class MarketScanSymbolResult(BaseModel):

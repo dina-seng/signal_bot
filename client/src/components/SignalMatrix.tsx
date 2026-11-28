@@ -21,6 +21,8 @@ interface SignalMatrixProps {
   executedSymbols?: string[];
   appConfig?: AppConfig | null;
   quote?: BackendQuote | null;
+  /** Workspace symbol selected in the Dashboard switcher. */
+  activeSymbol?: PairSymbol;
 }
 
 type TickDirection = 'up' | 'down' | null;
@@ -36,6 +38,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
   executedSymbols = [],
   appConfig,
   quote,
+  activeSymbol = 'XAU/USD',
 }) => {
   // Honest provenance: provider labels are minute-rounded, so "updated" means the
   // last time we actually fetched, not the provider minute label.
@@ -109,8 +112,9 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
     };
   }, [resolvedPrices]);
 
-  // Filter signals strictly to supported symbols: XAU/USD (US100 quarantined)
-  const activeSignals = signals.filter((s) => s.symbol === 'XAU/USD');
+  // Filter signals strictly to the selected workspace instrument.
+  const activeSignals = signals.filter((s) => s.symbol === activeSymbol);
+  const isMomentumWorkspace = activeSymbol === 'BTC/USD';
 
   return (
     <div className="space-y-4 w-full min-w-0 overflow-hidden">
@@ -119,7 +123,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
         <div className="flex items-center gap-2 shrink-0">
           <Layers className="w-4 h-4 text-emerald-400" />
           <h2 className="text-sm font-semibold text-white tracking-wide uppercase font-sans truncate">
-            Confluence Matrix
+            {isMomentumWorkspace ? 'Momentum Matrix' : 'Confluence Matrix'}
           </h2>
         </div>
 
@@ -142,8 +146,12 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
           </span>
         )}
 
-        <span className="flex-shrink-0 px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono bg-white/5 text-zinc-400 border border-white/10 flex items-center gap-1.5">
-          Single-Asset Focus &bull; XAU/USD
+        <span className={`flex-shrink-0 px-2 sm:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-mono border flex items-center gap-1.5 ${
+          isMomentumWorkspace
+            ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+            : 'bg-white/5 text-zinc-400 border-white/10'
+        }`}>
+          {isMomentumWorkspace ? 'BTC Momentum &bull; CENT' : 'Single-Asset Focus &bull; XAU/USD'}
         </span>
 
         {/* Scan Markets & Threshold flow inline (badge → button → threshold) and wrap as a group */}
@@ -180,9 +188,11 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
       {/* Signal Cards Display - Responsive Grid with min-w-0 overflow safety */}
       {activeSignals.length === 0 ? (
         <div className="rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/10 p-8 sm:p-10 text-center font-mono w-full min-w-0">
-          <p className="text-sm text-zinc-300 font-semibold mb-1">No Active Signals For XAU/USD</p>
+          <p className="text-sm text-zinc-300 font-semibold mb-1">No Active Signals For {activeSymbol}</p>
           <p className="text-xs text-zinc-500 max-w-md mx-auto">
-            Awaiting confirmed liquidity sweep and order-flow imbalance before triggering trade setup.
+            {isMomentumWorkspace
+              ? 'Awaiting a fresh EMA/RSI momentum crossover with ADX regime confirmation.'
+              : 'Awaiting confirmed liquidity sweep and order-flow imbalance before triggering trade setup.'}
           </p>
         </div>
       ) : (

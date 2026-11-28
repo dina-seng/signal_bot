@@ -71,6 +71,9 @@ class PaperTradeResponse(BaseModel):
     """Schema for a paper trading order / position."""
     id: int
     account_id: int
+    account_name: Optional[str] = Field(
+        default=None, description="Executing Exness-style account: MAIN or CENT"
+    )
     signal_id: Optional[int] = None
     symbol: str
     direction: SignalDirection

@@ -32,6 +32,7 @@ from app.services.market_data import (
 from app.services.signals.path_validator import PathValidator
 from app.services.news import NewsFilterEngine
 from app.services.signals.confluence_engine import ConfluenceEngine
+from app.services.signals.crypto_risk_engine import CryptoVolatilityRiskEngine
 from app.services.signals.risk_engine import RiskEngine
 from app.services.signals.scoring_engine import SignalScoringEngine
 from app.services.structure import MultiTimeframeStructureEngine, StructureEngine
@@ -56,7 +57,7 @@ class SignalGenerator:
             mtf_engine=mtf_engine,
             indicator_service=indicator_service,
             news_filter=news_filter,
-            risk_engine=risk_engine,
+            risk_engine=risk_engine or CryptoVolatilityRiskEngine(),
         )
         self.path_validator = PathValidator()
         self.liquidity_service = self.confluence_engine.liquidity_service

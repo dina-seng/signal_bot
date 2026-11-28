@@ -32,6 +32,7 @@ from app.services.market_data import (
     filter_closed_candles,
     log_latest_candle,
 )
+from app.services.market_data.symbols import target_account_for_symbol
 from app.services.signals.evaluators import (
     ConsensusFilter,
     LiquiditySMCConsensusEvaluator,
@@ -346,6 +347,14 @@ class ConfluenceEngine:
         reasons = list(result.reasons)  # Mutable copy for path validation notes
         warnings: List[str] = []
 
+        # Propagate strategy metadata (momentum indicators, provenance) and the
+        # deterministic account routing target to every downstream consumer
+        # (Telegram alerts, signal API, dashboard Confluence Matrix).
+        result_meta: Dict[str, Any] = dict(result.metadata or {})
+        result_meta["target_account"] = (
+            str(result_meta.get("target_account") or target_account_for_symbol(symbol)).upper()
+        )
+
         # 7. RISK ENGINE ACTOR — entry-only hand-off.
         # The Signal Engine has found `resolved_entry`; everything below is
         # calculated by the Risk Engine, never by the Signal Engine.
@@ -355,7 +364,6 @@ class ConfluenceEngine:
             # Local import avoids a signals <-> paper_trading package import cycle.
             from app.services.paper_trading.broker_spec import get_broker_spec
 
-            result_meta = result.metadata or {}
             limit_entry = result_meta.get("ideal_entry")
             resolved_entry = (
                 float(limit_entry)
@@ -522,6 +530,7 @@ class ConfluenceEngine:
             score_breakdown=result.score_breakdown,
             risk_parameters=risk_params,
             strategy_name=result.strategy_name,
+            metadata=result_meta,
             trend_alignment=regime,
             htf_trend=sig_htf_trend,
         )

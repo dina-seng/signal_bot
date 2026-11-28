@@ -45,6 +45,8 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   const isBuy = signal.direction === 'BUY';
   const isSell = signal.direction === 'SELL';
   const hasSetup = signal.hasActiveSignal && (isBuy || isSell);
+  const isMomentum = signal.symbol === 'BTC/USD';
+  const accountLabel = signal.targetAccount || (isMomentum ? 'CENT' : 'MAIN');
 
   // Resolved live price
   const displayPrice = livePrice || signal.currentPrice || signal.entryPrice;
@@ -52,14 +54,18 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   // AI confidence fallback (e.g., 88-94% for high setups, 45-65% for scanning)
   const aiConfidence = signal.aiConfidence ?? (hasSetup && signal.confluenceScore > 0 ? Math.min(96, Math.max(78, signal.confluenceScore + 2)) : (signal.confluenceScore > 0 ? signal.confluenceScore : null));
 
-  // Default institutional AI reasoning if not provided
+  // Institutional thesis is strategy-specific: momentum for BTC, SMC for XAU.
   const aiReasoningText =
     signal.aiReasoning ||
-    (hasSetup
-      ? isBuy
-        ? `Order-flow imbalance detected on ${signal.symbol}. Clean liquidity sweep beneath local support followed by institutional displacement into Bullish FVG.`
-        : `Supply absorption confirmed on ${signal.symbol}. Internal market structure shift (MSS) with heavy ask skew and premium rejection.`
-      : `Algorithmic liquidity scan in progress. Accumulating tick volume and awaiting displacement through key liquidity pools.`);
+    (isMomentum
+      ? hasSetup
+        ? `Fresh ${signal.emaTrend || 'EMA'} momentum crossover confirmed. RSI(14) ${signal.rsi14?.toFixed(1) ?? 'N/A'} with ADX(14) ${signal.adx14?.toFixed(1) ?? 'N/A'} regime support; EMA50/EMA200 alignment clears the ${signal.confluenceScore}/100 heuristic confluence floor.`
+        : `Awaiting a fresh RSI/EMA momentum crossover on BTC/USD with ADX(14) regime confirmation.`
+      : hasSetup
+        ? isBuy
+          ? `Order-flow imbalance detected on ${signal.symbol}. Clean liquidity sweep beneath local support followed by institutional displacement into Bullish FVG.`
+          : `Supply absorption confirmed on ${signal.symbol}. Internal market structure shift (MSS) with heavy ask skew and premium rejection.`
+        : `Algorithmic liquidity scan in progress. Accumulating tick volume and awaiting displacement through key liquidity pools.`);
 
   // Tick highlight colors
   const tickBg =
@@ -105,6 +111,13 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
               </span>
               <span className="rounded-md bg-white/[0.06] border border-white/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-zinc-400">
                 {signal.timeframe ? signal.timeframe.toUpperCase() : '1H'}
+              </span>
+              <span className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-semibold border ${
+                accountLabel === 'CENT'
+                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  : 'bg-violet-500/10 text-violet-300 border-violet-500/30'
+              }`} title={`Executing account: ${accountLabel}`}>
+                {accountLabel}
               </span>
             </div>
           </div>
@@ -229,6 +242,13 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                     <p className="font-sans text-xs italic leading-relaxed text-indigo-200/90 whitespace-normal break-words">
                       "{aiReasoningText}"
                     </p>
+                    {isMomentum && (
+                      <p className="mt-2 font-mono text-[10px] leading-relaxed text-amber-300/80 whitespace-normal break-words">
+                        {signal.heuristicProvenance ? `Provenance: ${signal.heuristicProvenance}. ` : ''}
+                        1H momentum is an empirical heuristic; Proelss et al. (2025) supports BTC
+                        large-cap momentum only at 7d/30d horizons, not intraday.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -270,17 +290,50 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                 />
               </div>
 
-              {/* Pillars as wrapping pill badges — never collide or clip */}
-              <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-zinc-400">
-                <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
-                  <span>Structure:</span>
-                  <span className="text-zinc-200 font-semibold">{hasSetup ? 'Confirmed' : 'Validating'}</span>
+              {isMomentum ? (
+                <>
+                  {/* Momentum indicators — replaces SMC structure/liquidity pills */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1 font-mono text-[10px]">
+                    {[
+                      { label: 'EMA 50', value: signal.ema50?.toFixed(2) },
+                      { label: 'EMA 200', value: signal.ema200?.toFixed(2) },
+                      { label: 'RSI 14', value: signal.rsi14?.toFixed(1) },
+                      { label: 'ADX 14', value: signal.adx14?.toFixed(1) },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-lg bg-zinc-900/60 px-2 py-1 border border-white/[0.04] min-w-0">
+                        <span className="block text-zinc-500 text-[9px] uppercase tracking-wide truncate">{item.label}</span>
+                        <span className="text-zinc-100 font-semibold">{item.value ?? '--'}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-zinc-400">
+                    <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
+                      <span>EMA Trend:</span>
+                      <span className="text-zinc-200 font-semibold">{signal.emaTrend || 'N/A'}</span>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
+                      <span>RSI:</span>
+                      <span className="text-zinc-200 font-semibold">{signal.rsi14?.toFixed(1) ?? 'N/A'}</span>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
+                      <span>ADX:</span>
+                      <span className="text-zinc-200 font-semibold">{signal.adx14?.toFixed(1) ?? 'N/A'}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* SMC pillars for XAU/USD */
+                <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-zinc-400">
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
+                    <span>Structure:</span>
+                    <span className="text-zinc-200 font-semibold">{hasSetup ? 'Confirmed' : 'Validating'}</span>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
+                    <span>Liquidity:</span>
+                    <span className="text-zinc-200 font-semibold">{hasSetup ? 'Swept' : 'Building'}</span>
+                  </div>
                 </div>
-                <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
-                  <span>Liquidity:</span>
-                  <span className="text-zinc-200 font-semibold">{hasSetup ? 'Swept' : 'Building'}</span>
-                </div>
-              </div>
+              )}
             </div>
 
             {/* 5. Key Trade Levels (Entry, SL, TP1, TP2) */}
