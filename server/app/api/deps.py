@@ -103,11 +103,12 @@ from app.services.signals import (
     SignalScoringEngine,
     StrategyManager,
 )
+from app.services.signals.crypto_risk_engine import CryptoVolatilityRiskEngine
 
 
 def get_risk_engine() -> RiskEngine:
-    """Dependency for the single SL/TP and position-sizing engine."""
-    return RiskEngine()
+    """SL/TP engine: ATR-based for BTC, base engine for XAU/USD (delegated)."""
+    return CryptoVolatilityRiskEngine()
 
 
 def get_scoring_engine() -> SignalScoringEngine:

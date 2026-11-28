@@ -26,6 +26,7 @@ from app.services.structure.ltf_confirmation import LTFConfirmationEngine
 from app.services.indicators import IndicatorService
 from app.services.indicators.adx_calculator import ADXCalculator
 from app.services.signals.confluence_scoring import calculate_ai_confidence
+from app.services.signals.crypto_risk_engine import BTC_SYMBOL, CryptoVolatilityRiskEngine
 from app.services.liquidity import LiquidityService
 from app.services.news import NewsFilterEngine
 from app.services.market_data import (
@@ -73,13 +74,16 @@ class ConfluenceEngine:
         risk_engine: Optional[RiskEngine] = None,
         min_score_threshold: Optional[float] = None,
         strategy_manager: Optional["StrategyManager"] = None,
+        crypto_risk_engine: Optional[CryptoVolatilityRiskEngine] = None,
     ):
         self.liquidity_service = liquidity_service or LiquidityService()
         self.mtf_engine = mtf_engine or MultiTimeframeStructureEngine()
         self.indicator_service = indicator_service or IndicatorService()
         self.news_filter = news_filter or NewsFilterEngine()
         # The Risk Engine is the only SL/TP/lot calculator in the pipeline.
+        # XAU/USD keeps the base engine; BTC/USD gets the validated ATR engine.
         self.risk_engine = risk_engine or RiskEngine()
+        self.crypto_risk_engine = crypto_risk_engine or CryptoVolatilityRiskEngine()
         self.path_validator = PathValidator()
         self.min_score_threshold = min_score_threshold or settings.MIN_SETUP_SCORE
 
@@ -98,6 +102,12 @@ class ConfluenceEngine:
         else:
             from app.services.strategies.strategy_manager import StrategyManager
             self.strategy_manager = StrategyManager()
+
+    def _risk_engine_for(self, symbol: str) -> RiskEngine:
+        """Symbol-aware risk engine: base for XAU, ATR engine for BTC."""
+        if str(symbol or "").strip().upper() == BTC_SYMBOL:
+            return self.crypto_risk_engine
+        return self.risk_engine
 
     @staticmethod
     def generate_fingerprint(
@@ -413,7 +423,7 @@ class ConfluenceEngine:
                 else current_price
             )
 
-            levels = self.risk_engine.resolve_levels(
+            levels = self._risk_engine_for(symbol).resolve_levels(
                 symbol=symbol,
                 direction=direction,
                 entry_price=resolved_entry,

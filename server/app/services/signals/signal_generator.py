@@ -572,7 +572,17 @@ class SignalGenerator:
             best_sig = sig_1h
             best_sig.htf_trend = htf_trend
 
-            if best_sig.direction in (SignalDirection.BUY, SignalDirection.SELL) and best_sig.setup_score >= settings.MIN_SETUP_SCORE:
+            # The selected strategy publishes its own validated floor (BTC
+            # momentum = 85); never apply SMC's global 60 to a BTC signal.
+            strategy_meta = best_sig.metadata if isinstance(best_sig.metadata, dict) else {}
+            try:
+                symbol_floor = float(
+                    strategy_meta.get("min_score_threshold") or settings.MIN_SETUP_SCORE
+                )
+            except (TypeError, ValueError):
+                symbol_floor = float(settings.MIN_SETUP_SCORE)
+
+            if best_sig.direction in (SignalDirection.BUY, SignalDirection.SELL) and best_sig.setup_score >= symbol_floor:
                 trend_alignment = "TREND FOLLOWING"
                 best_sig.trend_alignment = trend_alignment
                 label_prefix = f"[TREND FOLLOWING] 1H Primary Trend Setup • Score: {best_sig.setup_score:.1f}/100"
@@ -583,7 +593,7 @@ class SignalGenerator:
                 best_sig.trend_alignment = None
                 wait_reason = (
                     f"1H Trend: {htf_trend} • No qualified setup "
-                    f"(>={settings.MIN_SETUP_SCORE:.0f} score) on 15m/30m/1H. "
+                    f"(>={symbol_floor:.0f} score) on 15m/30m/1H. "
                     "Awaiting structural confirmation."
                 )
                 if not any("1H Trend:" in r for r in best_sig.reasons):

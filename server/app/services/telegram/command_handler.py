@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
-from app.core.config import ACTIVE_SYMBOLS, settings
+from app.core.config import ACTIVE_SYMBOLS, SUPPORTED_SYMBOLS_ALL, settings
 from app.core.logging import logger
 from app.services.auth_service import AuthService
 from app.models.candle import Candle
@@ -78,11 +78,22 @@ class TelegramCommandHandler:
         self.news_ingestion = news_ingestion
         self.formatter = TelegramMessageFormatter()
 
+    def _supported_symbols(self) -> list[str]:
+        """Every symbol addressable by manual commands and the dashboard."""
+        return list(dict.fromkeys(
+            list(settings.SUPPORTED_SYMBOLS) + list(SUPPORTED_SYMBOLS_ALL)
+        ))
+
     def _normalize_symbol(self, raw: str) -> str:
-        """Normalize currency symbol string with strict enforcement of ACTIVE_SYMBOLS."""
+        """Map 'btcusd', 'BTCUSD', 'BTC/USD' -> canonical 'BTC/USD'.
+
+        Uses the full supported whitelist, not the auto-scan ACTIVE_SYMBOLS
+        subset, so a manually requested BTC signal is never called inactive.
+        """
         s = raw.upper().replace("%2F", "/").strip()
-        for sym in ACTIVE_SYMBOLS:
-            if sym.replace("/", "") == s.replace("/", ""):
+        flattened = s.replace("/", "")
+        for sym in self._supported_symbols():
+            if s == sym or flattened == sym.replace("/", ""):
                 return sym
         return s
 
@@ -202,56 +213,57 @@ class TelegramCommandHandler:
         # 2. Unified Multi-Timeframe Market Scanner (/scan)
         # -------------------------------------------------------------
         elif cmd_name == "/scan":
-            scan_symbols = list(ACTIVE_SYMBOLS)
+            # Manual /scan covers every supported instrument: XAU/USD (SMC)
+            # and BTC/USD (momentum). ACTIVE_SYMBOLS only governs the daemon.
+            scan_symbols = self._supported_symbols()
             primary_symbol = scan_symbols[0] if scan_symbols else "XAU/USD"
 
             now_utc = datetime.now(timezone.utc)
-            latest_candle = db.scalars(
-                select(Candle)
-                .where(Candle.symbol == primary_symbol, Candle.timeframe == "15m")
-                .order_by(desc(Candle.timestamp))
-                .limit(1)
-            ).first()
-            if not latest_candle:
-                latest_candle = db.scalars(
-                    select(Candle)
-                    .where(Candle.symbol == primary_symbol)
-                    .order_by(desc(Candle.timestamp))
-                    .limit(1)
-                ).first()
-
             tf_delta_seconds = int(get_timeframe_delta("15m").total_seconds())
             now_ts = int(now_utc.timestamp())
             expected_open_ts = (now_ts // tf_delta_seconds) * tf_delta_seconds - tf_delta_seconds
             expected_open = datetime.fromtimestamp(expected_open_ts, tz=timezone.utc)
 
-            is_stale = False
-            if not latest_candle or not latest_candle.timestamp:
-                is_stale = True
-            else:
-                candle_ts = ensure_utc_datetime(latest_candle.timestamp)
-                if candle_ts < expected_open:
-                    is_stale = True
+            for sym in scan_symbols:
+                latest_candle = db.scalars(
+                    select(Candle)
+                    .where(Candle.symbol == sym, Candle.timeframe == "15m")
+                    .order_by(desc(Candle.timestamp))
+                    .limit(1)
+                ).first()
+                if not latest_candle:
+                    latest_candle = db.scalars(
+                        select(Candle)
+                        .where(Candle.symbol == sym)
+                        .order_by(desc(Candle.timestamp))
+                        .limit(1)
+                    ).first()
 
-            if is_stale:
+                is_stale = True
+                if latest_candle and latest_candle.timestamp:
+                    candle_ts = ensure_utc_datetime(latest_candle.timestamp)
+                    is_stale = candle_ts < expected_open
+
+                if not is_stale:
+                    continue
+
                 logger.info(
-                    f"{primary_symbol} candles are STALE (latest: {latest_candle.timestamp if latest_candle else None} < expected_open: {expected_open}) on /scan. "
-                    f"Auto-syncing fresh 15m, 30m, 1h candles..."
+                    f"{sym} candles are STALE on /scan; auto-syncing 15m/30m/1h/4h."
                 )
-                provider = self._provider_for(primary_symbol)
+                provider = self._provider_for(sym)
                 ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
                 ingest_svc.provider = provider
                 ingest_svc.db = db
                 for tf in ["15m", "30m", "1h", "4h"]:
                     try:
                         await ingest_svc.sync_symbol_timeframe(
-                            symbol=primary_symbol,
+                            symbol=sym,
                             timeframe=tf,
                             limit=max(MIN_HISTORY_BARS, 250),
                             force_refresh=True,
                         )
                     except Exception as e:
-                        logger.error(f"Auto-refresh sync failed for {primary_symbol} [{tf}]: {e}")
+                        logger.error(f"Auto-refresh sync failed for {sym} [{tf}]: {e}")
                 try:
                     db.commit()
                 except Exception:
@@ -292,15 +304,15 @@ class TelegramCommandHandler:
             else:
                 sym = self._normalize_symbol(parts[1])
 
-                from app.services.market_data.mock_provider import MockMarketDataProvider
-                if sym not in ACTIVE_SYMBOLS and not isinstance(self.market_provider, MockMarketDataProvider):
+                supported = self._supported_symbols()
+                if sym not in supported:
                     sym_esc = self.formatter.escape_html(sym)
-                    active_esc = ", ".join(f"<code>{s}</code>" for s in ACTIVE_SYMBOLS)
+                    supported_esc = ", ".join(f"<code>{s}</code>" for s in supported)
                     reply = (
-                        f"⚠️ <b>Asset Inactive</b>\n"
+                        f"⚠️ <b>Unsupported Pair</b>\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"<code>{sym_esc}</code> is not active.\n"
-                        f"Active instrument: {active_esc}."
+                        f"<code>{sym_esc}</code> is not supported.\n"
+                        f"Supported instruments: {supported_esc}."
                     )
                 else:
                     # 1. Provider <-> DB Synchronization: fetch at least 210 bars
@@ -357,12 +369,16 @@ class TelegramCommandHandler:
                         score_txt = f"{scan_res.setup_score:.0f}/100"
                         align_txt = f" • Alignment: <code>{self.formatter.escape_html(scan_res.trend_alignment)}</code>" if scan_res.trend_alignment else ""
                         reasons_lines = "\n".join([f"  • {self.formatter.escape_html(r)}" for r in scan_res.reasons[:4]])
+                        is_btc_signal = sym == "BTC/USD"
+                        strategy_label = "BTC Momentum" if is_btc_signal else "Strategy A (SMC Sniper)"
+                        symbol_floor = 85.0 if is_btc_signal else float(settings.MIN_SETUP_SCORE)
                         reply = (
                             f"⚪ <b>UNIFIED SIGNAL STATUS: WAIT</b>\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"📊 <b>Pair:</b> <code>{sym_code}</code> [{scan_res.timeframe}]\n"
+                            f"🧠 <b>Strategy:</b> <code>{strategy_label}</code>\n"
                             f"📈 <b>HTF Context:</b> <code>{htf_txt}</code>{align_txt}\n"
-                            f"⭐ <b>Setup Score:</b> <code>{score_txt}</code> (Min: <code>{settings.MIN_SETUP_SCORE:.0f}</code>)\n"
+                            f"⭐ <b>Setup Score:</b> <code>{score_txt}</code> (Min: <code>{symbol_floor:.0f}</code>)\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"💡 <b>Current Market Analysis:</b>\n"
                             f"{reasons_lines}\n\n"

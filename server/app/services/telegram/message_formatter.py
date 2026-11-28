@@ -817,9 +817,22 @@ class TelegramMessageFormatter:
             tf_display = "1H" if r.timeframe.lower() == "1h" else r.timeframe
             tf = escape_html(tf_display)
 
-            strat_badge = ""
-            if getattr(r, "signal", None) and getattr(r.signal, "strategy_name", None):
-                strat_badge = f" <code>[{escape_html(r.signal.strategy_name)}]</code>"
+            # Per-instrument strategy + its own validated threshold, so a BTC
+            # row is never shown with SMC's global 60 floor.
+            canonical = r.symbol
+            try:
+                canonical = normalize_symbol(r.symbol)
+            except UnknownSymbolError:
+                pass
+            is_btc = canonical == "BTC/USD"
+            strategy_name = (
+                getattr(getattr(r, "signal", None), "strategy_name", None)
+                or ("BTC Momentum" if is_btc else "Strategy A (SMC Sniper)")
+            )
+            threshold = 85.0 if is_btc else float(settings.MIN_SETUP_SCORE)
+            strat_badge = (
+                f" <code>[{escape_html(strategy_name)} | &gt;= {threshold:g}]</code>"
+            )
 
             lines.append(f"{dir_icon} <code>{sym}</code> [{tf}] ➔ {status_text}{strat_badge}")
 

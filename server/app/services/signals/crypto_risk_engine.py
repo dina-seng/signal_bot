@@ -13,7 +13,8 @@ from app.core.config import settings
 from app.services.signals.risk_engine import RiskEngine, RiskLevels
 
 BTC_SYMBOL: str = "BTC/USD"
-BTC_ATR_MULTIPLIER: float = 1.5
+# Validated sweep config (FINAL_ATR_MULTIPLIER in scripts/backtest_btc_momentum.py).
+BTC_ATR_MULTIPLIER: float = 3.5
 BTC_MIN_SL_DISTANCE: float = 100.0
 BTC_MAX_SL_DISTANCE: float = 1500.0
 

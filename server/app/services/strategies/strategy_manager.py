@@ -11,6 +11,7 @@ from app.core.logging import logger
 from app.schemas.indicators import IndicatorAnalysisResponse
 from app.schemas.liquidity import AdvancedStructureAnalysisResponse
 from app.schemas.structure import MultiTimeframeStructureResponse
+from app.services.signals.crypto_risk_engine import BTC_SYMBOL
 from app.services.strategies.base import BaseStrategy, StrategyResult
 from app.services.strategies.btc_momentum_strategy import BTCMomentumStrategy
 
@@ -44,9 +45,34 @@ class StrategyManager:
             from app.services.strategies.smc_strategy import SMCStrategy
             self.strategies = [
                 SMCStrategy(),
-                BTCMomentumStrategy(),
+                # Validated config from the BTC momentum sweep: min score 85,
+                # ADX >= 25, min volume 1.0. The earlier 65/25/1.0 instance was
+                # never the configuration that was proven profitable.
+                BTCMomentumStrategy(
+                    min_score_threshold=85.0,
+                    adx_threshold=25.0,
+                    min_volume=1.0,
+                ),
             ]
 
+
+    def strategies_for(self, symbol: str) -> List[BaseStrategy]:
+        """Route each instrument to its own strategy; never rely on self-gates.
+
+        BTC/USD runs the momentum strategy only. Every other symbol (XAU/USD)
+        keeps the SMC pipeline unchanged. Extra strategies registered at runtime
+        continue to run for both symbols.
+        """
+        is_btc = str(symbol or "").strip().upper() == BTC_SYMBOL
+        routed: List[BaseStrategy] = []
+        for strategy in self.strategies:
+            is_momentum = isinstance(strategy, BTCMomentumStrategy)
+            if is_btc and not is_momentum:
+                continue
+            if not is_btc and is_momentum:
+                continue
+            routed.append(strategy)
+        return routed
 
     def register(self, strategy: BaseStrategy) -> None:
         """Add a new strategy to the pipeline at runtime."""
@@ -87,7 +113,7 @@ class StrategyManager:
             else:
                 current_htf_trend = "RANGING"
 
-        for strategy in self.strategies:
+        for strategy in self.strategies_for(symbol):
             try:
                 call_kwargs = dict(kwargs)
                 call_kwargs["htf_trend"] = current_htf_trend

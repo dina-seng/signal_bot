@@ -174,7 +174,9 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
             <span className="text-zinc-500">Threshold:</span>
             <span className="font-semibold text-zinc-200 bg-white/5 px-2.5 py-1 sm:py-0.5 rounded-lg border border-white/10 text-center whitespace-nowrap">
               &ge;{' '}
-              {appConfig ? (
+              {isMomentumWorkspace ? (
+                85
+              ) : appConfig ? (
                 appConfig.min_confluence_score
               ) : (
                 <span className="animate-pulse" aria-busy="true">—</span>
@@ -206,7 +208,7 @@ export const SignalMatrix: React.FC<SignalMatrixProps> = ({
               onToggleNotify={onToggleNotify}
               onSelectSignalForChart={onSelectSignalForChart}
               autoExecuted={executedSymbols.includes(sig.symbol)}
-              minScore={appConfig?.min_confluence_score}
+              minScore={isMomentumWorkspace ? 85 : appConfig?.min_confluence_score}
             />
           ))}
         </div>

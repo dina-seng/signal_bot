@@ -6,8 +6,11 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 import json
 
-# Centralized single source of truth for active traded instruments
+# Centralized single source of truth for active traded instruments.
+# ACTIVE_SYMBOLS drives the *automatic* scanner only (XAU/USD on MAIN); BTC/USD
+# is a supported, manually addressable momentum instrument (CENT).
 ACTIVE_SYMBOLS: List[str] = ["XAU/USD"]
+SUPPORTED_SYMBOLS_ALL: List[str] = list(ACTIVE_SYMBOLS) + ["BTC/USD"]
 
 
 class Settings(BaseSettings):
@@ -30,7 +33,7 @@ class Settings(BaseSettings):
     # ACTIVE_SYMBOLS drives the scanner (XAU/USD on MAIN). BTC/USD is also a
     # supported instrument for the 1H momentum workspace (executed on CENT),
     # but is deliberately not auto-scanned yet.
-    SUPPORTED_SYMBOLS: List[str] = list(ACTIVE_SYMBOLS) + ["BTC/USD"]
+    SUPPORTED_SYMBOLS: List[str] = list(SUPPORTED_SYMBOLS_ALL)
     SUPPORTED_TIMEFRAMES: List[str] = ["15m", "1h", "4h"]
 
     # Market Structure & Analysis Strategy Config (Milestones 2-6)
@@ -338,9 +341,11 @@ class Settings(BaseSettings):
     @field_validator("SUPPORTED_SYMBOLS", mode="after")
     @classmethod
     def quarantine_unsupported_symbols(cls, value: List[str]) -> List[str]:
-        # Strict single-asset gold enforcement: strictly allow active symbols
-        filtered = [s for s in value if s in ACTIVE_SYMBOLS]
-        return filtered if filtered else list(ACTIVE_SYMBOLS)
+        # Keep every recognized instrument (XAU/USD + BTC/USD). ACTIVE_SYMBOLS
+        # alone governs the automatic scanner; the whitelist must not silently
+        # drop BTC/USD from manual commands or the dashboard workspace.
+        filtered = [s for s in value if s in SUPPORTED_SYMBOLS_ALL]
+        return filtered if filtered else list(SUPPORTED_SYMBOLS_ALL)
 
 
 settings = Settings()
