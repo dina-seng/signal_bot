@@ -43,6 +43,7 @@ from app.schemas.candle import CandleResponse
 from app.schemas.dashboard import DashboardSnapshotResponse
 from app.schemas.news import NewsEventResponse
 from app.services.market_data.cache import derived_cache
+from app.services.market_data.symbols import target_account_for_symbol
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -65,6 +66,21 @@ async def _section(
         timings[name] = elapsed_ms
         stage = "provider" if name == "quote" else "db"
         metrics.record_stage(stage, elapsed_ms)
+
+
+def _filter_by_account(rows: List[Any], account_type: Optional[str]) -> List[Any]:
+    """Restrict paper rows to the workspace account (MAIN=XAU, CENT=BTC)."""
+    if not account_type:
+        return rows
+    wanted = account_type.upper().strip()
+    filtered: List[Any] = []
+    for row in rows:
+        meta = getattr(row, "metadata", None) or {}
+        account = meta.get("target_account") if isinstance(meta, dict) else None
+        account = str(account or target_account_for_symbol(str(getattr(row, "symbol", "") or ""))).upper()
+        if account == wanted:
+            filtered.append(row)
+    return filtered
 
 
 def _overlay_forming_quote(candles: list, quote: Any) -> list:
@@ -100,6 +116,9 @@ def _overlay_forming_quote(candles: list, quote: Any) -> list:
 @router.get("/snapshot", response_model=DashboardSnapshotResponse)
 async def get_dashboard_snapshot(
     symbol: str = Query("XAU/USD", description="Primary dashboard symbol"),
+    account_type: Optional[str] = Query(
+        None, description="Optional workspace account filter: MAIN (XAU/USD) or CENT (BTC/USD)"
+    ),
     timeframe: str = Query("15m", description="Chart timeframe"),
     candle_limit: int = Query(settings.DASHBOARD_CANDLE_LIMIT, ge=1, le=500),
     derived_limit: int = Query(settings.DASHBOARD_DERIVED_LIMIT, ge=20, le=2000),
@@ -205,7 +224,14 @@ async def get_dashboard_snapshot(
 
         async def compute():
             return signals_api.get_signals(
-                symbol, None, None, True, settings.DASHBOARD_SIGNALS_LIMIT, db, signal_generator
+                symbol=symbol,
+                direction=None,
+                status=None,
+                account_type=account_type,
+                unified=True,
+                limit=settings.DASHBOARD_SIGNALS_LIMIT,
+                db=db,
+                generator=signal_generator,
             )
 
         return await derived_cache.get_or_fetch(
@@ -266,7 +292,10 @@ async def get_dashboard_snapshot(
 
     # Prefer the atomic summary's ledger so header P&L and positions cannot
     # disagree with each other (same tick, same transaction state).
-    positions = summary.positions if summary is not None else []
+    positions = _filter_by_account(
+        summary.positions if summary is not None else [], account_type
+    )
+    trades = _filter_by_account(trades, account_type)
 
     # Two candle layers in one response: `candles` is the 30s cached CLOSED
     # history with its newest bar projected onto the fast quote, while

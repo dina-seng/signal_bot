@@ -373,7 +373,10 @@ class AutomatedMarketScanner:
                 await broadcast_to_subscribers(
                     db,
                     self.telegram_client,
-                    text=self.formatter.format_auto_execution(trade),
+                    text=self.formatter.format_auto_execution(
+                        trade,
+                        target_account=(sig.metadata or {}).get("target_account"),
+                    ),
                     signal_id=sig.id or sig.fingerprint,
                 )
                 if db_signal is not None and not db_signal.is_broadcasted:

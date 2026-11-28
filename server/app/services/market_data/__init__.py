@@ -1,4 +1,4 @@
-"""Market data module containing Twelve Data provider and ingestion engine."""
+"""Market data module containing Twelve Data and Binance providers and ingestion engine."""
 
 from typing import Optional
 import httpx
@@ -7,7 +7,9 @@ from app.core.logging import logger
 
 from app.services.market_data.base import BaseMarketDataProvider
 from app.services.market_data.twelvedata_provider import TwelveDataProvider
+from app.services.market_data.binance_provider import BinancePublicProvider
 from app.services.market_data.mock_provider import MockMarketDataProvider
+from app.services.market_data.symbols import normalize_symbol
 from app.services.market_data.ingestion import IngestionService
 from app.services.market_data.resample import resample_ohlc
 
@@ -62,13 +64,31 @@ def get_market_data_provider(
     return TwelveDataProvider(api_key=api_key, http_client=http_client)
 
 
+def get_provider_for_symbol(
+    symbol: str,
+    http_client: Optional[httpx.AsyncClient] = None,
+) -> BaseMarketDataProvider:
+    """Route a symbol to its single source of market data.
+
+    BTC/USD (including the BTCUSDT alias) is served by BinancePublicProvider
+    using Binance's public ``BTCUSDT`` klines. Every other symbol keeps the
+    existing Twelve Data path unchanged (XAU/USD -> TwelveDataProvider).
+    """
+    canonical = normalize_symbol(symbol)
+    if canonical == "BTC/USD":
+        return BinancePublicProvider(http_client=http_client)
+    return get_market_data_provider("twelvedata", http_client=http_client)
+
+
 __all__ = [
     "BaseMarketDataProvider",
     "TwelveDataProvider",
+    "BinancePublicProvider",
     "MockMarketDataProvider",
     "IngestionService",
     "resample_ohlc",
     "get_market_data_provider",
+    "get_provider_for_symbol",
     "DEFAULT_STALENESS_THRESHOLDS",
     "TIMEFRAME_DELTAS",
     "StalenessCheckResult",

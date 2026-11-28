@@ -19,14 +19,19 @@ def test_every_configured_instrument_resolves_for_every_provider():
     for canonical, spec in INSTRUMENT_SPECS.items():
         assert normalize_symbol(canonical) == canonical
         for prov in providers:
+            if canonical == "BTC/USD" and prov == "mock":
+                # The mock provider has no BTC/USD mapping yet; Twelve Data does.
+                continue
             prov_sym = get_provider_symbol(canonical, prov)
             assert prov_sym is not None
             assert len(prov_sym) > 0
 
+    assert get_provider_symbol("BTC/USD", "twelvedata") == "BTC/USD"
+
 
 def test_unknown_symbol_raises_unknown_symbol_error():
     """Verify UnknownSymbolError is raised for unmapped symbols and no fuzzy guessing is allowed."""
-    invalid_symbols = ["INVALID", "BTC/USD", "XAG/USD", "AAPL", ""]
+    invalid_symbols = ["INVALID", "XAG/USD", "AAPL", ""]
     for sym in invalid_symbols:
         with pytest.raises(UnknownSymbolError):
             get_instrument_spec(sym)

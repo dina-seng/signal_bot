@@ -12,6 +12,7 @@ from app.services.market_data.symbols import (
     format_price,
     get_instrument_spec,
     normalize_symbol,
+    target_account_for_symbol,
 )
 from app.schemas.news import NewsEventResponse
 from app.schemas.paper_trading import (
@@ -42,6 +43,30 @@ def escape_html(text: Any) -> str:
     if text is None:
         return ""
     return html.escape(str(text), quote=False)
+
+
+def resolve_target_account(signal: Any) -> str:
+    """Read ``target_account`` ("MAIN"/"CENT") from signal metadata.
+
+    Persisted legacy signals have no metadata, so fall back to the symbol
+    routing rule (BTC/USD -> CENT, everything else -> MAIN).
+    """
+    meta = getattr(signal, "metadata", None) if not isinstance(signal, dict) else signal
+    raw = meta.get("target_account") if isinstance(meta, dict) else None
+    if raw:
+        return str(raw).strip().upper()
+    symbol = (
+        getattr(signal, "symbol", None)
+        if not isinstance(signal, dict)
+        else meta.get("symbol")
+    )
+    return target_account_for_symbol(str(symbol or ""))
+
+
+def format_target_account_label(account: str, meta: Optional[Dict[str, Any]] = None) -> str:
+    """Render e.g. ``CENT (2000c)`` when the account nickname is supplied."""
+    detail = (meta or {}).get("target_account_label") or (meta or {}).get("account_label")
+    return f"{account} ({detail})" if detail else account
 
 
 def format_signal(
@@ -88,6 +113,12 @@ def format_signal(
         meta["risk_warning"] = risk_warning
     setup_state_str = meta.get("setup_state") if isinstance(meta, dict) else None
 
+    is_btc = sym == "BTC/USD"
+    target_account = resolve_target_account(signal)
+    account_label = format_target_account_label(
+        target_account, meta if isinstance(meta, dict) else {}
+    )
+
     # Do not print "STRONG BUY" unless setup_state is CONFIRMED_SETUP and score is >= threshold
     min_score = getattr(settings, "MIN_SETUP_SCORE", 60.0)
     is_confirmed_strong = (
@@ -103,16 +134,23 @@ def format_signal(
     else:
         dir_badge = f"⚪ <b>{escape_html(dir_str)}</b>"
 
-    # 2. Strategy & Header
-    lines = [
-        f"⚡ <b>NEW SIGNAL: {escape_html(strategy_label)}</b> ⚡",
+    # 2. Strategy & Header — the executing account is always explicit.
+    lines = [f"⚡ <b>NEW SIGNAL: {escape_html(strategy_label)}</b> ⚡"]
+    if is_btc and dir_str in ("BUY", "SELL"):
+        icon = "🟢" if dir_str == "BUY" else "🔴"
+        lines.append(
+            f"{icon} <b>BTC MOMENTUM {escape_html(dir_str)}</b> | "
+            f"Account: <code>{escape_html(account_label)}</code>"
+        )
+    lines.extend([
         "━━━━━━━━━━━━━━━━━━━━",
+        f"🏦 <b>Executing Account:</b> <code>{escape_html(account_label)}</code>",
         f"📊 <b>Instrument:</b> <code>{escape_html(sym)}</code>",
         f"⏱ <b>Timeframe:</b> <code>{escape_html(tf)}</code>",
         f"🎯 <b>Direction:</b> {dir_badge}",
         f"🧠 <b>Strategy:</b> <code>{escape_html(strategy_label)}</code>",
         f"⭐ <b>Confluence Score:</b> <code>{score_str}</code>",
-    ]
+    ])
 
     quality_tier = (meta.get("quality_tier_label") or meta.get("quality_tier")) if isinstance(meta, dict) else None
     if quality_tier:
@@ -139,18 +177,27 @@ def format_signal(
     if session_name:
         lines.append(f"🌐 <b>Session:</b> <code>{escape_html(session_name)}</code>")
 
-    sweep_level_type = meta.get("sweep_level_type") if isinstance(meta, dict) else None
-    if sweep_level_type:
-        lines.append(f"🌊 <b>Swept Level:</b> <code>{escape_html(sweep_level_type)}</code>")
+    # SMC-only provenance is suppressed for the momentum strategy.
+    if not is_btc:
+        sweep_level_type = meta.get("sweep_level_type") if isinstance(meta, dict) else None
+        if sweep_level_type:
+            lines.append(f"🌊 <b>Swept Level:</b> <code>{escape_html(sweep_level_type)}</code>")
 
-    nearest_obs = meta.get("nearest_obstacle") if isinstance(meta, dict) else None
-    if nearest_obs:
-        lines.append(f"🚧 <b>Nearest Obstacle:</b> <code>{escape_html(nearest_obs)}</code>")
+        nearest_obs = meta.get("nearest_obstacle") if isinstance(meta, dict) else None
+        if nearest_obs:
+            lines.append(f"🚧 <b>Nearest Obstacle:</b> <code>{escape_html(nearest_obs)}</code>")
 
-    # 3. Market Regime & HTF Context
+    # 3. Market Regime & strategy-specific context.
+    # BTC momentum uses EMA/RSI/ADX; SMC HTF/structure terms are XAU-only.
     regime = ctx.regime
     if not regime:
-        if "RANGING" in str(getattr(signal, "htf_trend", "")):
+        if is_btc:
+            adx_raw = meta.get("adx_14") if isinstance(meta, dict) else None
+            regime = (
+                f"MOMENTUM TREND (ADX {float(adx_raw):.1f})"
+                if adx_raw is not None else "MOMENTUM REGIME"
+            )
+        elif "RANGING" in str(getattr(signal, "htf_trend", "")):
             regime = "RANGING / MEAN REVERSION"
         elif getattr(signal, "trend_alignment", None):
             regime = str(signal.trend_alignment)
@@ -158,18 +205,45 @@ def format_signal(
             regime = "TREND FOLLOWING"
     lines.append(f"🔄 <b>Market Regime:</b> <code>{escape_html(regime)}</code>")
 
-    htf_source = meta.get("htf_trend_source") if isinstance(meta, dict) else None
-    htf = ctx.htf_context or getattr(signal, "htf_trend", None) or (meta.get("htf_trend") if isinstance(meta, dict) else None)
-    if htf or htf_source:
-        if htf_source == "structure_primary":
-            htf_str = f"{htf} (Source: Primary Structure 15m - Unconfirmed HTF)" if htf else "Primary Structure 15m - Unconfirmed HTF"
-        elif htf_source and htf_source != "none":
-            htf_str = f"{htf} (Source: {htf_source})" if htf else f"(Source: {htf_source})"
-        else:
-            htf_str = str(htf)
-        lines.append(f"📈 <b>HTF Context:</b> <code>{escape_html(htf_str)}</code>")
+    if is_btc:
+        ema_50 = meta.get("ema_50") if isinstance(meta, dict) else None
+        ema_200 = meta.get("ema_200") if isinstance(meta, dict) else None
+        ema_trend = meta.get("ema_trend") if isinstance(meta, dict) else None
+        if ema_trend is None and ema_50 is not None and ema_200 is not None:
+            ema_trend = "Bullish" if float(ema_50) > float(ema_200) else "Bearish"
+        rsi_raw = meta.get("rsi_14") if isinstance(meta, dict) else None
+        adx_raw = meta.get("adx_14") if isinstance(meta, dict) else None
+        momentum_bits = [
+            f"EMA Trend: {ema_trend or 'N/A'}",
+            f"RSI: {float(rsi_raw):.0f}" if rsi_raw is not None else "RSI: N/A",
+            f"ADX: {float(adx_raw):.0f}" if adx_raw is not None else "ADX: N/A",
+        ]
+        lines.append(
+            f"📈 <b>Momentum Indicators:</b> <code>{escape_html(' | '.join(momentum_bits))}</code>"
+        )
+        if ema_50 is not None and ema_200 is not None:
+            lines.append(
+                f"📐 <b>EMA 50 / 200:</b> <code>{float(ema_50):.2f} / {float(ema_200):.2f}</code>"
+            )
+        provenance = meta.get("heuristic_provenance") if isinstance(meta, dict) else None
+        if provenance:
+            lines.append(
+                f"🧪 <b>Provenance:</b> <code>{escape_html(provenance)}</code> "
+                "<i>(empirical 1H heuristic, not paper-validated intraday)</i>"
+            )
     else:
-        lines.append("📈 <b>HTF Context:</b> <code>N/A</code>")
+        htf_source = meta.get("htf_trend_source") if isinstance(meta, dict) else None
+        htf = ctx.htf_context or getattr(signal, "htf_trend", None) or (meta.get("htf_trend") if isinstance(meta, dict) else None)
+        if htf or htf_source:
+            if htf_source == "structure_primary":
+                htf_str = f"{htf} (Source: Primary Structure 15m - Unconfirmed HTF)" if htf else "Primary Structure 15m - Unconfirmed HTF"
+            elif htf_source and htf_source != "none":
+                htf_str = f"{htf} (Source: {htf_source})" if htf else f"(Source: {htf_source})"
+            else:
+                htf_str = str(htf)
+            lines.append(f"📈 <b>HTF Context:</b> <code>{escape_html(htf_str)}</code>")
+        else:
+            lines.append("📈 <b>HTF Context:</b> <code>N/A</code>")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━")
 
@@ -262,19 +336,31 @@ def format_signal(
                 f"{raw_str}{min_str}. No executable paper trade."
             )
 
-    # 6. Pillar Breakdown
+    # 6. Pillar Breakdown — momentum pillars for BTC, SMC pillars for XAU.
     bd = getattr(signal, "score_breakdown", None)
     if bd is not None:
         lines.append("━━━━━━━━━━━━━━━━━━━━")
-        lines.append("🏛 <b>Pillar Breakdown:</b>")
-        struct = f"{bd.structure_score:.0f}/35" if getattr(bd, "structure_score", None) is not None else "N/A"
-        liq = f"{bd.liquidity_score:.0f}/40" if getattr(bd, "liquidity_score", None) is not None else "N/A"
-        pa = f"{bd.price_action_score:.0f}/25" if getattr(bd, "price_action_score", None) is not None else "N/A"
-        lines.append(f"  • Structure &amp; MTF: <code>{struct}</code>")
-        lines.append(f"  • Liquidity &amp; POIs: <code>{liq}</code>")
-        lines.append(f"  • Price Action: <code>{pa}</code>")
-        if getattr(bd, "indicators_score", 0) > 0:
-            lines.append(f"  • Indicators (Aux): <code>{bd.indicators_score:.0f}/25</code>")
+        if is_btc:
+            lines.append("🏛 <b>Momentum Pillars:</b>")
+
+            def _pts(key: str, cap: float) -> str:
+                value = meta.get(key) if isinstance(meta, dict) else None
+                return f"{float(value):.0f}/{cap:.0f}" if value is not None else "N/A"
+
+            lines.append(f"  • EMA Trend: <code>{_pts('trend_score', 40.0)}</code>")
+            lines.append(f"  • RSI Momentum: <code>{_pts('rsi_score', 35.0)}</code>")
+            lines.append(f"  • Price Location: <code>{_pts('location_score', 25.0)}</code>")
+            lines.append(f"  • Total Momentum Score: <code>{score_str}</code>")
+        else:
+            lines.append("🏛 <b>Pillar Breakdown:</b>")
+            struct = f"{bd.structure_score:.0f}/35" if getattr(bd, "structure_score", None) is not None else "N/A"
+            liq = f"{bd.liquidity_score:.0f}/40" if getattr(bd, "liquidity_score", None) is not None else "N/A"
+            pa = f"{bd.price_action_score:.0f}/25" if getattr(bd, "price_action_score", None) is not None else "N/A"
+            lines.append(f"  • Structure &amp; MTF: <code>{struct}</code>")
+            lines.append(f"  • Liquidity &amp; POIs: <code>{liq}</code>")
+            lines.append(f"  • Price Action: <code>{pa}</code>")
+            if getattr(bd, "indicators_score", 0) > 0:
+                lines.append(f"  • Indicators (Aux): <code>{bd.indicators_score:.0f}/25</code>")
 
     # 7. Key Confluence Catalysts
     reasons = getattr(signal, "reasons", None) or ctx.catalysts or []
@@ -364,17 +450,25 @@ class TelegramMessageFormatter:
         return format_signal(sig)
 
     @classmethod
-    def format_auto_execution(cls, trade: PaperTradeResponse) -> str:
+    def format_auto_execution(
+        cls, trade: PaperTradeResponse, target_account: Optional[str] = None
+    ) -> str:
         """Immediate notification for a scanner-created paper position.
 
         Values are read from the executed trade / live config — no hardcoded
-        price, lot, or R:R literals.
+        price, lot, or R:R literals. ``target_account`` comes from the signal's
+        metadata ("MAIN"/"CENT"); the symbol routing rule is the fallback.
         """
         direction = getattr(trade.direction, "value", trade.direction)
         symbol = str(trade.symbol)
         lot = float(trade.initial_position_size)
         rr = f"{float(settings.MIN_RR_TP1):g}"
+        account = str(target_account or target_account_for_symbol(symbol)).upper()
+        is_btc = normalize_symbol(symbol) == "BTC/USD"
+        icon = "🟢" if direction == "BUY" else "🔴"
+        strategy_tag = "BTC MOMENTUM" if is_btc else "SMC CONFLUENCE"
         return (
+            f"{icon} {strategy_tag} {escape_html(direction)} | Account: <code>{escape_html(account)}</code>\n"
             f"🤖 AUTO-EXECUTED: {escape_html(direction)} {escape_html(symbol)} "
             f"@ {cls.format_price(trade.entry_price, symbol)} "
             f"| SL: {cls.format_price(trade.stop_loss, symbol)} "

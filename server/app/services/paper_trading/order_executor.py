@@ -18,6 +18,7 @@ from app.services.market_data.freshness import filter_closed_candles
 from app.services.paper_trading.account_manager import VirtualAccountManager
 from app.services.paper_trading.broker_spec import BrokerSpec, get_broker_spec
 from app.services.signals import RiskEngine, RiskLevels, SignalGenerator
+from app.services.signals.crypto_risk_engine import CryptoVolatilityRiskEngine
 from app.services.signals import lifecycle as signal_lifecycle
 
 
@@ -181,7 +182,7 @@ class PaperOrderExecutor:
         signal_generator: Optional[SignalGenerator] = None,
     ):
         self.account_manager = account_manager or VirtualAccountManager()
-        self.risk_engine = risk_engine or RiskEngine()
+        self.risk_engine = risk_engine or CryptoVolatilityRiskEngine()
         self.signal_generator = signal_generator or SignalGenerator()
         self.broker_spec: BrokerSpec = get_broker_spec(settings.BROKER_SPEC)
 
@@ -576,6 +577,10 @@ class PaperOrderExecutor:
             f"distance={distance:.5f} fixed_lot={lots:.4f} "
             f"risk=${actual_risk_usd:.2f} ({actual_risk_pct:.2f}%) "
             f"budget=${profile.risk_budget_usd:.2f} rr={settings.MIN_RR_TP1}"
+        )
+        logger.info(
+            f"Calculated Risk: ${actual_risk_usd:,.2f} "
+            f"({actual_risk_pct:.2f}% of Balance) using {lots:.2f} lots"
         )
 
         # 6. Margin Validation

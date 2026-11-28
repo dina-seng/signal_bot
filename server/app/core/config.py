@@ -26,8 +26,11 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./trade.db"
 
-    # Market Instruments and Timeframes (Strict Single-Asset: ACTIVE_SYMBOLS)
-    SUPPORTED_SYMBOLS: List[str] = list(ACTIVE_SYMBOLS)
+    # Market Instruments and Timeframes.
+    # ACTIVE_SYMBOLS drives the scanner (XAU/USD on MAIN). BTC/USD is also a
+    # supported instrument for the 1H momentum workspace (executed on CENT),
+    # but is deliberately not auto-scanned yet.
+    SUPPORTED_SYMBOLS: List[str] = list(ACTIVE_SYMBOLS) + ["BTC/USD"]
     SUPPORTED_TIMEFRAMES: List[str] = ["15m", "1h", "4h"]
 
     # Market Structure & Analysis Strategy Config (Milestones 2-6)
@@ -245,6 +248,19 @@ class Settings(BaseSettings):
 
     # Paper Trading mode
     PAPER_TRADING: bool = True
+
+    # MetaTrader 5 Broker Accounts (MAIN and CENT demo accounts).
+    # Credentials are read from server/.env and are REQUIRED for execution;
+    # server/scripts/test_mt5_connection.py validates them before any MT5 call.
+    # Empty defaults keep imports (tests, CLI tools) working on machines where
+    # MT5 is not configured, instead of hard-failing at `Settings()` init.
+    MT5_LOGIN_MAIN: str = Field(default="", description="MT5 account number for the MAIN account")
+    MT5_PASSWORD_MAIN: str = Field(default="", description="MT5 password for the MAIN account")
+    MT5_SERVER_MAIN: str = Field(default="", description="MT5 broker server name for the MAIN account")
+    MT5_LOGIN_CENT: str = Field(default="", description="MT5 account number for the CENT account")
+    MT5_PASSWORD_CENT: str = Field(default="", description="MT5 password for the CENT account")
+    MT5_SERVER_CENT: str = Field(default="", description="MT5 broker server name for the CENT account")
+    LIVE_TRADING_ENABLED: bool = False
 
     # Milestone 2 — Telegram authentication & multi-user broadcasting
     AUTH_ENABLED: bool = True

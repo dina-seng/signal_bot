@@ -158,6 +158,8 @@ export interface BackendAccount {
 export interface BackendPosition {
   id: number;
   account_id: number;
+  /** Executing account label from the backend (MAIN / CENT). */
+  account_name?: 'MAIN' | 'CENT' | null;
   signal_id?: number | null;
   symbol: string;
   direction: 'BUY' | 'SELL';
@@ -218,6 +220,9 @@ export interface BackendSignal {
   status: string;
   trend_alignment?: string | null;
   htf_trend?: string | null;
+  strategy_name?: string | null;
+  /** target_account, EMA50/200, RSI14, ADX14, heuristic provenance. */
+  metadata?: Record<string, any> | null;
   is_broadcasted?: boolean;
   timestamp: string;
 }
@@ -267,6 +272,7 @@ export interface BackendTelegramStatus {
 export interface BackendPaperTrade {
   id: number;
   account_id: number;
+  account_name?: 'MAIN' | 'CENT' | null;
   signal_id?: number | null;
   symbol: string;
   direction: 'BUY' | 'SELL';
@@ -532,26 +538,30 @@ export const quantViewApi = {
   },
 
   // 3. Atomic paper snapshot (account + positions from one live price tick)
-  async getSummary(): Promise<{ data: PaperSummary; durationMs: number }> {
+  async getSummary(accountType?: 'MAIN' | 'CENT'): Promise<{ data: PaperSummary; durationMs: number }> {
     console.log('[API] GET /api/v1/paper/summary');
-    return fetchWithTiming<PaperSummary>(`${API_BASE}/paper/summary`);
+    const accountParam = accountType ? `?account_type=${encodeURIComponent(accountType)}` : '';
+    return fetchWithTiming<PaperSummary>(`${API_BASE}/paper/summary${accountParam}`);
   },
 
   // 3a. Single dashboard snapshot — replaces the 10-endpoint poll waterfall.
   async getDashboardSnapshot(
     symbol = 'XAU/USD',
     timeframe = '15m',
+    accountType?: 'MAIN' | 'CENT',
   ): Promise<{ data: DashboardSnapshot; durationMs: number }> {
     console.log('[API] GET /api/v1/dashboard/snapshot');
-    const url = `${API_BASE}/dashboard/snapshot?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`;
+    const accountParam = accountType ? `&account_type=${encodeURIComponent(accountType)}` : '';
+    const url = `${API_BASE}/dashboard/snapshot?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}${accountParam}`;
     const timeout = Number(import.meta.env.VITE_SNAPSHOT_TIMEOUT_MS || 10000);
     return fetchWithTiming<DashboardSnapshot>(url, {}, timeout);
   },
 
   // 3b. Paper Trading Open Positions
-  async getPositions(): Promise<{ data: BackendPosition[]; durationMs: number }> {
+  async getPositions(accountType?: 'MAIN' | 'CENT'): Promise<{ data: BackendPosition[]; durationMs: number }> {
     console.log('[API] GET /api/v1/paper/positions?status=OPEN');
-    return fetchWithTiming<BackendPosition[]>(`${API_BASE}/paper/positions?status=OPEN`);
+    const accountParam = accountType ? `&account_type=${encodeURIComponent(accountType)}` : '';
+    return fetchWithTiming<BackendPosition[]>(`${API_BASE}/paper/positions?status=OPEN${accountParam}`);
   },
 
   // 4. Close Position
@@ -573,16 +583,26 @@ export const quantViewApi = {
   },
 
   // 6. Paper Trading Trade History (Closed Positions)
-  async getTradeHistory(limit = 50): Promise<{ data: BackendPaperTrade[]; durationMs: number }> {
+  async getTradeHistory(limit = 50, accountType?: 'MAIN' | 'CENT'): Promise<{ data: BackendPaperTrade[]; durationMs: number }> {
     console.log(`[API] GET /api/v1/paper/trades?limit=${limit}`);
-    return fetchWithTiming<BackendPaperTrade[]>(`${API_BASE}/paper/trades?limit=${limit}`);
+    const accountParam = accountType ? `&account_type=${encodeURIComponent(accountType)}` : '';
+    return fetchWithTiming<BackendPaperTrade[]>(`${API_BASE}/paper/trades?limit=${limit}${accountParam}`);
   },
 
   // 8. Signals (Default unified=true for multi-timeframe consensus)
   // Balance and risk % are resolved server-side from the active paper account.
-  async getSignals(limit = 20, unified = true): Promise<{ data: BackendSignal[]; durationMs: number }> {
+  async getSignals(
+    limit = 20,
+    unified = true,
+    symbol?: string,
+    accountType?: 'MAIN' | 'CENT',
+  ): Promise<{ data: BackendSignal[]; durationMs: number }> {
     console.log(`[API] GET /api/v1/signals?limit=${limit}&unified=${unified}`);
-    return fetchWithTiming<BackendSignal[]>(`${API_BASE}/signals?limit=${limit}&unified=${unified}`);
+    const symbolParam = symbol ? `&symbol=${encodeURIComponent(symbol)}` : '';
+    const accountParam = accountType ? `&account_type=${encodeURIComponent(accountType)}` : '';
+    return fetchWithTiming<BackendSignal[]>(
+      `${API_BASE}/signals?limit=${limit}&unified=${unified}${symbolParam}${accountParam}`
+    );
   },
 
   // 9. Scan All Markets On-Demand (Unified Multi-Timeframe)
@@ -671,7 +691,7 @@ export const quantViewApi = {
       // Fallback to candle close if quote provider is offline or busy
     }
 
-    const symbols = ['XAU/USD'];
+    const symbols = ['XAU/USD', 'BTC/USD'];
     const prices: Record<string, number> = {};
 
     await Promise.allSettled(

@@ -121,7 +121,8 @@ class TestStrategyArchitecture:
         manager = StrategyManager()
         names = [s.name for s in manager.strategies]
         assert "Strategy A (SMC Sniper)" in names
-        assert len(names) == 1
+        assert "BTC Momentum" in names
+        assert len(names) == 2
 
     def test_strategy_manager_runs_registered_strategy(self):
         manager = StrategyManager()
@@ -140,9 +141,10 @@ class TestStrategyArchitecture:
             structure=structure,
         )
 
-        assert len(results) == 1
+        assert len(results) == 2
         strat_names = [r.strategy_name for r in results]
         assert "Strategy A (SMC Sniper)" in strat_names
+        assert "BTC Momentum" in strat_names
 
 
     def test_telegram_formatter_multi_strategy_confluence_and_conflict(self):

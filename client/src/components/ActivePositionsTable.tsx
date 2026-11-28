@@ -105,6 +105,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
             <thead className="bg-[#0c0d12] text-slate-500 uppercase text-[10px] tracking-wider border-b border-[#1d2230]">
               <tr>
                 <th scope="col" className="py-2.5 px-3.5">Pair</th>
+                <th scope="col" className="py-2.5 px-3.5">Account</th>
                 <th scope="col" className="py-2.5 px-3.5">Side</th>
                 <th scope="col" className="hidden md:table-cell py-2.5 px-3.5 text-right">Size</th>
                 <th scope="col" className="py-2.5 px-3.5 text-right">Entry</th>
@@ -118,7 +119,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
             <tbody className="divide-y divide-[#1d2230]/60 text-[11px]">
               {positions.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-slate-500 italic text-xs">
+                  <td colSpan={10} className="py-8 text-center text-slate-500 italic text-xs">
                     No active positions open in database. (Execute signals or trigger scanner to open paper orders)
                   </td>
                 </tr>
@@ -137,6 +138,20 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
                         <span className="text-slate-100">{pos.symbol}</span>
                         <span className="text-[10px] text-slate-500 font-normal ml-1.5">
                           {pos.openTime}
+                        </span>
+                      </td>
+
+                      {/* Executing account */}
+                      <td className="py-2.5 px-3.5 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                            (pos.account || 'MAIN') === 'CENT'
+                              ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                              : 'bg-violet-500/10 text-violet-300 border-violet-500/30'
+                          }`}
+                          title={`Executing Exness account: ${pos.account || 'MAIN'}`}
+                        >
+                          {pos.account || 'MAIN'}
                         </span>
                       </td>
 
@@ -220,6 +235,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
             <thead className="bg-[#0c0d12] text-slate-500 uppercase text-[10px] tracking-wider border-b border-[#1d2230]">
               <tr>
                 <th scope="col" className="py-2.5 px-3.5">ID / Pair</th>
+                <th scope="col" className="py-2.5 px-3.5">Account</th>
                 <th scope="col" className="py-2.5 px-3.5">Side</th>
                 <th scope="col" className="hidden md:table-cell py-2.5 px-3.5 text-right">Size</th>
                 <th scope="col" className="py-2.5 px-3.5 text-right">Entry</th>
@@ -233,7 +249,7 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
             <tbody className="divide-y divide-[#1d2230]/60 text-[11px]">
               {closedTrades.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-slate-500 italic text-xs">
+                  <td colSpan={10} className="py-8 text-center text-slate-500 italic text-xs">
                     No closed trades recorded in backend history yet.
                   </td>
                 </tr>
@@ -252,6 +268,20 @@ export const ActivePositionsTable: React.FC<ActivePositionsTableProps> = ({
                       <td className="py-2.5 px-3.5 whitespace-nowrap">
                         <span className="text-slate-500 text-[10px] mr-1.5">#{trade.id}</span>
                         <span className="font-bold text-slate-200">{trade.symbol}</span>
+                      </td>
+
+                      {/* Executing account */}
+                      <td className="py-2.5 px-3.5 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                            (trade.account || 'MAIN') === 'CENT'
+                              ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                              : 'bg-violet-500/10 text-violet-300 border-violet-500/30'
+                          }`}
+                          title={`Executing Exness account: ${trade.account || 'MAIN'}`}
+                        >
+                          {trade.account || 'MAIN'}
+                        </span>
                       </td>
 
                       {/* Side */}

@@ -24,6 +24,7 @@ class InstrumentSpec:
     contract_size: float
     digits: int
     description: str
+    session_hours: Optional[str] = None  # None = no fixed session (e.g. 24/7 crypto)
 
 
 # Centralized, data-driven instrument specifications table
@@ -78,6 +79,23 @@ INSTRUMENT_SPECS: Dict[str, InstrumentSpec] = {
         digits=2,
         description="Nasdaq 100 Index",
     ),
+    "BTC/USD": InstrumentSpec(
+        canonical="BTC/USD",
+        base_currency="BTC",
+        quote_currency="USD",
+        pip_size=1.0,
+        point_value_per_lot=1.0,  # 1 BTC * $1.00 per $1 price move
+        contract_size=1.0,
+        digits=2,
+        description="Bitcoin / US Dollar",
+        session_hours=None,  # 24/7 market
+    ),
+}
+
+# Exchange-native tickers that map onto a canonical instrument. Binance quotes
+# BTC against USDT; the app normalises that feed to its BTC/USD spec.
+EXCHANGE_ALIASES: Dict[str, str] = {
+    "BTCUSDT": "BTC/USD",
 }
 
 
@@ -95,7 +113,11 @@ def normalize_symbol(symbol: str) -> str:
     # 1. Direct exact canonical match
     if clean in INSTRUMENT_SPECS:
         return clean
-        
+
+    # 1b. Exchange-native ticker aliases (e.g. BTCUSDT -> BTC/USD)
+    if clean in EXCHANGE_ALIASES:
+        return EXCHANGE_ALIASES[clean]
+
     # 2. Match standard alias without slash (e.g. XAUUSD -> XAU/USD)
     for canonical in INSTRUMENT_SPECS:
         if canonical.replace("/", "") == clean.replace("/", ""):
@@ -125,11 +147,20 @@ def get_provider_symbol(symbol: str, provider: str, yahoo_gold_symbol: Optional[
             "USD/JPY": "USD/JPY",
             "GBP/USD": "GBP/USD",
             "US100": "US100",
+            "BTC/USD": "BTC/USD",
         }
         if canonical not in twelve_map:
             raise UnknownSymbolError(f"TwelveData mapping not found for symbol '{canonical}'")
         return twelve_map[canonical]
         
+    elif provider_key == "binance":
+        binance_map = {
+            "BTC/USD": "BTCUSDT",
+        }
+        if canonical not in binance_map:
+            raise UnknownSymbolError(f"Binance mapping not found for symbol '{canonical}'")
+        return binance_map[canonical]
+
     elif provider_key == "mock":
         mock_map = {
             "XAU/USD": "MOCK_XAUUSD",
@@ -144,6 +175,25 @@ def get_provider_symbol(symbol: str, provider: str, yahoo_gold_symbol: Optional[
         
     else:
         raise UnknownSymbolError(f"Unknown provider '{provider}'")
+
+
+# Multi-account routing: BTC/USD is executed on the Exness CENT account;
+# every other instrument stays on the MAIN account.
+MAIN_ACCOUNT: str = "MAIN"
+CENT_ACCOUNT: str = "CENT"
+
+
+def target_account_for_symbol(symbol: str) -> str:
+    """Resolve the Exness-style account that executes ``symbol``.
+
+    Both canonical (``BTC/USD``) and exchange-native (``BTCUSDT``) spellings
+    route to CENT; XAU/USD and all other instruments route to MAIN.
+    """
+    try:
+        canonical = normalize_symbol(symbol)
+    except UnknownSymbolError:
+        canonical = str(symbol or "").strip().upper().replace("%2F", "/")
+    return CENT_ACCOUNT if canonical == "BTC/USD" else MAIN_ACCOUNT
 
 
 def format_price(price: Optional[float], symbol: str) -> str:

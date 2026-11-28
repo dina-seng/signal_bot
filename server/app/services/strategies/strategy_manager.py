@@ -12,6 +12,7 @@ from app.schemas.indicators import IndicatorAnalysisResponse
 from app.schemas.liquidity import AdvancedStructureAnalysisResponse
 from app.schemas.structure import MultiTimeframeStructureResponse
 from app.services.strategies.base import BaseStrategy, StrategyResult
+from app.services.strategies.btc_momentum_strategy import BTCMomentumStrategy
 
 
 class StrategyManager:
@@ -43,6 +44,7 @@ class StrategyManager:
             from app.services.strategies.smc_strategy import SMCStrategy
             self.strategies = [
                 SMCStrategy(),
+                BTCMomentumStrategy(),
             ]
 
 

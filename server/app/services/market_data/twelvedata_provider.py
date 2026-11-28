@@ -139,7 +139,7 @@ class TwelveDataProvider(BaseMarketDataProvider):
         "1d": "1day",
     }
 
-    SUPPORTED_SYMBOLS: List[str] = ["XAU/USD", "XAUUSD"]
+    SUPPORTED_SYMBOLS: List[str] = ["XAU/USD", "XAUUSD", "BTC/USD"]
 
     def __init__(
         self,
@@ -163,7 +163,7 @@ class TwelveDataProvider(BaseMarketDataProvider):
     def is_symbol_supported(self, symbol: str) -> bool:
         try:
             canonical = normalize_symbol(symbol)
-            return canonical in ("XAU/USD", "XAUUSD")
+            return canonical in ("XAU/USD", "XAUUSD", "BTC/USD")
         except UnknownSymbolError:
             return False
 
@@ -255,15 +255,15 @@ class TwelveDataProvider(BaseMarketDataProvider):
         Hard Rule: Only XAU/USD. Validates OHLC invariants and drops forming bars by timestamp.
         """
         canonical = normalize_symbol(symbol)
-        if canonical != "XAU/USD":
-            raise ValueError(f"TwelveDataProvider only supports 'XAU/USD'. Requested: '{symbol}'")
+        if canonical not in ("XAU/USD", "BTC/USD"):
+            raise ValueError(f"TwelveDataProvider only supports 'XAU/USD' and 'BTC/USD'. Requested: '{symbol}'")
 
         interval = self._map_timeframe(timeframe)
         url = f"{self.base_url}/time_series"
         fetch_limit = limit + 1 if drop_unclosed else limit
 
         params = {
-            "symbol": "XAU/USD",
+            "symbol": canonical,
             "interval": interval,
             "outputsize": min(fetch_limit, 5000),
             "timezone": "UTC",
