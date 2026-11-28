@@ -37,7 +37,12 @@ SERVER_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CACHE_PATH = SERVER_ROOT / "data" / "binance_ohlcv_cache.sqlite3"
 
 BINANCE_BASE_URL = "https://api.binance.com/api/v3/klines"
-BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+# Public spot ticker plus Binance's public data mirror. The mirror keeps quotes
+# alive on networks/regions where api.binance.com is geo-restricted (451).
+BINANCE_TICKER_URLS = (
+    "https://api.binance.com/api/v3/ticker/price",
+    "https://data-api.binance.vision/api/v3/ticker/price",
+)
 MAX_KLINES_PER_PAGE = 1000  # Binance hard cap
 INTERVAL_MAP = {"15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "1d": "1d"}
 DEFAULT_CACHE_TTL_SECONDS = 60.0
@@ -272,27 +277,33 @@ class BinancePublicProvider(BaseMarketDataProvider):
             close_client = True
 
         try:
-            try:
-                response = await client.get(
-                    BINANCE_TICKER_URL, params={"symbol": provider_symbol}
+            data: Optional[dict[str, Any]] = None
+            last_error: Optional[Exception] = None
+            for ticker_url in BINANCE_TICKER_URLS:
+                try:
+                    response = await client.get(
+                        ticker_url, params={"symbol": provider_symbol}
+                    )
+                    if response.status_code != 200:
+                        raise BinanceAPIError(
+                            f"HTTP {response.status_code}: {response.text[:300]}"
+                        )
+                    payload = response.json()
+                    if not isinstance(payload, dict):
+                        raise BinanceAPIError(
+                            f"payload is not an object: {str(payload)[:300]}"
+                        )
+                    data = payload
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Binance ticker %s unavailable: %s", ticker_url, exc
+                    )
+            if data is None:
+                raise BinanceAPIError(
+                    f"All Binance ticker endpoints failed for {provider_symbol}: {last_error}"
                 )
-            except httpx.HTTPError as exc:
-                raise BinanceAPIError(
-                    f"Binance ticker request failed: {type(exc).__name__}: {exc}"
-                ) from exc
-
-            if response.status_code != 200:
-                raise BinanceAPIError(
-                    f"Binance ticker HTTP {response.status_code}: {response.text[:500]}"
-                )
-            try:
-                data = response.json()
-            except Exception as exc:
-                raise BinanceAPIError(
-                    f"Binance ticker non-JSON response: {response.text[:500]}"
-                ) from exc
-            if not isinstance(data, dict):
-                raise BinanceAPIError(f"Binance ticker payload is not an object: {data}")
 
             echoed = str(data.get("symbol") or "").upper()
             if echoed and echoed != provider_symbol.upper():

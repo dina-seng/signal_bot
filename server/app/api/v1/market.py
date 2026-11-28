@@ -280,7 +280,7 @@ from app.services.market_data import filter_closed_candles
 
 
 @router.get("/{symbol:path}/candles", response_model=List[CandleResponse])
-def get_candles(
+async def get_candles(
     symbol: str,
     timeframe: str = Query("15m", description="Timeframe e.g. 15m, 1h, 4h"),
     limit: int = Query(200, ge=1, le=5000, description="Max candles to retrieve"),
@@ -289,7 +289,13 @@ def get_candles(
     end_time: Optional[datetime] = Query(None, description="End timestamp UTC"),
     db: Session = Depends(get_db),
 ):
-    """Retrieve historical stored candles for a symbol and timeframe."""
+    """Retrieve candles for a symbol and timeframe.
+
+    XAU/USD is served from the ingested database. BTC/USD is routed through
+    ``get_provider_for_symbol`` (BinancePublicProvider) when the database has no
+    rows for it, so the chart endpoint works even on deployments that were never
+    seeded with BTC candles.
+    """
     # Normalize symbol
     clean_symbol = symbol.replace("%2F", "/").strip()
     if clean_symbol not in settings.SUPPORTED_SYMBOLS:
@@ -298,6 +304,11 @@ def get_candles(
             if s.replace("/", "") == clean_symbol.replace("/", ""):
                 clean_symbol = s
                 break
+
+    try:
+        canonical = normalize_symbol(clean_symbol)
+    except UnknownSymbolError:
+        canonical = clean_symbol
 
     stmt = select(Candle).where(
         Candle.symbol == clean_symbol,
@@ -318,6 +329,44 @@ def get_candles(
         records = filter_closed_candles(records, timeframe=timeframe)
         if len(records) > limit:
             records = records[-limit:]
+
+    # Binance-routed fallback: no BTC rows exist in most deployments, so ask the
+    # symbol's provider (BinancePublicProvider) for its cached/live OHLCV series.
+    if not records and canonical == "BTC/USD":
+        from app.services.market_data import get_provider_for_symbol
+        from app.services.market_data.cache import CachedMarketDataProvider
+
+        routed = CachedMarketDataProvider(get_provider_for_symbol(canonical))
+        try:
+            upstream = await routed.fetch_candles(
+                canonical,
+                timeframe.lower(),
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+            )
+        except Exception as exc:
+            logger.warning("Binance candle fallback failed for %s: %s", canonical, exc)
+            upstream = []
+
+        created_at = datetime.now(timezone.utc)
+        records = [
+            CandleResponse(
+                id=-(idx + 1),  # provider candles have no DB primary key
+                symbol=c.symbol,
+                timeframe=c.timeframe,
+                timestamp=c.timestamp,
+                open=c.open,
+                high=c.high,
+                low=c.low,
+                close=c.close,
+                volume=c.volume,
+                source=c.source or "binance",
+                is_closed=c.is_closed,
+                created_at=created_at,
+            )
+            for idx, c in enumerate(upstream)
+        ][-limit:]
 
     return records
 

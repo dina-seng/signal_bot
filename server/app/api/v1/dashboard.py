@@ -145,7 +145,7 @@ async def get_dashboard_snapshot(
         key = ("candles", symbol, timeframe, candle_limit)
 
         async def compute():
-            rows = market_api.get_candles(
+            rows = await market_api.get_candles(
                 symbol, timeframe, candle_limit, True, None, None, db
             )
             return [CandleResponse.model_validate(row) for row in rows]

@@ -152,6 +152,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const isFetchingQuoteRef = useRef(false);
   const isFetchingPositionsRef = useRef(false);
   const isLoadingHistoryRef = useRef(false);
+  // Generation token: a slow XAU response must never overwrite BTC candles
+  // after the workspace has been toggled (and vice versa).
+  const historyGenerationRef = useRef(0);
   const [isRealData, setIsRealData] = useState<boolean>(false);
   const [hoveredCandle, setHoveredCandle] = useState<{
     open: number;
@@ -180,12 +183,19 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     setTimeframeOverride(null);
   }, [selectedSymbol, timeframe]);
 
-  // A workspace switch must never keep the previous instrument's candles or
-  // quote on screen while the new request is in flight.
+  // A workspace switch must never keep the previous instrument's candles,
+  // quote, O/H/L/C readout or XAU SMC overlay on screen while the new request
+  // is in flight. Invalidate any in-flight response as well.
   useEffect(() => {
+    historyGenerationRef.current += 1;
+    isLoadingHistoryRef.current = false;
     setCandles([]);
     setIsRealData(false);
     setFastQuote(null);
+    setIndicatorData(null);
+    setLiquidityZones(null);
+    setStructureData(null);
+    setHoveredCandle(null);
     liveQuoteRef.current = null;
   }, [selectedSymbol, activeTimeframe]);
 
@@ -386,7 +396,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   // The snapshot's live_quote is only used to seed the forming bar immediately
   // after a history reload — never as a source for CLOSED candles.
   const loadChartData = useCallback(async () => {
-    if (isLoadingHistoryRef.current) return;
+    const generation = ++historyGenerationRef.current;
     isLoadingHistoryRef.current = true;
     try {
       let rawCandles: any[] = [];
@@ -406,17 +416,37 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         liqData = snapRes.data.liquidity;
         structData = snapRes.data.structure;
       } catch {
-        const [candlesRes, indRes, liqRes, structRes] = await Promise.allSettled([
-          quantViewApi.getCandles(selectedSymbol, activeTimeframe, 60),
+        // Snapshot unavailable; fall through to the direct endpoints below.
+      }
+
+      // The snapshot only carries DB candles. BTC/USD has no DB rows on most
+      // deployments, so fetch it from the Binance-routed /candles endpoint.
+      if (rawCandles.length === 0) {
+        try {
+          const res = await quantViewApi.getCandles(selectedSymbol, activeTimeframe, 60);
+          rawCandles = res.data || [];
+        } catch {
+          rawCandles = [];
+        }
+        const [indRes, liqRes, structRes] = await Promise.allSettled([
           quantViewApi.getIndicators(selectedSymbol, activeTimeframe),
           quantViewApi.getLiquidityZones(selectedSymbol, activeTimeframe),
           quantViewApi.getStructure(selectedSymbol, activeTimeframe),
         ]);
-        if (candlesRes.status === 'fulfilled') rawCandles = candlesRes.value.data || [];
         if (indRes.status === 'fulfilled') indData = indRes.value.data;
         if (liqRes.status === 'fulfilled') liqData = liqRes.value.data;
         if (structRes.status === 'fulfilled') structData = structRes.value.data;
       }
+
+      // BTC momentum does not use SMC support/resistance; never render the
+      // gold structure overlay on a BTC chart.
+      if (selectedSymbol === 'BTC/USD') {
+        liqData = null;
+        structData = null;
+      }
+
+      // Discard a response that belongs to a previous symbol/timeframe toggle.
+      if (generation !== historyGenerationRef.current) return;
 
       if (rawCandles.length > 0) {
 
@@ -496,7 +526,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     } catch (err) {
       console.warn('[TradingChart] Error loading candle data:', err);
     } finally {
-      isLoadingHistoryRef.current = false;
+      if (generation === historyGenerationRef.current) isLoadingHistoryRef.current = false;
     }
   }, [selectedSymbol, activeTimeframe, priceDecimals]);
 
@@ -582,14 +612,36 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     if (activeQuote.symbol && activeQuote.symbol !== selectedSymbol) return;
 
     setCandles((prevCandles) => {
-      if (prevCandles.length === 0) return prevCandles;
-
       const quotePrice = activeQuote.price;
       const quoteTimeSec = parseToUnixSeconds(
         activeQuote.timestamp || activeQuote.fetched_at || Date.now()
       );
-
       const windowSec = getTimeframeDurationSeconds(activeTimeframe);
+
+      // No cached history yet (common for BTC on first load): seed a single
+      // forming bar from the live quote so the O/H/L/C readout is never "--".
+      if (prevCandles.length === 0) {
+        const seeded: FormedCandle = {
+          time: (Math.floor(quoteTimeSec / windowSec) * windowSec) as UTCTimestamp,
+          open: quotePrice,
+          high: quotePrice,
+          low: quotePrice,
+          close: quotePrice,
+          volume: 0,
+          ema20: quotePrice,
+          ema50: quotePrice,
+        };
+        candleSeriesRef.current?.setData([{
+          time: seeded.time,
+          open: seeded.open,
+          high: seeded.high,
+          low: seeded.low,
+          close: seeded.close,
+        }]);
+        volumeSeriesRef.current?.setData([{ time: seeded.time, value: 0, color: 'rgba(0, 230, 118, 0.35)' }]);
+        return [seeded];
+      }
+
       const lastIndex = prevCandles.length - 1;
       const lastCandle = prevCandles[lastIndex];
 
@@ -765,6 +817,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     });
     srLinesRef.current = [];
 
+    // BTC momentum has no SMC structure: never draw gold SUPP/RES lines on it.
+    if (selectedSymbol === 'BTC/USD') return;
+
     if (showSR && liquidityZones?.sr_zones) {
       liquidityZones.sr_zones.slice(0, 4).forEach((zone) => {
         const isSupport = zone.zone_type === 'SUPPORT';
@@ -780,7 +835,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         srLinesRef.current.push(srLine);
       });
     }
-  }, [showSR, liquidityZones, candles]);
+  }, [showSR, liquidityZones, candles, selectedSymbol]);
 
   // 6. Toggle EMA Visibility
   useEffect(() => {
@@ -875,17 +930,19 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             <span>EMA 20/50</span>
           </button>
 
-          <button
-            onClick={() => setShowSR(!showSR)}
-            className={`min-h-[44px] md:min-h-0 px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer touch-manipulation ${
-              showSR
-                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
-                : 'bg-[#0a0b10] text-slate-500 border-[#1d2230]'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>S/R {liquidityZones?.sr_zones?.length ? `(${liquidityZones.sr_zones.length})` : ''}</span>
-          </button>
+          {selectedSymbol !== 'BTC/USD' && (
+            <button
+              onClick={() => setShowSR(!showSR)}
+              className={`min-h-[44px] md:min-h-0 px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer touch-manipulation ${
+                showSR
+                  ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                  : 'bg-[#0a0b10] text-slate-500 border-[#1d2230]'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-cyan-400" />
+              <span>S/R {liquidityZones?.sr_zones?.length ? `(${liquidityZones.sr_zones.length})` : ''}</span>
+            </button>
+          )}
 
           <button
             onClick={loadChartData}
@@ -947,8 +1004,8 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               </span>
             </div>
 
-            {/* Key Support & Resistance */}
-            {structureData && (
+            {/* Key Support & Resistance — XAU/USD SMC only */}
+            {structureData && selectedSymbol !== 'BTC/USD' && (
               <div className="hidden lg:flex items-center gap-3 text-slate-400">
                 {structureData.key_support && (
                   <span>
@@ -1065,7 +1122,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
               </span>
             </>
           )}
-          {showSR && (
+          {showSR && selectedSymbol !== 'BTC/USD' && (
             <span className="flex items-center gap-1 text-pink-400">
               <span className="w-2 h-0.5 border-t border-dotted border-pink-400 inline-block" /> S/R Levels
             </span>
