@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.logging import logger
 from app.models.paper import VirtualAccount, PaperTrade, AccountTransaction
@@ -149,7 +149,68 @@ class VirtualAccountManager:
                     db.rollback()
                     logger.error("Legacy default-account creation failed: %s", legacy_exc)
                     account = self._find_active_account(db)
+        if account is not None:
+            self._repair_empty_account(db, account)
         return account
+
+    def _repair_empty_account(self, db: Session, account: VirtualAccount) -> None:
+        """Normalise a legacy account persisted with a zero starting balance.
+
+        Older deployments sometimes stored a `virtual_accounts` row with
+        initial_balance/balance/equity all 0. That made `/paper/summary` render
+        BAL/EQ $0.00 and made `total_return_pct` divide by zero. Only a zero
+        balance with no trades is repaired, so real losses are never erased.
+        """
+        try:
+            trade_count = db.scalar(
+                select(func.count(PaperTrade.id)).where(
+                    PaperTrade.account_id == account.id
+                )
+            ) or 0
+        except Exception as exc:
+            db.rollback()
+            logger.warning(
+                "Could not inspect trades for virtual account #%s: %s", account.id, exc
+            )
+            return
+
+        starting = float(account.initial_balance or 0.0)
+        balance = float(account.balance or 0.0)
+        seeded_balance = False
+        repaired = False
+
+        if starting <= 0:
+            starting = 10000.0
+            account.initial_balance = starting
+            repaired = True
+
+        if balance <= 0 and trade_count == 0:
+            account.balance = starting
+            account.equity = starting
+            account.margin_used = 0.0
+            account.free_margin = starting
+            seeded_balance = True
+            repaired = True
+
+        if repaired:
+            account.updated_at = datetime.now(timezone.utc)
+            if seeded_balance:
+                db.add(
+                    AccountTransaction(
+                        account_id=account.id,
+                        transaction_type="DEPOSIT",
+                        amount=starting,
+                        balance_after=starting,
+                        description="Recovered empty paper account to $10,000",
+                    )
+                )
+            db.commit()
+            db.refresh(account)
+            logger.info(
+                "Recovered paper account #%s to a $%.2f starting balance.",
+                account.id,
+                starting,
+            )
 
     def get_active_account(self, db: Session) -> Optional[VirtualAccount]:
         """Return the active paper account, or None. Never creates one implicitly."""
@@ -291,7 +352,12 @@ class VirtualAccountManager:
 
         floating_pnl = round(sum(t.unrealized_pnl for t in open_trades), 2)
         realized_pnl = round(sum(t.realized_pnl for t in closed_trades) + sum(t.realized_pnl for t in open_trades), 2)
-        total_return_pct = round(((account.equity - account.initial_balance) / account.initial_balance) * 100.0, 2)
+        starting_balance = float(account.initial_balance or 0.0)
+        total_return_pct = (
+            round(((account.equity - starting_balance) / starting_balance) * 100.0, 2)
+            if starting_balance > 0
+            else 0.0
+        )
         margin_level = round((account.equity / account.margin_used) * 100.0, 2) if account.margin_used > 0 else 999.99
 
         return VirtualAccountResponse(

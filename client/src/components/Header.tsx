@@ -23,6 +23,9 @@ interface HeaderProps {
   riskStatus: RiskStatus;
   pollSecondsRemaining: number;
   isApiConnected?: boolean;
+  /** False until the first real paper-account snapshot arrives ΓÇö prevents the
+   *  mock $0.00 placeholders from being presented as live balances. */
+  isAccountReady?: boolean;
   isRefreshing?: boolean;
   lastUpdatedSecondsAgo?: number;
   apiEndpoint?: string;
@@ -37,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   riskStatus,
   pollSecondsRemaining,
   isApiConnected = false,
+  isAccountReady = false,
   isRefreshing = false,
   lastUpdatedSecondsAgo = 0,
   apiEndpoint = 'http://localhost:8000',
@@ -79,6 +83,18 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   const pnlMeta = formatPnL(account.unrealizedPnl);
+
+  // Never advertise placeholder zeros as account data. Show "--" with an
+  // explicit "Awaiting sync" tooltip until the backend snapshot is applied.
+  const balanceDisplay = isAccountReady ? formatCurrency(account.balance) : '--';
+  const equityDisplay = isAccountReady ? formatCurrency(account.equity) : '--';
+  const pnlDisplay = isAccountReady ? pnlMeta.formatted : '--';
+  const pnlPercentDisplay = isAccountReady && Number.isFinite(account.unrealizedPnlPercent)
+    ? `(${account.unrealizedPnlPercent >= 0 ? '+' : ''}${account.unrealizedPnlPercent.toFixed(2)}%)`
+    : '';
+  const accountPlaceholder = !isAccountReady
+    ? 'Awaiting paper-account snapshot from FastAPI backend ΓÇö values are not yet available.'
+    : undefined;
 
   // Status computation for unified pill
   const isAllGood = isApiConnected && !riskStatus.isBlackout;
@@ -279,36 +295,47 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Account Balance */}
-          <div className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
+          <div
+            className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0"
+            title={accountPlaceholder}
+          >
             <span className="hidden md:inline text-[9px] sm:text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">BAL:</span>
-            <span className="text-xs md:text-sm font-semibold text-white">
-              {formatCurrency(account.balance)}
+            <span className={`text-xs md:text-sm font-semibold ${isAccountReady ? 'text-white' : 'text-zinc-500'}`}>
+              {balanceDisplay}
             </span>
           </div>
 
           {/* Equity */}
-          <div className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0">
+          <div
+            className="flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-white/5 backdrop-blur-md border border-white/10 font-mono transition-all hover:bg-white/[0.08] shrink-0"
+            title={accountPlaceholder}
+          >
             <span className="hidden md:inline text-[9px] sm:text-[10px] uppercase text-zinc-400 font-semibold tracking-wider">EQ:</span>
-            <span className="text-xs md:text-sm font-semibold text-white">
-              {formatCurrency(account.equity)}
+            <span className={`text-xs md:text-sm font-semibold ${isAccountReady ? 'text-white' : 'text-zinc-500'}`}>
+              {equityDisplay}
             </span>
           </div>
 
           {/* Floating P&L */}
           <div
             className={`flex items-baseline gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl backdrop-blur-md border font-mono transition-all shrink-0 ${
-              pnlMeta.isPositive
+              !isAccountReady
+                ? 'bg-zinc-800/60 border-white/10 text-zinc-500'
+                : pnlMeta.isPositive
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/15'
                 : 'bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500/15'
             }`}
+            title={accountPlaceholder}
           >
             <span className="hidden md:inline text-[9px] sm:text-[10px] uppercase opacity-75 font-semibold tracking-wider">P&amp;L:</span>
             <span className="text-xs md:text-sm font-semibold">
-              {pnlMeta.formatted}
+              {pnlDisplay}
             </span>
-            <span className="text-[9px] sm:text-[10px] opacity-80 hidden lg:inline">
-              ({pnlMeta.isPositive ? '+' : ''}{account.unrealizedPnlPercent.toFixed(2)}%)
-            </span>
+            {pnlPercentDisplay && (
+              <span className="text-[9px] sm:text-[10px] opacity-80 hidden lg:inline">
+                {pnlPercentDisplay}
+              </span>
+            )}
           </div>
 
           {/* Polling Countdown Indicator */}

@@ -85,6 +85,7 @@ def get_signals(
         for r in scan_res.results:
             sig = r.signal
             if not sig:
+                is_btc = str(r.symbol or "").strip().upper() == "BTC/USD"
                 sig = SignalResponse(
                     symbol=r.symbol,
                     timeframe=r.timeframe,
@@ -100,6 +101,12 @@ def get_signals(
                     status=SignalStatus.ACTIVE if r.is_actionable else SignalStatus.EXPIRED,
                     trend_alignment=r.trend_alignment,
                     htf_trend=r.htf_trend,
+                    strategy_name="BTC Momentum" if is_btc else None,
+                    metadata={
+                        "target_account": target_account_for_symbol(r.symbol),
+                        "htf_trend": r.htf_trend,
+                        "wait_reason": r.reasons[0] if r.reasons else None,
+                    },
                     is_broadcasted=False,
                     timestamp=scan_res.timestamp,
                 )

@@ -35,7 +35,8 @@ export function formatPnL(pnl: number | null | undefined): {
   colorClass: string;
 } {
   if (pnl === null || pnl === undefined || isNaN(pnl)) {
-    return { formatted: '$0.00', isPositive: true, colorClass: 'text-zinc-400' };
+    // Missing/NaN is not the same as a zero P&L ΓÇö never display a fake amount.
+    return { formatted: '--', isPositive: true, colorClass: 'text-zinc-400' };
   }
   const isPositive = pnl >= 0;
   const absFormatted = Math.abs(pnl).toLocaleString('en-US', {
@@ -73,7 +74,7 @@ export function formatTime(utcTimestamp: string | Date | null | undefined): stri
  * Format currency as $X,XXX.XX
  */
 export function formatCurrency(amount: number | null | undefined): string {
-  if (amount === null || amount === undefined || isNaN(amount)) return '$0.00';
+  if (amount === null || amount === undefined || isNaN(amount)) return '--';
   return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 

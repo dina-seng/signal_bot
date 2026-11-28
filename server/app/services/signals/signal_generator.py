@@ -469,7 +469,12 @@ class SignalGenerator:
         else:
             htf_trend = "RANGING"
 
-        # 4. Evaluate candidate setups across 15m, 30m, and 1H
+        # 4. Evaluate candidate setups across 15m, 30m, and 1H.
+        # BTC/USD is a 1H/4H momentum workspace: its strategy is explicitly
+        # ineligible on 15m/30m, so evaluating those bars would let the SMC
+        # strategy win the LTF candidate sort and replace the momentum signal.
+        is_btc_momentum = clean_sym == "BTC/USD"
+
         sig_15m = (
             self.evaluate_market_signal(
                 candles_primary=c15m,
@@ -482,7 +487,7 @@ class SignalGenerator:
                 risk_percent=risk_percent,
                 htf_trend=htf_trend,
             )
-            if c15m and len(c15m) >= 20
+            if not is_btc_momentum and c15m and len(c15m) >= 20
             else None
         )
 
@@ -498,7 +503,7 @@ class SignalGenerator:
                 risk_percent=risk_percent,
                 htf_trend=htf_trend,
             )
-            if c30m and len(c30m) >= 20
+            if not is_btc_momentum and c30m and len(c30m) >= 20
             else None
         )
 

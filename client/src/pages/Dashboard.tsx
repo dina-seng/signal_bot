@@ -60,21 +60,42 @@ const accountForSymbol = (symbol: PairSymbol): AccountType =>
 const chartTimeframeForSymbol = (symbol: PairSymbol): string =>
   symbol === 'BTC/USD' ? '1h' : '15m';
 
+/** Coerce backend values (JSON numbers *or* numeric strings) to finite numbers. */
+const toFiniteNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
 /** Map backend signal metadata into the momentum fields used by the UI cards. */
 const momentumFields = (sig: BackendSignal, symbol: PairSymbol) => {
-  const meta = sig.metadata || {};
-  const ema50 = typeof meta.ema_50 === 'number' ? meta.ema_50 : undefined;
-  const ema200 = typeof meta.ema_200 === 'number' ? meta.ema_200 : undefined;
+  const meta: Record<string, any> = sig.metadata || {};
+  // Accept both snake_case (backend) and camelCase (older payloads / direct
+  // fields) so a valid 0 is never dropped and numeric strings still render.
+  const pick = (...keys: string[]): number | undefined => {
+    for (const key of keys) {
+      const value = toFiniteNumber(meta[key] ?? (sig as any)[key]);
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  };
+  const ema50 = pick('ema_50', 'ema50');
+  const ema200 = pick('ema_200', 'ema200');
+  const rsi14 = pick('rsi_14', 'rsi14');
+  const adx14 = pick('adx_14', 'adx14');
   return {
     targetAccount: (meta.target_account || accountForSymbol(symbol)) as AccountType,
-    strategyName: sig.strategy_name || undefined,
+    strategyName: sig.strategy_name || meta.strategy_name || undefined,
     emaTrend: meta.ema_trend || (ema50 !== undefined && ema200 !== undefined
       ? (ema50 > ema200 ? 'Bullish' : 'Bearish')
       : undefined),
     ema50,
     ema200,
-    rsi14: typeof meta.rsi_14 === 'number' ? meta.rsi_14 : undefined,
-    adx14: typeof meta.adx_14 === 'number' ? meta.adx_14 : undefined,
+    rsi14,
+    adx14,
     heuristicProvenance: meta.heuristic_provenance,
   };
 };
@@ -109,6 +130,9 @@ export const Dashboard: React.FC = () => {
   const [isSyncingCalendar, setIsSyncingCalendar] = useState<boolean>(false);
   const [isTriggeringScanner, setIsTriggeringScanner] = useState<boolean>(false);
   const [isApiConnected, setIsApiConnected] = useState<boolean>(false);
+  // True only after a real paper-account snapshot has been applied. Keeps the
+  // header from presenting the mock zeros as if they were live balances.
+  const [hasAccountData, setHasAccountData] = useState<boolean>(false);
   const [apiResponseTimeMs, setApiResponseTimeMs] = useState<number>(24);
   const [lastUpdatedSecondsAgo, setLastUpdatedSecondsAgo] = useState<number>(0);
   const [apiErrorMessage, setApiErrorMessage] = useState<string | null>(null);
@@ -176,6 +200,7 @@ export const Dashboard: React.FC = () => {
         latencyMs: sumRes.durationMs,
         currency: bAcc.currency,
       });
+      setHasAccountData(true);
 
       const mapBackendPositions = (rows: BackendPosition[]): Position[] =>
         rows.map((p) => {
@@ -522,8 +547,10 @@ export const Dashboard: React.FC = () => {
 
   // Single-endpoint poll: the backend assembles every section in parallel and
   // returns one response, so the UI no longer pays for ~10 serialised GETs.
-  const fetchSnapshot = useCallback(async () => {
-    if (isFetchingSnapshotRef.current) return;
+  const fetchSnapshot = useCallback(async (force: boolean = false) => {
+    // A manual Sync must always re-run even when a background poll is in
+    // flight; otherwise the button appears to work but never refreshes.
+    if (isFetchingSnapshotRef.current && !force) return;
     isFetchingSnapshotRef.current = true;
     try {
       const res = await quantViewApi.getDashboardSnapshot(
@@ -576,6 +603,7 @@ export const Dashboard: React.FC = () => {
           latencyMs: res.durationMs,
           currency: bAcc.currency,
         });
+        setHasAccountData(true);
       }
       if (Array.isArray(snap.positions)) {
         setPositions(snap.positions.map((p: BackendPosition) => {
@@ -766,7 +794,7 @@ export const Dashboard: React.FC = () => {
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await fetchSnapshot();
+      await fetchSnapshot(true);
       addToast('success', 'Terminal Synchronized', 'Fetched latest data from FastAPI backend.');
     } finally {
       setIsRefreshing(false);
@@ -1090,6 +1118,7 @@ export const Dashboard: React.FC = () => {
           riskStatus={riskStatus}
           pollSecondsRemaining={pollCountdown}
           isApiConnected={isApiConnected}
+          isAccountReady={isApiConnected && hasAccountData}
           isRefreshing={isRefreshing}
           lastUpdatedSecondsAgo={lastUpdatedSecondsAgo}
           apiEndpoint="http://localhost:8000"

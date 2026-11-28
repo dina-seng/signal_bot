@@ -24,6 +24,7 @@ from app.schemas.signal import (
 from app.schemas.structure import TrendDirection 
 from app.services.structure.ltf_confirmation import LTFConfirmationEngine
 from app.services.indicators import IndicatorService
+from app.services.indicators.adx_calculator import ADXCalculator
 from app.services.liquidity import LiquidityService
 from app.services.news import NewsFilterEngine
 from app.services.market_data import (
@@ -335,6 +336,7 @@ class ConfluenceEngine:
         risk_percent: float,
         htf_trend: Optional[str] = None,
         candles_15m: Optional[Sequence[Any]] = None,
+        adx_14: Optional[float] = None,
     ) -> SignalResponse:
         """Convert a ``StrategyResult`` into a ``SignalResponse``.
 
@@ -354,6 +356,24 @@ class ConfluenceEngine:
         result_meta["target_account"] = (
             str(result_meta.get("target_account") or target_account_for_symbol(symbol)).upper()
         )
+
+        # Always expose the live indicator snapshot, even when a strategy returns
+        # WAIT with sparse metadata (SMC WAIT carries only pillar scores). The
+        # dashboard Momentum Matrix reads these keys directly; omitting them
+        # renders "--" / "N/A" for EMA50/EMA200/RSI14/ADX14.
+        ema_snapshot = getattr(indicator_analysis, "ema", None)
+        rsi_snapshot = getattr(indicator_analysis, "rsi", None)
+        live_snapshot: Dict[str, Any] = {
+            "ema_50": getattr(ema_snapshot, "ema_mid", None),
+            "ema_200": getattr(ema_snapshot, "ema_slow", None),
+            "ema_trend": getattr(ema_snapshot, "ema_trend", None),
+            "rsi_14": getattr(rsi_snapshot, "rsi_value", None),
+            "current_price": getattr(indicator_analysis, "current_price", None),
+            "adx_14": adx_14,
+        }
+        for key, value in live_snapshot.items():
+            if value is not None and result_meta.get(key) is None:
+                result_meta[key] = value
 
         # 7. RISK ENGINE ACTOR — entry-only hand-off.
         # The Signal Engine has found `resolved_entry`; everything below is
@@ -573,12 +593,24 @@ class ConfluenceEngine:
             backtest_mode=backtest_mode,
         )
 
-        # Return the best (highest-scoring actionable) signal, or the first WAIT
+        # Return the best (highest-scoring actionable) signal, or a WAIT signal
+        # from the strategy that owns this instrument. Without the ownership
+        # preference, BTC/USD's WAIT response was SMC's (first strategy) and
+        # carried no EMA/RSI/ADX metadata, so the Momentum Matrix showed "--".
         actionable = [s for s in signals if s.direction in (SignalDirection.BUY, SignalDirection.SELL)]
         if actionable:
             actionable.sort(key=lambda s: s.setup_score, reverse=True)
             return actionable[0]
-        return signals[0]
+
+        preferred_strategy = (
+            "BTC Momentum"
+            if str(symbol or "").strip().upper() == "BTC/USD"
+            else "Strategy A (SMC Sniper)"
+        )
+        for signal in signals:
+            if signal.strategy_name == preferred_strategy:
+                return signal
+        return max(signals, key=lambda s: s.setup_score or 0.0)
 
     # ------------------------------------------------------------------
     # Public API: multi-signal (new)
@@ -668,6 +700,18 @@ class ConfluenceEngine:
         # 15m candles are the Risk Engine's sole source for structural SL.
         risk_candles = c_15m if c_15m else (c_prim if timeframe == "15m" else None)
 
+        # One ADX(14) snapshot for every signal built from this candle set. The
+        # indicator service does not expose ADX, but the Momentum Matrix renders
+        # it, so compute it here and merge it into each response's metadata.
+        adx_14: Optional[float] = None
+        if c_prim and len(c_prim) >= 28:
+            try:
+                adx_14 = ADXCalculator().calculate_adx_from_candles(c_prim, period=14)
+            except Exception as exc:
+                logger.debug(
+                    "ADX snapshot unavailable for %s [%s]: %s", symbol, timeframe, exc
+                )
+
         # Build a SignalResponse per strategy result
         signals: List[SignalResponse] = []
         for result in strategy_results:
@@ -681,6 +725,7 @@ class ConfluenceEngine:
                 risk_percent=risk_percent,
                 htf_trend=current_htf_trend,
                 candles_15m=risk_candles,
+                adx_14=adx_14,
             )
             signals.append(sig)
 

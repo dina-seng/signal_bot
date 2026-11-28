@@ -48,18 +48,28 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   const isMomentum = signal.symbol === 'BTC/USD';
   const accountLabel = signal.targetAccount || (isMomentum ? 'CENT' : 'MAIN');
 
+  // A score of 0 is valid data (WAIT / no fresh trigger), not a missing value.
+  // Only null / undefined / NaN should ever render as "--".
+  const rawScore = signal.confluenceScore;
+  const hasScore = rawScore !== null && rawScore !== undefined && !Number.isNaN(Number(rawScore));
+  const scoreValue = hasScore ? Math.round(Number(rawScore)) : null;
+
   // Resolved live price
   const displayPrice = livePrice || signal.currentPrice || signal.entryPrice;
 
   // AI confidence fallback (e.g., 88-94% for high setups, 45-65% for scanning)
-  const aiConfidence = signal.aiConfidence ?? (hasSetup && signal.confluenceScore > 0 ? Math.min(96, Math.max(78, signal.confluenceScore + 2)) : (signal.confluenceScore > 0 ? signal.confluenceScore : null));
+  const aiConfidence = signal.aiConfidence ?? (scoreValue !== null
+    ? hasSetup
+      ? Math.min(96, Math.max(78, scoreValue + 2))
+      : scoreValue
+    : null);
 
   // Institutional thesis is strategy-specific: momentum for BTC, SMC for XAU.
   const aiReasoningText =
     signal.aiReasoning ||
     (isMomentum
       ? hasSetup
-        ? `Fresh ${signal.emaTrend || 'EMA'} momentum crossover confirmed. RSI(14) ${signal.rsi14?.toFixed(1) ?? 'N/A'} with ADX(14) ${signal.adx14?.toFixed(1) ?? 'N/A'} regime support; EMA50/EMA200 alignment clears the ${signal.confluenceScore}/100 heuristic confluence floor.`
+        ? `Fresh ${signal.emaTrend || 'EMA'} momentum crossover confirmed. RSI(14) ${signal.rsi14?.toFixed(1) ?? '--'} with ADX(14) ${signal.adx14?.toFixed(1) ?? '--'} regime support; EMA50/EMA200 alignment clears the ${scoreValue ?? 0}/100 heuristic confluence floor.`
         : `Awaiting a fresh RSI/EMA momentum crossover on BTC/USD with ADX(14) regime confirmation.`
       : hasSetup
         ? isBuy
@@ -266,14 +276,14 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                 </span>
                 <span
                   className={`font-semibold whitespace-nowrap shrink-0 ${
-                    signal.confluenceScore >= 85
+                    scoreValue !== null && scoreValue >= 85
                       ? 'text-emerald-400'
-                      : minScore !== undefined && signal.confluenceScore >= minScore
+                      : scoreValue !== null && minScore !== undefined && scoreValue >= minScore
                       ? 'text-indigo-300'
                       : 'text-zinc-400'
                   }`}
                 >
-                  {signal.confluenceScore > 0 ? `${signal.confluenceScore} / 100` : '-- / 100'}
+                  {scoreValue !== null ? `${scoreValue} / 100` : '-- / 100'}
                 </span>
               </div>
 
@@ -286,7 +296,7 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                         : 'bg-rose-500'
                       : 'bg-zinc-500'
                   }`}
-                  style={{ width: `${signal.confluenceScore > 0 ? Math.max(8, signal.confluenceScore) : 0}%` }}
+                  style={{ width: `${scoreValue !== null ? Math.max(8, scoreValue) : 0}%` }}
                 />
               </div>
 
@@ -309,15 +319,15 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
                   <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-zinc-400">
                     <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
                       <span>EMA Trend:</span>
-                      <span className="text-zinc-200 font-semibold">{signal.emaTrend || 'N/A'}</span>
+                      <span className="text-zinc-200 font-semibold">{signal.emaTrend || '--'}</span>
                     </div>
                     <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
                       <span>RSI:</span>
-                      <span className="text-zinc-200 font-semibold">{signal.rsi14?.toFixed(1) ?? 'N/A'}</span>
+                      <span className="text-zinc-200 font-semibold">{signal.rsi14?.toFixed(1) ?? '--'}</span>
                     </div>
                     <div className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/60 px-2.5 py-1 border border-white/[0.04] whitespace-nowrap">
                       <span>ADX:</span>
-                      <span className="text-zinc-200 font-semibold">{signal.adx14?.toFixed(1) ?? 'N/A'}</span>
+                      <span className="text-zinc-200 font-semibold">{signal.adx14?.toFixed(1) ?? '--'}</span>
                     </div>
                   </div>
                 </>

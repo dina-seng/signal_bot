@@ -175,6 +175,7 @@ class BTCMomentumStrategy(BaseStrategy):
         symbol: str,
         timeframe: str,
         indicators: Optional[IndicatorAnalysisResponse] = None,
+        score: float = 0.0,
         buy_score: float = 0.0,
         sell_score: float = 0.0,
         trend_score: float = 0.0,
@@ -182,7 +183,12 @@ class BTCMomentumStrategy(BaseStrategy):
         location_score: float = 0.0,
         adx: Optional[float] = None,
     ) -> StrategyResult:
-        """Uniform WAIT result carrying a valid breakdown and metadata."""
+        """Uniform WAIT result carrying a valid breakdown and metadata.
+
+        ``score`` is the confirmation readiness score (0-100) computed from the
+        same EMA/RSI/location pillars used for actionable setups. It is reported
+        even on WAIT so the dashboard never has to render a blank "-- / 100".
+        """
         current_price = getattr(indicators, "current_price", None) if indicators else None
         rsi_value = (
             getattr(getattr(indicators, "rsi", None), "rsi_value", None)
@@ -193,7 +199,7 @@ class BTCMomentumStrategy(BaseStrategy):
         return StrategyResult(
             strategy_name=self.name,
             direction=SignalDirection.WAIT,
-            score=0.0,
+            score=float(score),
             reasons=reasons,
             metadata={
                 "symbol": symbol,
@@ -203,6 +209,7 @@ class BTCMomentumStrategy(BaseStrategy):
                 "sell_score": round(sell_score, 1),
                 "ema_50": getattr(ema, "ema_mid", None),
                 "ema_200": getattr(ema, "ema_slow", None),
+                "ema_trend": getattr(ema, "ema_trend", None),
                 "rsi_14": rsi_value,
                 "current_price": current_price,
                 "adx_14": adx,
@@ -217,7 +224,7 @@ class BTCMomentumStrategy(BaseStrategy):
                 "filters_applied": list(FILTERS_APPLIED),
             },
             score_breakdown=self._breakdown(
-                0.0, trend_score, rsi_score, location_score, is_qualified=False
+                float(score), trend_score, rsi_score, location_score, is_qualified=False
             ),
         )
 
@@ -354,6 +361,25 @@ class BTCMomentumStrategy(BaseStrategy):
         rsi_14 = float(rsi_14)
         current_price = float(current_price)
 
+        # ----- Confirmation pillars (computed before any gate) -----
+        # The same EMA/RSI/location pillars that score an actionable setup are
+        # computed up-front so every WAIT branch reports a real readiness score
+        # instead of 0.0. Without this the Momentum Matrix renders "-- / 100".
+        buy_trend = TREND_POINTS if ema_50 > ema_200 else 0.0
+        buy_rsi = RSI_POINTS if rsi_14 > 55.0 else 0.0
+        buy_location = LOCATION_POINTS if current_price > ema_50 else 0.0
+        buy_score = buy_trend + buy_rsi + buy_location
+
+        sell_trend = TREND_POINTS if ema_50 < ema_200 else 0.0
+        sell_rsi = RSI_POINTS if rsi_14 < 45.0 else 0.0
+        sell_location = LOCATION_POINTS if current_price < ema_50 else 0.0
+        sell_score = sell_trend + sell_rsi + sell_location
+
+        best_score = max(buy_score, sell_score)
+        best_trend = buy_trend if buy_score >= sell_score else sell_trend
+        best_rsi = buy_rsi if buy_score >= sell_score else sell_rsi
+        best_location = buy_location if buy_score >= sell_score else sell_location
+
         # ----- ADX regime gate (heuristic engineering choice) -----
         # A caller may supply a causally precomputed ADX(14) via kwargs (used by
         # the parameter sweep); otherwise compute it from the closed candles.
@@ -366,11 +392,15 @@ class BTCMomentumStrategy(BaseStrategy):
             return self._wait_result(
                 ["INSUFFICIENT_INDICATOR_DATA: ADX(14) unavailable (need >= 28 candles)."],
                 symbol=symbol, timeframe=timeframe, indicators=indicators,
+                score=best_score, buy_score=buy_score, sell_score=sell_score,
+                trend_score=best_trend, rsi_score=best_rsi, location_score=best_location,
             )
         if adx_14 < self.adx_threshold:
             return self._wait_result(
                 [f"REGIME_FILTER: ADX below {self.adx_threshold:g}, ranging market."],
                 symbol=symbol, timeframe=timeframe, indicators=indicators, adx=adx_14,
+                score=best_score, buy_score=buy_score, sell_score=sell_score,
+                trend_score=best_trend, rsi_score=best_rsi, location_score=best_location,
             )
 
         # ----- Fresh-event detection (state alone is never a trigger) -----
@@ -388,6 +418,8 @@ class BTCMomentumStrategy(BaseStrategy):
                     "are required for fresh-trigger detection."
                 ],
                 symbol=symbol, timeframe=timeframe, indicators=indicators, adx=adx_14,
+                score=best_score, buy_score=buy_score, sell_score=sell_score,
+                trend_score=best_trend, rsi_score=best_rsi, location_score=best_location,
             )
 
         rsi_cross_up = prev_rsi <= RSI_BUY_LEVEL and rsi_14 > RSI_BUY_LEVEL
@@ -400,21 +432,10 @@ class BTCMomentumStrategy(BaseStrategy):
             return self._wait_result(
                 ["NO_FRESH_TRIGGER: no RSI or EMA crossover on the latest closed bar."],
                 symbol=symbol, timeframe=timeframe, indicators=indicators, adx=adx_14,
+                score=best_score, buy_score=buy_score, sell_score=sell_score,
+                trend_score=best_trend, rsi_score=best_rsi, location_score=best_location,
             )
 
-        # ----- BUY pillars (confirmations only) -----
-        buy_trend = TREND_POINTS if ema_50 > ema_200 else 0.0
-        buy_rsi = RSI_POINTS if rsi_14 > 55.0 else 0.0
-        buy_location = LOCATION_POINTS if current_price > ema_50 else 0.0
-        buy_score = buy_trend + buy_rsi + buy_location
-
-        # ----- SELL pillars -----
-        sell_trend = TREND_POINTS if ema_50 < ema_200 else 0.0
-        sell_rsi = RSI_POINTS if rsi_14 < 45.0 else 0.0
-        sell_location = LOCATION_POINTS if current_price < ema_50 else 0.0
-        sell_score = sell_trend + sell_rsi + sell_location
-
-        best_score = max(buy_score, sell_score)
         is_qualified = best_score >= self._min_score_threshold
         buy_trigger_label = (
             "RSI crossed above 55" if rsi_cross_up else "EMA50 crossed above EMA200"
@@ -460,11 +481,12 @@ class BTCMomentumStrategy(BaseStrategy):
                 symbol=symbol,
                 timeframe=timeframe,
                 indicators=indicators,
+                score=best_score,
                 buy_score=buy_score,
                 sell_score=sell_score,
-                trend_score=buy_trend if buy_score >= sell_score else sell_trend,
-                rsi_score=buy_rsi if buy_score >= sell_score else sell_rsi,
-                location_score=buy_location if buy_score >= sell_score else sell_location,
+                trend_score=best_trend,
+                rsi_score=best_rsi,
+                location_score=best_location,
                 adx=adx_14,
             )
 

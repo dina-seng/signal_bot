@@ -48,6 +48,46 @@ from app.services.market_data.symbols import target_account_for_symbol
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
+async def _ensure_symbol_history(symbol: str) -> None:
+    """Backfill provider-only instruments before DB-backed analytics run.
+
+    The unified scanner reads closed candles from the database only. BTC/USD has
+    no ingested rows on most deployments (its chart is served live from Binance),
+    so the momentum card would otherwise render an empty WAIT signal with no
+    EMA/RSI/ADX metadata. The ingestion service's freshness gate makes this a
+    no-op once the latest bar for each timeframe is already stored.
+    """
+    if str(symbol or "").strip().upper() != "BTC/USD":
+        return
+
+    # Imported lazily so the dashboard module stays importable in environments
+    # where the market-data package is not configured.
+    from app.core.database import SessionLocal
+    from app.services.market_data import get_provider_for_symbol
+    from app.services.market_data.ingestion import IngestionService
+
+    provider = get_provider_for_symbol(symbol)
+    # Use a dedicated session: this coroutine can interleave with the other
+    # snapshot sections, and a SQLAlchemy Session is not safe to share across
+    # concurrent coroutines.
+    with SessionLocal() as ingest_db:
+        ingestion = IngestionService(provider, ingest_db)
+        for timeframe, limit in (("15m", 320), ("1h", 320), ("4h", 220)):
+            try:
+                await ingestion.sync_symbol_timeframe(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    limit=limit,
+                )
+            except Exception as exc:  # never fail the whole snapshot
+                logger.warning(
+                    "History backfill failed for %s [%s]: %s",
+                    symbol,
+                    timeframe,
+                    exc,
+                )
+
+
 async def _section(
     name: str,
     factory: Callable[[], Awaitable[Any]],
@@ -135,6 +175,10 @@ async def get_dashboard_snapshot(
     """Return quote, candles, analytics, trading state and status in ONE call."""
     timings: Dict[str, float] = {}
 
+    # Persist provider-only instruments (BTC/USD) before the DB-backed
+    # analytics and scanner sections read candles.
+    await _ensure_symbol_history(symbol)
+
     async def quote_section():
         return await market_api._resolve_quote(symbol, provider, db=db)
 
@@ -209,15 +253,33 @@ async def get_dashboard_snapshot(
     async def paper_section():
         # Atomic snapshot: account, equity, P&L and the position ledger are all
         # derived from the SAME live tick, exactly as GET /paper/summary does.
-        return paper_api.get_paper_summary(None, db, paper_service)
+        # Keyword arguments are mandatory here: `account_type` sits between
+        # `account_id` and `db` in the endpoint signature, so a positional call
+        # silently bound `db` to `account_type` and raised TypeError (the
+        # section then returned None, leaving the header stuck at $0.00).
+        return paper_api.get_paper_summary(
+            account_id=None,
+            account_type=account_type,
+            db=db,
+            service=paper_service,
+        )
 
     async def trades_section():
         return paper_api.get_trade_history(
-            None, settings.DASHBOARD_TRADE_HISTORY_LIMIT, None, db, paper_service
+            symbol=None,
+            limit=settings.DASHBOARD_TRADE_HISTORY_LIMIT,
+            account_id=None,
+            account_type=account_type,
+            db=db,
+            service=paper_service,
         )
 
     async def performance_section():
-        return paper_api.get_portfolio_performance(None, db, paper_service)
+        return paper_api.get_portfolio_performance(
+            account_id=None,
+            db=db,
+            service=paper_service,
+        )
 
     async def signals_section():
         key = ("signals", symbol, timeframe)
