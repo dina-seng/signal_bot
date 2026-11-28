@@ -139,13 +139,18 @@ async def _resolve_quote(
             detail=f"Unknown market symbol: '{symbol}'. Must be one of {list(INSTRUMENT_SPECS.keys())}.",
         )
 
-    # BTC/USD is sourced from Binance (single BTC provider); XAU/USD stays on
-    # Twelve Data. The injected provider remains Twelve Data for gold.
+    # One routing decision for every symbol: BTC/USD -> BinancePublicProvider,
+    # XAU/USD -> TwelveDataProvider. The provider injected by the API dependency
+    # is the cached Twelve Data provider and remains authoritative for gold so
+    # callers/tests that inject it keep working.
     from app.services.market_data import get_provider_for_symbol
     from app.services.market_data.cache import CachedMarketDataProvider
 
+    routed_provider = get_provider_for_symbol(canonical_symbol)
     if canonical_symbol == "BTC/USD":
-        provider = CachedMarketDataProvider(get_provider_for_symbol(canonical_symbol))
+        provider = CachedMarketDataProvider(routed_provider)
+    elif provider is None:
+        provider = routed_provider
 
     provider_name = getattr(provider, "name", None) or provider.__class__.__name__.lower().replace("provider", "")
     cache_key = (provider_name, canonical_symbol)

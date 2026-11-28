@@ -1,0 +1,1 @@
+{"account_id": 1, "amount": 9650.78, "balance_before": 349.22, "mode": "paper", "reason": "Set paper account to exactly 10000 USD for testing", "resulting_balance": 10000.0, "resulting_equity": 10000.0, "timestamp": "2026-11-28T09:38:53.133156+00:00"}

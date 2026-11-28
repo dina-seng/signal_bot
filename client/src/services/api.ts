@@ -680,29 +680,35 @@ export const quantViewApi = {
     }
   },
 
-  // 18. Fetch latest market prices for active pairs (Real-time quote with candle fallback)
+  // 18. Fetch latest market prices for every active pair. Each instrument keeps
+  // its own quote and candle timeframe: BTC/USD -> 1h (Binance), XAU/USD -> 15m.
   async getLatestPrices(): Promise<Record<string, number>> {
-    try {
-      const quoteRes = await this.getQuote('XAU/USD');
-      if (quoteRes.data && typeof quoteRes.data.price === 'number' && quoteRes.data.price > 0) {
-        return { 'XAU/USD': quoteRes.data.price };
-      }
-    } catch {
-      // Fallback to candle close if quote provider is offline or busy
-    }
-
-    const symbols = ['XAU/USD', 'BTC/USD'];
     const prices: Record<string, number> = {};
 
     await Promise.allSettled(
-      symbols.map(async (sym) => {
+      (['XAU/USD', 'BTC/USD'] as const).map(async (sym) => {
         try {
-          const res = await this.getCandles(sym, '15m', 1);
+          const quoteRes = await this.getQuote(sym);
+          if (
+            quoteRes.data &&
+            (!quoteRes.data.symbol || quoteRes.data.symbol === sym) &&
+            typeof quoteRes.data.price === 'number' &&
+            quoteRes.data.price > 0
+          ) {
+            prices[sym] = quoteRes.data.price;
+            return;
+          }
+        } catch {
+          // Fall back to the last closed candle for this instrument.
+        }
+        try {
+          const timeframe = sym === 'BTC/USD' ? '1h' : '15m';
+          const res = await this.getCandles(sym, timeframe, 1);
           if (res.data && res.data.length > 0) {
             prices[sym] = res.data[res.data.length - 1].close;
           }
         } catch {
-          // Keep empty if failed
+          // Keep empty if the provider is offline for this symbol.
         }
       })
     );

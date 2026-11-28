@@ -56,6 +56,10 @@ const SUPPORTED_PAIRS: PairSymbol[] = ['XAU/USD', 'BTC/USD'];
 const accountForSymbol = (symbol: PairSymbol): AccountType =>
   symbol === 'BTC/USD' ? 'CENT' : 'MAIN';
 
+/** Chart/API timeframe is instrument-specific: BTC momentum runs on 1H, gold SMC on 15m. */
+const chartTimeframeForSymbol = (symbol: PairSymbol): string =>
+  symbol === 'BTC/USD' ? '1h' : '15m';
+
 /** Map backend signal metadata into the momentum fields used by the UI cards. */
 const momentumFields = (sig: BackendSignal, symbol: PairSymbol) => {
   const meta = sig.metadata || {};
@@ -289,7 +293,7 @@ export const Dashboard: React.FC = () => {
     isFetchingPricesRef.current = true;
     try {
       const quoteRes = await quantViewApi.getQuote(workspaceSymbol);
-      if (quoteRes.data) {
+      if (quoteRes.data && (!quoteRes.data.symbol || quoteRes.data.symbol === workspaceSymbol)) {
         const quote = {
           ...quoteRes.data,
           fetched_at: quoteRes.data.fetched_at || new Date().toISOString(),
@@ -522,7 +526,11 @@ export const Dashboard: React.FC = () => {
     if (isFetchingSnapshotRef.current) return;
     isFetchingSnapshotRef.current = true;
     try {
-      const res = await quantViewApi.getDashboardSnapshot(workspaceSymbol, '15m', accountType);
+      const res = await quantViewApi.getDashboardSnapshot(
+        workspaceSymbol,
+        chartTimeframeForSymbol(workspaceSymbol),
+        accountType
+      );
       const snap: DashboardSnapshot = res.data;
 
       if (snap.config) setAppConfig(snap.config);
@@ -1297,6 +1305,7 @@ export const Dashboard: React.FC = () => {
                 <GlassCard id="chart-section" className="order-2 w-full min-w-0" glowColor="cyan">
                   <TradingChart
                     selectedSymbol={selectedChartSymbol}
+                    timeframe={chartTimeframeForSymbol(selectedChartSymbol)}
                     onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
                     latestQuote={latestQuote}
                     signals={signals}
@@ -1369,6 +1378,7 @@ export const Dashboard: React.FC = () => {
               <GlassCard id="chart-section" className="order-2 w-full min-w-0" glowColor="cyan">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
+                  timeframe={chartTimeframeForSymbol(selectedChartSymbol)}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
                   latestQuote={latestQuote}
                   signals={signals}
@@ -1392,6 +1402,7 @@ export const Dashboard: React.FC = () => {
               <GlassCard id="chart-section" className="col-span-12 lg:col-span-5" glowColor="cyan">
                 <TradingChart
                   selectedSymbol={selectedChartSymbol}
+                  timeframe={chartTimeframeForSymbol(selectedChartSymbol)}
                   onSymbolChange={(sym) => setSelectedChartSymbol(sym)}
                   latestQuote={latestQuote}
                   signals={signals}

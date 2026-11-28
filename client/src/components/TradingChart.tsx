@@ -47,6 +47,8 @@ export interface FormedCandle {
 
 interface TradingChartProps {
   selectedSymbol: PairSymbol;
+  /** Workspace-enforced timeframe (BTC/USD -> 1h, XAU/USD -> 15m). */
+  timeframe?: string;
   onSymbolChange: (symbol: PairSymbol) => void;
   latestQuote?: BackendQuote | null;
   signals?: TradeSignal[];
@@ -131,12 +133,12 @@ function projectFormingQuote(bar: FormedCandle, quote: BackendQuote | null): For
 
 export const TradingChart: React.FC<TradingChartProps> = ({
   selectedSymbol,
+  timeframe,
   onSymbolChange,
   latestQuote,
   signals,
   activeSignal,
 }) => {
-  const [selectedTimeframe, setSelectedTimeframe] = useState<string>('15m');
   const [showEMA, setShowEMA] = useState<boolean>(true);
   const [showSR, setShowSR] = useState<boolean>(true);
   const [showFVG, setShowFVG] = useState<boolean>(true);
@@ -166,6 +168,26 @@ export const TradingChart: React.FC<TradingChartProps> = ({
   const [structureData, setStructureData] = useState<BackendStructureAnalysis | null>(null);
 
   const priceDecimals = 2;
+
+  // The workspace instrument dictates the chart/API timeframe. A manual
+  // override is permitted but is reset whenever the symbol (or the enforced
+  // timeframe prop) changes, so switching to BTC always requests 1h candles.
+  const instrumentTimeframe = timeframe ?? (selectedSymbol === 'BTC/USD' ? '1h' : '15m');
+  const [timeframeOverride, setTimeframeOverride] = useState<string | null>(null);
+  const activeTimeframe = timeframeOverride ?? instrumentTimeframe;
+
+  useEffect(() => {
+    setTimeframeOverride(null);
+  }, [selectedSymbol, timeframe]);
+
+  // A workspace switch must never keep the previous instrument's candles or
+  // quote on screen while the new request is in flight.
+  useEffect(() => {
+    setCandles([]);
+    setIsRealData(false);
+    setFastQuote(null);
+    liveQuoteRef.current = null;
+  }, [selectedSymbol, activeTimeframe]);
 
   // Open positions are the ONLY source for the trade overlay. A full exit
   // removes the row from the ledger and clears the overlay on the next sync.
@@ -374,7 +396,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
 
       try {
         // One cached round-trip instead of four parallel GETs.
-        const snapRes = await quantViewApi.getDashboardSnapshot(selectedSymbol, selectedTimeframe);
+        const snapRes = await quantViewApi.getDashboardSnapshot(selectedSymbol, activeTimeframe);
         rawCandles = snapRes.data.candles || [];
         const snapLiveQuote = snapRes.data.live_quote;
         if (snapLiveQuote && typeof snapLiveQuote.price === 'number' && snapLiveQuote.price > 0) {
@@ -385,10 +407,10 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         structData = snapRes.data.structure;
       } catch {
         const [candlesRes, indRes, liqRes, structRes] = await Promise.allSettled([
-          quantViewApi.getCandles(selectedSymbol, selectedTimeframe, 60),
-          quantViewApi.getIndicators(selectedSymbol, selectedTimeframe),
-          quantViewApi.getLiquidityZones(selectedSymbol, selectedTimeframe),
-          quantViewApi.getStructure(selectedSymbol, selectedTimeframe),
+          quantViewApi.getCandles(selectedSymbol, activeTimeframe, 60),
+          quantViewApi.getIndicators(selectedSymbol, activeTimeframe),
+          quantViewApi.getLiquidityZones(selectedSymbol, activeTimeframe),
+          quantViewApi.getStructure(selectedSymbol, activeTimeframe),
         ]);
         if (candlesRes.status === 'fulfilled') rawCandles = candlesRes.value.data || [];
         if (indRes.status === 'fulfilled') indData = indRes.value.data;
@@ -476,15 +498,16 @@ export const TradingChart: React.FC<TradingChartProps> = ({
     } finally {
       isLoadingHistoryRef.current = false;
     }
-  }, [selectedSymbol, selectedTimeframe, priceDecimals]);
+  }, [selectedSymbol, activeTimeframe, priceDecimals]);
 
   // Preferred forming source: this chart's 5s fast-quote tick, with the
   // dashboard's panel quote as a bootstrap fallback. NEVER snapshot candles.
   const activeQuote: BackendQuote | null = fastQuote ?? latestQuote ?? null;
 
   useEffect(() => {
+    if (!activeQuote || (activeQuote.symbol && activeQuote.symbol !== selectedSymbol)) return;
     liveQuoteRef.current = activeQuote;
-  }, [activeQuote]);
+  }, [activeQuote, selectedSymbol]);
 
   // Fast quote tick from the SAME endpoint/cache the left panel reads.
   const fetchFastQuote = useCallback(async () => {
@@ -566,7 +589,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         activeQuote.timestamp || activeQuote.fetched_at || Date.now()
       );
 
-      const windowSec = getTimeframeDurationSeconds(selectedTimeframe);
+      const windowSec = getTimeframeDurationSeconds(activeTimeframe);
       const lastIndex = prevCandles.length - 1;
       const lastCandle = prevCandles[lastIndex];
 
@@ -657,7 +680,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         return [...prevCandles, newCandle];
       }
     });
-  }, [activeQuote, selectedSymbol, selectedTimeframe, showEMA]);
+  }, [activeQuote, selectedSymbol, activeTimeframe, showEMA]);
 
   // 4. Trade overlay — bound exclusively to the open-position ledger.
   // Raw/historical signals are NEVER a source. Every tracked price line is
@@ -780,7 +803,7 @@ export const TradingChart: React.FC<TradingChartProps> = ({
         <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap min-w-0">
           {/* Symbol Select Buttons */}
           <div className="flex items-center p-0.5 rounded-lg bg-[#0a0b10] border border-[#1d2230] shrink-0">
-            {(['XAU/USD'] as PairSymbol[]).map((sym) => (
+            {(['XAU/USD', 'BTC/USD'] as PairSymbol[]).map((sym) => (
               <button
                 key={sym}
                 onClick={() => onSymbolChange(sym)}
@@ -800,9 +823,9 @@ export const TradingChart: React.FC<TradingChartProps> = ({
             {['1m', '5m', '15m', '1h', '4h', '1D'].map((tf) => (
               <button
                 key={tf}
-                onClick={() => setSelectedTimeframe(tf)}
+                onClick={() => setTimeframeOverride(tf)}
                 className={`min-h-[44px] sm:min-h-[32px] md:min-h-0 min-w-[38px] sm:min-w-0 snap-start px-2.5 py-1 text-xs font-semibold rounded flex items-center justify-center transition-colors cursor-pointer touch-manipulation shrink-0 ${
-                  selectedTimeframe === tf
+                  activeTimeframe === tf
                     ? 'bg-[#161922] text-cyan-400 border border-[#1d2230]'
                     : 'text-slate-500 hover:text-slate-300'
                 }`}
