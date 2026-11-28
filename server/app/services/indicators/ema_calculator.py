@@ -4,6 +4,44 @@ from typing import List, Optional, Sequence
 from app.schemas.indicators import EMASnapshot
 
 
+def classify_ema_trend(
+    price: Optional[float],
+    ema_fast: Optional[float],
+    ema_mid: Optional[float],
+    ema_slow: Optional[float] = None,
+) -> str:
+    """Classify the EMA trend from the fast (20) / mid (50) alignment and price.
+
+    Definitions (fast = EMA20, mid = EMA50, slow = EMA200):
+
+    * BULLISH_STACK: EMA20 > EMA50 AND price > EMA20
+    * BEARISH_STACK: EMA20 < EMA50 AND price < EMA20
+    * BULLISH_BIAS / BEARISH_BIAS: fast/mid agree but price has not confirmed
+    * NEUTRAL: any required input is missing or the EMAs are flat
+
+    EMA200 is deliberately *not* required for the STACK labels — requiring it
+    made a clearly aligned EMA20/EMA50 pair render as a mere BIAS and produced
+    contradictory labels when the chart (different timeframe) showed EMA20
+    above EMA50 while the card showed BEARISH_STACK.
+    """
+    if price is None or ema_fast is None or ema_mid is None:
+        return "NEUTRAL"
+    try:
+        price_f, fast_f, mid_f = float(price), float(ema_fast), float(ema_mid)
+    except (TypeError, ValueError):
+        return "NEUTRAL"
+
+    if fast_f > mid_f and price_f > fast_f:
+        return "BULLISH_STACK"
+    if fast_f < mid_f and price_f < fast_f:
+        return "BEARISH_STACK"
+    if fast_f > mid_f:
+        return "BULLISH_BIAS"
+    if fast_f < mid_f:
+        return "BEARISH_BIAS"
+    return "NEUTRAL"
+
+
 class EMACalculator:
     """Calculates Exponential Moving Averages (EMA 20/50/200), Trend Stacks, and Crosses."""
 
@@ -62,23 +100,10 @@ class EMACalculator:
         curr_mid = ema_mid[-1]
         curr_slow = ema_slow[-1]
 
-        # Determine Trend Stack
-        trend = "NEUTRAL"
-        if curr_fast is not None and curr_mid is not None:
-            if curr_slow is not None:
-                if latest_price > curr_fast > curr_mid > curr_slow:
-                    trend = "BULLISH_STACK"
-                elif latest_price < curr_fast < curr_mid < curr_slow:
-                    trend = "BEARISH_STACK"
-                elif latest_price > curr_slow:
-                    trend = "BULLISH_BIAS"
-                elif latest_price < curr_slow:
-                    trend = "BEARISH_BIAS"
-            else:
-                if latest_price > curr_fast > curr_mid:
-                    trend = "BULLISH_STACK"
-                elif latest_price < curr_fast < curr_mid:
-                    trend = "BEARISH_STACK"
+        # Determine Trend Stack using the explicit EMA20/EMA50/price rule.
+        # EMA200 is still reported via `price_vs_ema200`, but no longer gates
+        # the stack label (see classify_ema_trend).
+        trend = classify_ema_trend(latest_price, curr_fast, curr_mid, curr_slow)
 
         # Check Crosses (over last 5 bars)
         golden_cross = False

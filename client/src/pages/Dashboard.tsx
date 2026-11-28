@@ -97,6 +97,9 @@ const momentumFields = (sig: BackendSignal, symbol: PairSymbol) => {
     rsi14,
     adx14,
     heuristicProvenance: meta.heuristic_provenance,
+    // Backend-computed, bounded (60-95%) confidence. Never fall back to the
+    // old "confidence == score" heuristic, which produced a fake 100%.
+    aiConfidence: toFiniteNumber(meta.ai_confidence),
   };
 };
 

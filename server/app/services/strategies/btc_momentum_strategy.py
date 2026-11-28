@@ -9,10 +9,14 @@ considered on the bar where a FRESH momentum event occurs:
 EMA alignment and price location are confirmations that award score points;
 they are never standalone triggers. ADX(14) below 25 rejects ranging markets.
 
-Scoring (per direction, confirmation only):
-    - EMA 50 vs EMA 200 trend alignment: 40 pts
-    - RSI(14) momentum state:            35 pts
-    - Price vs EMA 50 location:          25 pts
+Scoring (per direction, graded 0-100 sub-scores):
+    - EMA stack / price location:        40% weight
+    - RSI(14) context vs trend:          30% weight
+    - ADX(14) trend strength:            30% weight
+
+The old boolean 40+35+25 pills always summed to exactly 100 on a perfectly
+aligned bar; ``confluence_scoring`` now grades each pillar so the displayed
+score is dynamic and 100/100 is structurally unreachable.
 
 This strategy never places SL/TP itself: the Signal Engine supplies the entry
 and the Risk Engine resolves levels, as with every other registered strategy.
@@ -52,6 +56,13 @@ from app.schemas.liquidity import AdvancedStructureAnalysisResponse
 from app.schemas.signal import ScoreBreakdown, SignalDirection
 from app.schemas.structure import MultiTimeframeStructureResponse
 from app.services.indicators.adx_calculator import ADXCalculator
+from app.services.signals.confluence_scoring import (
+    ADX_WEIGHT,
+    EMA_WEIGHT,
+    RSI_WEIGHT,
+    ConfluenceResult,
+    calculate_confluence,
+)
 from app.services.strategies.base import BaseStrategy, StrategyResult
 
 DEFAULT_MIN_SCORE: float = 65.0
@@ -182,6 +193,7 @@ class BTCMomentumStrategy(BaseStrategy):
         rsi_score: float = 0.0,
         location_score: float = 0.0,
         adx: Optional[float] = None,
+        confluence: Optional[ConfluenceResult] = None,
     ) -> StrategyResult:
         """Uniform WAIT result carrying a valid breakdown and metadata.
 
@@ -196,6 +208,18 @@ class BTCMomentumStrategy(BaseStrategy):
             else None
         )
         ema = getattr(indicators, "ema", None) if indicators else None
+        confluence_meta: dict[str, Any] = {}
+        if confluence is not None:
+            # On WAIT, `score` is the graded confluence of the dominant trend,
+            # not the binary readiness score, so the card never shows 100/100.
+            score = confluence.score
+            confluence_meta = {
+                "confluence_score": confluence.score,
+                "confluence_ema_score": confluence.ema_score,
+                "confluence_rsi_score": confluence.rsi_score,
+                "confluence_adx_score": confluence.adx_score,
+                "ema_trend": confluence.ema_trend,
+            }
         return StrategyResult(
             strategy_name=self.name,
             direction=SignalDirection.WAIT,
@@ -207,9 +231,10 @@ class BTCMomentumStrategy(BaseStrategy):
                 "min_score_threshold": self._min_score_threshold,
                 "buy_score": round(buy_score, 1),
                 "sell_score": round(sell_score, 1),
+                **confluence_meta,
                 "ema_50": getattr(ema, "ema_mid", None),
                 "ema_200": getattr(ema, "ema_slow", None),
-                "ema_trend": getattr(ema, "ema_trend", None),
+                "ema_trend": confluence_meta.get("ema_trend") or getattr(ema, "ema_trend", None),
                 "rsi_14": rsi_value,
                 "current_price": current_price,
                 "adx_14": adx,
@@ -361,46 +386,60 @@ class BTCMomentumStrategy(BaseStrategy):
         rsi_14 = float(rsi_14)
         current_price = float(current_price)
 
-        # ----- Confirmation pillars (computed before any gate) -----
-        # The same EMA/RSI/location pillars that score an actionable setup are
-        # computed up-front so every WAIT branch reports a real readiness score
-        # instead of 0.0. Without this the Momentum Matrix renders "-- / 100".
-        buy_trend = TREND_POINTS if ema_50 > ema_200 else 0.0
-        buy_rsi = RSI_POINTS if rsi_14 > 55.0 else 0.0
-        buy_location = LOCATION_POINTS if current_price > ema_50 else 0.0
-        buy_score = buy_trend + buy_rsi + buy_location
-
-        sell_trend = TREND_POINTS if ema_50 < ema_200 else 0.0
-        sell_rsi = RSI_POINTS if rsi_14 < 45.0 else 0.0
-        sell_location = LOCATION_POINTS if current_price < ema_50 else 0.0
-        sell_score = sell_trend + sell_rsi + sell_location
-
-        best_score = max(buy_score, sell_score)
-        best_trend = buy_trend if buy_score >= sell_score else sell_trend
-        best_rsi = buy_rsi if buy_score >= sell_score else sell_rsi
-        best_location = buy_location if buy_score >= sell_score else sell_location
-
-        # ----- ADX regime gate (heuristic engineering choice) -----
-        # A caller may supply a causally precomputed ADX(14) via kwargs (used by
-        # the parameter sweep); otherwise compute it from the closed candles.
+        # ----- ADX snapshot (a caller may supply a causal value for sweeps) -----
         adx_14 = kwargs.get("adx_14")
         if adx_14 is None:
             adx_14 = ADXCalculator().calculate_adx_from_candles(candles, period=14)
         else:
             adx_14 = float(adx_14)
+
+        # ----- Graded confluence score (40% EMA / 30% RSI / 30% ADX) -----
+        # Replaces the old binary 40+35+25 = exactly 100 pillar sum. Each
+        # sub-score is graded 0-100, so 100/100 is structurally unreachable and
+        # RSI in the neutral zone can no longer masquerade as a perfect setup.
+        ema_fast = getattr(ema, "ema_fast", None)
+        buy_cf = calculate_confluence(
+            price=current_price, ema_fast=ema_fast, ema_mid=ema_50,
+            rsi=rsi_14, adx=adx_14, ema_slow=ema_200, direction="BUY",
+        )
+        sell_cf = calculate_confluence(
+            price=current_price, ema_fast=ema_fast, ema_mid=ema_50,
+            rsi=rsi_14, adx=adx_14, ema_slow=ema_200, direction="SELL",
+        )
+        best_cf = buy_cf if buy_cf.score >= sell_cf.score else sell_cf
+        best_score = best_cf.score
+        best_trend = best_cf.ema_score
+        best_rsi = best_cf.rsi_score
+        best_location = best_cf.adx_score
+
+        # Legacy boolean readiness is retained only as a fresh-trigger detail
+        # in the reasons; it no longer drives the displayed score.
+        buy_readiness = (
+            (TREND_POINTS if ema_50 > ema_200 else 0.0)
+            + (RSI_POINTS if rsi_14 > 55.0 else 0.0)
+            + (LOCATION_POINTS if current_price > ema_50 else 0.0)
+        )
+        sell_readiness = (
+            (TREND_POINTS if ema_50 < ema_200 else 0.0)
+            + (RSI_POINTS if rsi_14 < 45.0 else 0.0)
+            + (LOCATION_POINTS if current_price < ema_50 else 0.0)
+        )
+
         if adx_14 is None:
             return self._wait_result(
                 ["INSUFFICIENT_INDICATOR_DATA: ADX(14) unavailable (need >= 28 candles)."],
                 symbol=symbol, timeframe=timeframe, indicators=indicators,
-                score=best_score, buy_score=buy_score, sell_score=sell_score,
+                score=best_score, buy_score=buy_readiness, sell_score=sell_readiness,
                 trend_score=best_trend, rsi_score=best_rsi, location_score=best_location,
+                confluence=best_cf,
             )
         if adx_14 < self.adx_threshold:
             return self._wait_result(
                 [f"REGIME_FILTER: ADX below {self.adx_threshold:g}, ranging market."],
                 symbol=symbol, timeframe=timeframe, indicators=indicators, adx=adx_14,
-                score=best_score, buy_score=buy_score, sell_score=sell_score,
+                score=best_score, buy_score=buy_readiness, sell_score=sell_readiness,
                 trend_score=best_trend, rsi_score=best_rsi, location_score=best_location,
+                confluence=best_cf,
             )
 
         # ----- Fresh-event detection (state alone is never a trigger) -----
@@ -418,8 +457,9 @@ class BTCMomentumStrategy(BaseStrategy):
                     "are required for fresh-trigger detection."
                 ],
                 symbol=symbol, timeframe=timeframe, indicators=indicators, adx=adx_14,
-                score=best_score, buy_score=buy_score, sell_score=sell_score,
+                score=best_score, buy_score=buy_readiness, sell_score=sell_readiness,
                 trend_score=best_trend, rsi_score=best_rsi, location_score=best_location,
+                confluence=best_cf,
             )
 
         rsi_cross_up = prev_rsi <= RSI_BUY_LEVEL and rsi_14 > RSI_BUY_LEVEL
@@ -432,8 +472,9 @@ class BTCMomentumStrategy(BaseStrategy):
             return self._wait_result(
                 ["NO_FRESH_TRIGGER: no RSI or EMA crossover on the latest closed bar."],
                 symbol=symbol, timeframe=timeframe, indicators=indicators, adx=adx_14,
-                score=best_score, buy_score=buy_score, sell_score=sell_score,
+                score=best_score, buy_score=buy_readiness, sell_score=sell_readiness,
                 trend_score=best_trend, rsi_score=best_rsi, location_score=best_location,
+                confluence=best_cf,
             )
 
         is_qualified = best_score >= self._min_score_threshold
@@ -443,37 +484,51 @@ class BTCMomentumStrategy(BaseStrategy):
         sell_trigger_label = (
             "RSI crossed below 45" if rsi_cross_down else "EMA50 crossed below EMA200"
         )
-        buy_ok = buy_trigger and is_qualified and buy_score > 0.0
+        buy_ok = buy_trigger and is_qualified
         sell_ok = sell_trigger and is_qualified
 
-        if buy_ok and (not sell_ok or buy_score >= sell_score):
+        if buy_ok and (not sell_ok or buy_cf.score >= sell_cf.score):
             direction = SignalDirection.BUY
-            score = buy_score
+            score = buy_cf.score
             fresh_trigger = buy_trigger_label
-            trend_score, rsi_score, location_score = buy_trend, buy_rsi, buy_location
+            trend_score, rsi_score, location_score = (
+                buy_cf.ema_score, buy_cf.rsi_score, buy_cf.adx_score
+            )
+            chosen_cf = buy_cf
             reasons = [
                 f"FRESH TRIGGER (BUY): {fresh_trigger}.",
-                f"EMA TREND CONFIRMATION: EMA50 ({ema_50:.2f}) > EMA200 ({ema_200:.2f}) [+{buy_trend:.0f}]",
-                f"RSI CONFIRMATION: RSI14 {rsi_14:.1f} > 55 [+{buy_rsi:.0f}]",
-                f"PRICE LOCATION: {current_price:.2f} > EMA50 ({ema_50:.2f}) [+{buy_location:.0f}]",
-                f"BUY MOMENTUM CONFLUENCE: {buy_score:.1f}/100 (min {self._min_score_threshold:.1f}).",
+                f"EMA CONFLUENCE: {buy_cf.ema_trend}, {buy_cf.ema_score:.1f}/100 "
+                f"(weight {EMA_WEIGHT:.0%}).",
+                f"RSI CONFLUENCE: RSI14 {rsi_14:.1f} -> {buy_cf.rsi_score:.1f}/100 "
+                f"(weight {RSI_WEIGHT:.0%}).",
+                f"ADX CONFLUENCE: {adx_14:.2f} -> {buy_cf.adx_score:.1f}/100 "
+                f"(weight {ADX_WEIGHT:.0%}).",
+                f"BUY TECHNICAL CONFLUENCE: {buy_cf.score:.1f}/100 "
+                f"(min {self._min_score_threshold:.1f}).",
             ]
         elif sell_ok:
             direction = SignalDirection.SELL
-            score = sell_score
+            score = sell_cf.score
             fresh_trigger = sell_trigger_label
-            trend_score, rsi_score, location_score = sell_trend, sell_rsi, sell_location
+            trend_score, rsi_score, location_score = (
+                sell_cf.ema_score, sell_cf.rsi_score, sell_cf.adx_score
+            )
+            chosen_cf = sell_cf
             reasons = [
                 f"FRESH TRIGGER (SELL): {fresh_trigger}.",
-                f"EMA TREND CONFIRMATION: EMA50 ({ema_50:.2f}) < EMA200 ({ema_200:.2f}) [+{sell_trend:.0f}]",
-                f"RSI CONFIRMATION: RSI14 {rsi_14:.1f} < 45 [+{sell_rsi:.0f}]",
-                f"PRICE LOCATION: {current_price:.2f} < EMA50 ({ema_50:.2f}) [+{sell_location:.0f}]",
-                f"SELL MOMENTUM CONFLUENCE: {sell_score:.1f}/100 (min {self._min_score_threshold:.1f}).",
+                f"EMA CONFLUENCE: {sell_cf.ema_trend}, {sell_cf.ema_score:.1f}/100 "
+                f"(weight {EMA_WEIGHT:.0%}).",
+                f"RSI CONFLUENCE: RSI14 {rsi_14:.1f} -> {sell_cf.rsi_score:.1f}/100 "
+                f"(weight {RSI_WEIGHT:.0%}).",
+                f"ADX CONFLUENCE: {adx_14:.2f} -> {sell_cf.adx_score:.1f}/100 "
+                f"(weight {ADX_WEIGHT:.0%}).",
+                f"SELL TECHNICAL CONFLUENCE: {sell_cf.score:.1f}/100 "
+                f"(min {self._min_score_threshold:.1f}).",
             ]
         else:
             return self._wait_result(
                 [
-                    f"MOMENTUM BELOW FLOOR: best score {best_score:.1f}/100 "
+                    f"MOMENTUM BELOW FLOOR: best confluence score {best_score:.1f}/100 "
                     f"(min required {self._min_score_threshold:.1f}).",
                     f"EMA50={ema_50:.2f}, EMA200={ema_200:.2f}, RSI14={rsi_14:.1f}, "
                     f"price={current_price:.2f}, ADX={adx_14:.2f}.",
@@ -482,12 +537,13 @@ class BTCMomentumStrategy(BaseStrategy):
                 timeframe=timeframe,
                 indicators=indicators,
                 score=best_score,
-                buy_score=buy_score,
-                sell_score=sell_score,
+                buy_score=buy_readiness,
+                sell_score=sell_readiness,
                 trend_score=best_trend,
                 rsi_score=best_rsi,
                 location_score=best_location,
                 adx=adx_14,
+                confluence=best_cf,
             )
 
         return StrategyResult(
@@ -499,8 +555,15 @@ class BTCMomentumStrategy(BaseStrategy):
                 "symbol": symbol,
                 "timeframe": tf,
                 "min_score_threshold": self._min_score_threshold,
-                "buy_score": round(buy_score, 1),
-                "sell_score": round(sell_score, 1),
+                "buy_score": round(buy_readiness, 1),
+                "sell_score": round(sell_readiness, 1),
+                **{
+                    "confluence_score": chosen_cf.score,
+                    "confluence_ema_score": chosen_cf.ema_score,
+                    "confluence_rsi_score": chosen_cf.rsi_score,
+                    "confluence_adx_score": chosen_cf.adx_score,
+                    "ema_trend": chosen_cf.ema_trend,
+                },
                 "trend_score": trend_score,
                 "rsi_score": rsi_score,
                 "location_score": location_score,

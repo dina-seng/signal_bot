@@ -57,12 +57,13 @@ export const ConfluenceCard: React.FC<ConfluenceCardProps> = ({
   // Resolved live price
   const displayPrice = livePrice || signal.currentPrice || signal.entryPrice;
 
-  // AI confidence fallback (e.g., 88-94% for high setups, 45-65% for scanning)
-  const aiConfidence = signal.aiConfidence ?? (scoreValue !== null
-    ? hasSetup
-      ? Math.min(96, Math.max(78, scoreValue + 2))
-      : scoreValue
-    : null);
+  // AI Neural Confidence always comes from the backend's bounded heuristic.
+  // Real models are never certain: clamp defensively to 60-95 and NEVER mirror
+  // the confluence score into this field (that produced a fake 100%).
+  const rawConfidence = signal.aiConfidence;
+  const aiConfidence = rawConfidence !== null && rawConfidence !== undefined && !Number.isNaN(Number(rawConfidence))
+    ? Math.min(95, Math.max(60, Math.round(Number(rawConfidence))))
+    : null;
 
   // Institutional thesis is strategy-specific: momentum for BTC, SMC for XAU.
   const aiReasoningText =

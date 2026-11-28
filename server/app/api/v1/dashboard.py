@@ -365,6 +365,42 @@ async def get_dashboard_snapshot(
     # live_quote for the forming bar and never re-derives it from stale candles.
     live_candles = _overlay_forming_quote(candles, quote)
 
+    # Replace the neutral win-rate assumption with the account's observed hit
+    # rate so the AI confidence shown in the header/card reflects live history.
+    if signals and performance is not None:
+        from app.services.signals.confluence_scoring import calculate_ai_confidence
+
+        win_rate: Optional[float] = None
+        try:
+            total_trades = int(getattr(performance, "total_trades", 0) or 0)
+            if total_trades > 0:
+                win_rate = float(getattr(performance, "win_rate", 0.0) or 0.0) / 100.0
+        except (TypeError, ValueError):
+            win_rate = None
+
+        volatility_pct: Optional[float] = None
+        try:
+            atr_value = getattr(getattr(indicators, "atr", None), "atr_value", None)
+            price_value = getattr(indicators, "current_price", None)
+            if atr_value is not None and price_value:
+                volatility_pct = abs(float(atr_value)) / abs(float(price_value)) * 100.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            volatility_pct = None
+
+        for sig in signals:
+            meta = getattr(sig, "metadata", None)
+            if not isinstance(meta, dict):
+                continue
+            score = meta.get("confluence_score")
+            if score is None:
+                score = getattr(sig, "setup_score", None)
+            meta["ai_confidence"] = calculate_ai_confidence(
+                confluence_score=score,
+                adx=meta.get("adx_14"),
+                historical_win_rate=win_rate,
+                volatility_pct=volatility_pct,
+            )
+
     serialize_started = time.perf_counter()
     response = DashboardSnapshotResponse(
         symbol=symbol,

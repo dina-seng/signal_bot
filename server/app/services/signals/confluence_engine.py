@@ -25,6 +25,7 @@ from app.schemas.structure import TrendDirection
 from app.services.structure.ltf_confirmation import LTFConfirmationEngine
 from app.services.indicators import IndicatorService
 from app.services.indicators.adx_calculator import ADXCalculator
+from app.services.signals.confluence_scoring import calculate_ai_confidence
 from app.services.liquidity import LiquidityService
 from app.services.news import NewsFilterEngine
 from app.services.market_data import (
@@ -374,6 +375,27 @@ class ConfluenceEngine:
         for key, value in live_snapshot.items():
             if value is not None and result_meta.get(key) is None:
                 result_meta[key] = value
+
+        # AI Neural Confidence is an explicit bounded heuristic, NOT a copy of
+        # the setup score and never 100%. It blends signal strength, ADX regime,
+        # historical win rate (when supplied) and realized ATR volatility.
+        atr_snapshot = getattr(indicator_analysis, "atr", None)
+        atr_value = getattr(atr_snapshot, "atr_value", None)
+        volatility_pct: Optional[float] = None
+        try:
+            if atr_value is not None and current_price:
+                volatility_pct = abs(float(atr_value)) / abs(float(current_price)) * 100.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            volatility_pct = None
+        confidence_score = result_meta.get("confluence_score")
+        if confidence_score is None:
+            confidence_score = getattr(result, "score", None)
+        result_meta["ai_confidence"] = calculate_ai_confidence(
+            confluence_score=confidence_score,
+            adx=adx_14,
+            historical_win_rate=result_meta.get("historical_win_rate"),
+            volatility_pct=volatility_pct,
+        )
 
         # 7. RISK ENGINE ACTOR — entry-only hand-off.
         # The Signal Engine has found `resolved_entry`; everything below is
