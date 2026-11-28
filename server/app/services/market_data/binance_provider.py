@@ -24,6 +24,7 @@ import httpx
 from app.core.config import settings
 from app.core.logging import logger
 from app.schemas.candle import CandleCreate
+from app.schemas.market import QuoteResponse
 from app.services.market_data.base import BaseMarketDataProvider
 from app.services.market_data.freshness import get_timeframe_delta
 from app.services.market_data.symbols import (
@@ -36,6 +37,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CACHE_PATH = SERVER_ROOT / "data" / "binance_ohlcv_cache.sqlite3"
 
 BINANCE_BASE_URL = "https://api.binance.com/api/v3/klines"
+BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
 MAX_KLINES_PER_PAGE = 1000  # Binance hard cap
 INTERVAL_MAP = {"15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "1d": "1d"}
 DEFAULT_CACHE_TTL_SECONDS = 60.0
@@ -247,6 +249,106 @@ class BinancePublicProvider(BaseMarketDataProvider):
         self, symbol: str, timeframe: str, count: int = 50
     ) -> list[CandleCreate]:
         return await self.fetch_candles(symbol, timeframe, limit=count)
+
+    async def fetch_quote(self, symbol: str) -> Optional[QuoteResponse]:
+        """Fetch the latest BTC/USD price from Binance's public ticker endpoint.
+
+        The ticker payload is ``{"symbol": "BTCUSDT", "price": "64200.00"}``.
+        It carries no provider timestamp, so ``timestamp``/``fetched_at`` are the
+        local call time; the API layer derives staleness from observed price
+        changes rather than from the provider label.
+        """
+        canonical = normalize_symbol(symbol)
+        if canonical != "BTC/USD":
+            raise ValueError(
+                f"BinancePublicProvider only supports 'BTC/USD'; requested: '{symbol}'"
+            )
+        provider_symbol = get_provider_symbol(canonical, "binance")
+
+        close_client = False
+        client = self.http_client
+        if client is None:
+            client = httpx.AsyncClient(timeout=self.timeout)
+            close_client = True
+
+        try:
+            try:
+                response = await client.get(
+                    BINANCE_TICKER_URL, params={"symbol": provider_symbol}
+                )
+            except httpx.HTTPError as exc:
+                raise BinanceAPIError(
+                    f"Binance ticker request failed: {type(exc).__name__}: {exc}"
+                ) from exc
+
+            if response.status_code != 200:
+                raise BinanceAPIError(
+                    f"Binance ticker HTTP {response.status_code}: {response.text[:500]}"
+                )
+            try:
+                data = response.json()
+            except Exception as exc:
+                raise BinanceAPIError(
+                    f"Binance ticker non-JSON response: {response.text[:500]}"
+                ) from exc
+            if not isinstance(data, dict):
+                raise BinanceAPIError(f"Binance ticker payload is not an object: {data}")
+
+            echoed = str(data.get("symbol") or "").upper()
+            if echoed and echoed != provider_symbol.upper():
+                raise BinanceAPIError(
+                    f"Binance echoed symbol mismatch: expected {provider_symbol}, got {echoed}"
+                )
+
+            raw_price = data.get("price")
+            try:
+                price = float(raw_price)
+            except (TypeError, ValueError) as exc:
+                raise BinanceAPIError(
+                    f"Binance returned a non-numeric price for {provider_symbol}: {raw_price!r}"
+                ) from exc
+            if price <= 0:
+                raise BinanceAPIError(
+                    f"Binance returned a non-positive price for {provider_symbol}: {raw_price!r}"
+                )
+
+            now_utc = datetime.now(timezone.utc)
+            return QuoteResponse(
+                symbol=canonical,
+                price=price,
+                timestamp=now_utc,
+                provider_timestamp=None,
+                fetched_at=now_utc,
+                source="binance",
+                provider="binance",
+                provider_symbol=provider_symbol,
+                age_seconds=0.0,
+                is_stale=False,
+                degraded=False,
+                cached=False,
+            )
+        except BinanceAPIError as exc:
+            # Never let a transient ticker failure kill the whole /quote request.
+            # A candle close is a usable last resort, but it is explicitly marked
+            # degraded so it can never be mistaken for a live tick.
+            logger.warning("Binance ticker unavailable (%s); using candle fallback.", exc)
+            try:
+                fallback = await super().fetch_quote(canonical)
+            except Exception as fallback_exc:
+                logger.warning("Binance candle fallback also failed: %s", fallback_exc)
+                fallback = None
+            if fallback is not None:
+                fallback.source = "binance_candle_fallback"
+                fallback.provider = "binance"
+                fallback.provider_symbol = provider_symbol
+                fallback.degraded = True
+                fallback.fallback_reason = (
+                    "Binance ticker unavailable; using last closed candle"
+                )
+            return fallback
+        finally:
+            if close_client:
+                await client.aclose()
 
     # ------------------------------------------------------------------
     # Local SQLite cache (no API key, no repeated upstream calls)
