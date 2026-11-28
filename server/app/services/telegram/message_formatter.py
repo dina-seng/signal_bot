@@ -449,6 +449,114 @@ class TelegramMessageFormatter:
         """Format signal alert via the pure format_signal engine."""
         return format_signal(sig)
 
+    @staticmethod
+    def _analysis_number(value: Any) -> Optional[float]:
+        """NaN/None/strings -> None so a missing value can never break HTML."""
+        if value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if number == number and abs(number) != float("inf") else None
+
+    @classmethod
+    def format_technical_analysis(
+        cls,
+        analysis: Any,
+        thesis: Optional[str] = None,
+    ) -> str:
+        """Render the shared confluence payload as a Telegram (HTML) block.
+
+        Accepts either the dict returned by ``calculate_technical_confluence``
+        or an object with the same attributes. Every field is optional: missing
+        values render as ``N/A`` instead of raising or printing ``nan``.
+        """
+        if analysis is None:
+            return "📉 <b>Indicators:</b> <code>N/A</code>"
+
+        def get(key: str) -> Any:
+            if isinstance(analysis, dict):
+                return analysis.get(key)
+            return getattr(analysis, key, None)
+
+        symbol = str(get("symbol") or "N/A")
+        timeframe = str(get("timeframe") or "1h")
+        normalized = symbol
+        try:
+            normalized = normalize_symbol(symbol)
+        except UnknownSymbolError:
+            pass
+
+        price = cls._analysis_number(get("price"))
+        score = cls._analysis_number(get("score"))
+        ema_20 = cls._analysis_number(get("ema_20"))
+        ema_50 = cls._analysis_number(get("ema_50"))
+        rsi = cls._analysis_number(get("rsi"))
+        adx = cls._analysis_number(get("adx"))
+        trend = str(get("trend") or "NEUTRAL")
+
+        price_str = f"${format_price(price, normalized)}" if price is not None else "N/A"
+        score_str = f"{score:.0f}/100" if score is not None else "N/A"
+
+        if "BULLISH_STACK" in trend:
+            ema_label = "Bullish Cross"
+        elif "BEARISH_STACK" in trend:
+            ema_label = "Bearish Cross"
+        elif "BULLISH" in trend:
+            ema_label = "Bullish Bias"
+        elif "BEARISH" in trend:
+            ema_label = "Bearish Bias"
+        else:
+            ema_label = "Neutral / Range"
+
+        if ema_20 is not None and ema_50 is not None:
+            ema_label += f" ({format_price(ema_20, normalized)} / {format_price(ema_50, normalized)})"
+
+        if rsi is None:
+            rsi_label = "N/A"
+        elif rsi < 30.0:
+            rsi_label = f"{rsi:.1f} (Oversold)"
+        elif rsi > 70.0:
+            rsi_label = f"{rsi:.1f} (Overbought)"
+        elif rsi < 45.0:
+            rsi_label = f"{rsi:.1f} (Bearish Zone)"
+        elif rsi > 55.0:
+            rsi_label = f"{rsi:.1f} (Bullish Zone)"
+        else:
+            rsi_label = f"{rsi:.1f} (Neutral)"
+
+        if adx is None:
+            adx_label = "N/A"
+        elif adx >= 40.0:
+            adx_label = f"{adx:.1f} (Very Strong Trend)"
+        elif adx >= 25.0:
+            adx_label = f"{adx:.1f} (Strong Trend)"
+        else:
+            adx_label = f"{adx:.1f} (Weak Trend)"
+
+        thesis_text = str(thesis or get("note") or "").strip()
+        if not thesis_text:
+            if score is not None and score >= 65.0:
+                thesis_text = "Confluence confirms the active regime; awaiting a fresh momentum trigger."
+            else:
+                thesis_text = "Awaiting fresh RSI/EMA momentum crossover with ADX regime confirmation."
+
+        lines = [
+            f"📊 <b>QuantView Signal: {escape_html(symbol)}</b> <code>[{escape_html(timeframe.upper())}]</code>",
+            f"💰 <b>Price:</b> <code>{escape_html(price_str)}</code>",
+            f"📈 <b>Confluence Score:</b> <code>{escape_html(score_str)}</code>",
+            "",
+            "📉 <b>Indicators:</b>",
+            f"  • <b>EMA 20/50:</b> <code>{escape_html(ema_label)}</code>",
+            f"  • <b>RSI (14):</b> <code>{escape_html(rsi_label)}</code>",
+            f"  • <b>ADX (14):</b> <code>{escape_html(adx_label)}</code>",
+            "",
+            "🧠 <b>AI Thesis:</b>",
+            f'  <i>"{escape_html(thesis_text)}"</i>',
+        ]
+        return "\n".join(lines)
+
     @classmethod
     def format_auto_execution(
         cls, trade: PaperTradeResponse, target_account: Optional[str] = None

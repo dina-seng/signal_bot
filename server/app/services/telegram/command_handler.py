@@ -21,8 +21,13 @@ from app.services.market_data import (
     ensure_utc_datetime,
     filter_closed_candles,
     get_market_data_provider,
+    get_provider_for_symbol,
     get_timeframe_delta,
     log_latest_candle,
+)
+from app.services.indicators.confluence_calculator import (
+    MIN_HISTORY_BARS,
+    calculate_technical_confluence,
 )
 from app.services.news import (
     BaseNewsProvider,
@@ -80,6 +85,63 @@ class TelegramCommandHandler:
             if sym.replace("/", "") == s.replace("/", ""):
                 return sym
         return s
+
+    def _provider_for(self, symbol: str):
+        """Route BTC/USD to Binance, every other symbol to its own provider."""
+        if self.market_provider is not None:
+            return self.market_provider
+        return get_provider_for_symbol(symbol)
+
+    async def _technical_analysis(
+        self, db: Session, symbol: str, timeframe: str = "1h"
+    ) -> dict:
+        """Load (and backfill) enough candles, then run the shared calculator."""
+        from app.models.candle import Candle  # local import keeps reloads cheap
+
+        tf = str(timeframe or "1h").lower().strip()
+        rows = list(
+            db.scalars(
+                select(Candle)
+                .where(Candle.symbol == symbol, Candle.timeframe == tf)
+                .order_by(desc(Candle.timestamp))
+                .limit(max(MIN_HISTORY_BARS, 250))
+            ).all()
+        )
+        rows.reverse()
+
+        if len(rows) < MIN_HISTORY_BARS:
+            ingest_svc = self.market_ingestion or IngestionService(
+                provider=self._provider_for(symbol), db=db
+            )
+            ingest_svc.db = db
+            for tf_to_sync in ("15m", "30m", "1h", "4h"):
+                try:
+                    await ingest_svc.sync_symbol_timeframe(
+                        symbol=symbol,
+                        timeframe=tf_to_sync,
+                        limit=max(MIN_HISTORY_BARS, 250),
+                        force_refresh=True,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Technical analysis backfill failed for %s [%s]: %s",
+                        symbol, tf_to_sync, exc,
+                    )
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+            rows = list(
+                db.scalars(
+                    select(Candle)
+                    .where(Candle.symbol == symbol, Candle.timeframe == tf)
+                    .order_by(desc(Candle.timestamp))
+                    .limit(max(MIN_HISTORY_BARS, 250))
+                ).all()
+            )
+            rows.reverse()
+
+        return calculate_technical_confluence(rows, symbol=symbol, timeframe=tf)
 
     @staticmethod
     def _build_login_reply(
@@ -176,15 +238,16 @@ class TelegramCommandHandler:
                     f"{primary_symbol} candles are STALE (latest: {latest_candle.timestamp if latest_candle else None} < expected_open: {expected_open}) on /scan. "
                     f"Auto-syncing fresh 15m, 30m, 1h candles..."
                 )
-                provider = self.market_provider or get_market_data_provider(settings.MARKET_DATA_PROVIDER)
+                provider = self._provider_for(primary_symbol)
                 ingest_svc = self.market_ingestion or IngestionService(provider=provider, db=db)
+                ingest_svc.provider = provider
                 ingest_svc.db = db
                 for tf in ["15m", "30m", "1h", "4h"]:
                     try:
                         await ingest_svc.sync_symbol_timeframe(
                             symbol=primary_symbol,
                             timeframe=tf,
-                            limit=100,
+                            limit=max(MIN_HISTORY_BARS, 250),
                             force_refresh=True,
                         )
                     except Exception as e:
@@ -212,6 +275,14 @@ class TelegramCommandHandler:
             scan_res = filter_consumed_scan_results(db, scan_res)
             reply = self.formatter.format_market_scan_summary(scan_res)
 
+            # Add the shared indicator analysis so /scan is never just a list
+            # of nulls when the dashboard and bot disagree.
+            try:
+                analysis = await self._technical_analysis(db, primary_symbol, "1h")
+                reply += "\n\n" + self.formatter.format_technical_analysis(analysis)
+            except Exception as exc:
+                logger.warning("Could not attach technical analysis to /scan: %s", exc)
+
         # -------------------------------------------------------------
         # 3. Single Pair Unified Signal Evaluation (/signal <symbol>)
         # -------------------------------------------------------------
@@ -232,17 +303,24 @@ class TelegramCommandHandler:
                         f"Active instrument: {active_esc}."
                     )
                 else:
-                    # 1. Provider <-> DB Synchronization: Refresh fresh candle data from provider
-                    if self.market_provider:
-                        ingest_svc = self.market_ingestion or IngestionService(
-                            provider=self.market_provider, db=db
-                        )
-                        ingest_svc.db = db
-                        for tf in ["1h", "4h", "30m", "15m"]:
-                            try:
-                                await ingest_svc.sync_symbol_timeframe(symbol=sym, timeframe=tf, limit=100)
-                            except Exception as e:
-                                logger.warning(f"Failed to refresh market data for {sym} [{tf}] via provider: {e}")
+                    # 1. Provider <-> DB Synchronization: fetch at least 210 bars
+                    # so EMA50/EMA200 and ADX(14) are never computed on a
+                    # too-short (NaN-producing) window. BTC routes to Binance.
+                    ingest_svc = self.market_ingestion or IngestionService(
+                        provider=self._provider_for(sym), db=db
+                    )
+                    ingest_svc.provider = self._provider_for(sym)
+                    ingest_svc.db = db
+                    for tf in ["1h", "4h", "30m", "15m"]:
+                        try:
+                            await ingest_svc.sync_symbol_timeframe(
+                                symbol=sym,
+                                timeframe=tf,
+                                limit=max(MIN_HISTORY_BARS, 250),
+                                force_refresh=True,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to refresh market data for {sym} [{tf}] via provider: {e}")
 
                     # 2. Evaluate Unified Multi-Timeframe Signal
                     acc_balance = 10000.0
@@ -269,6 +347,10 @@ class TelegramCommandHandler:
 
                     if scan_res.is_actionable and scan_res.signal:
                         reply = self.formatter.format_signal_alert(scan_res.signal)
+                        thesis = (
+                            (scan_res.signal.reasons[0] if scan_res.signal.reasons else None)
+                            or getattr(scan_res.signal, "ai_reasoning", None)
+                        )
                     else:
                         sym_code = self.formatter.escape_html(sym)
                         htf_txt = self.formatter.escape_html(scan_res.htf_trend or "NEUTRAL")
@@ -280,11 +362,26 @@ class TelegramCommandHandler:
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"📊 <b>Pair:</b> <code>{sym_code}</code> [{scan_res.timeframe}]\n"
                             f"📈 <b>HTF Context:</b> <code>{htf_txt}</code>{align_txt}\n"
-                            f"⭐ <b>Confluence Score:</b> <code>{score_txt}</code> (Min: <code>{settings.MIN_SETUP_SCORE:.0f}</code>)\n"
+                            f"⭐ <b>Setup Score:</b> <code>{score_txt}</code> (Min: <code>{settings.MIN_SETUP_SCORE:.0f}</code>)\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"💡 <b>Current Market Analysis:</b>\n"
                             f"{reasons_lines}\n\n"
                             f"⚠️ <i>Awaiting confirmation before generating actionable entry.</i>"
+                        )
+                        thesis = scan_res.reasons[0] if scan_res.reasons else None
+
+                    # Always attach the shared indicator analysis — WAIT and
+                    # actionable messages must show the same EMA/RSI/ADX/score
+                    # as the dashboard, with safe N/A fallbacks.
+                    try:
+                        analysis = await self._technical_analysis(db, sym, "1h")
+                        reply += "\n\n" + self.formatter.format_technical_analysis(
+                            analysis, thesis=thesis
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Could not attach technical analysis to /signal %s: %s",
+                            sym, exc,
                         )
 
         # -------------------------------------------------------------

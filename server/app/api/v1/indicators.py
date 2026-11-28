@@ -7,6 +7,7 @@ from sqlalchemy import select, desc
 
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.logging import logger
 from app.api.deps import get_indicator_service
 from app.models.candle import Candle
 from app.schemas.indicators import (
@@ -16,8 +17,26 @@ from app.schemas.indicators import (
     StatelessIndicatorRequest,
 )
 from app.services.indicators import IndicatorService
+from app.services.indicators.confluence_calculator import (
+    MIN_HISTORY_BARS,
+    calculate_technical_confluence,
+)
+from app.services.market_data import get_provider_for_symbol
+from app.services.market_data.ingestion import IngestionService
 
 router = APIRouter(prefix="/indicators", tags=["Technical Indicators & Price Action"])
+
+
+def _load_candles(db: Session, symbol: str, timeframe: str, limit: int):
+    stmt = (
+        select(Candle)
+        .where(Candle.symbol == symbol, Candle.timeframe == timeframe)
+        .order_by(desc(Candle.timestamp))
+        .limit(limit)
+    )
+    rows = list(db.scalars(stmt).all())
+    rows.reverse()
+    return rows
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -99,6 +118,53 @@ def get_rsi_divergences(
         timeframe=tf,
     )
     return analysis.divergences
+
+
+@router.get("/{symbol:path}/confluence")
+async def get_confluence_analysis(
+    symbol: str,
+    timeframe: str = Query("1h", description="Timeframe e.g. 15m, 1h, 4h"),
+    limit: int = Query(MIN_HISTORY_BARS, ge=28, le=2000,
+                       description="Candles to analyze (210+ covers EMA200 and ADX14)"),
+    db: Session = Depends(get_db),
+):
+    """Return the shared, structured technical-confluence payload.
+
+    Used by the dashboard and Telegram bot so both render the same numbers.
+    Provider-only symbols (BTC/USD) are backfilled from their routed provider
+    when the database has no usable history.
+    """
+    clean_symbol = _normalize_symbol(symbol)
+    tf = timeframe.lower().strip()
+    records = _load_candles(db, clean_symbol, tf, limit)
+
+    if len(records) < MIN_HISTORY_BARS:
+        try:
+            provider = get_provider_for_symbol(clean_symbol)
+            ingestion = IngestionService(provider=provider, db=db)
+            await ingestion.sync_symbol_timeframe(
+                symbol=clean_symbol, timeframe=tf, limit=max(limit, MIN_HISTORY_BARS)
+            )
+            db.commit()
+            records = _load_candles(db, clean_symbol, tf, limit)
+        except Exception as exc:
+            logger.warning(
+                "Confluence history backfill failed for %s [%s]: %s",
+                clean_symbol, tf, exc,
+            )
+
+    if not records:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No candles found for symbol '{clean_symbol}' and timeframe '{tf}'. "
+                "Please sync market data first."
+            ),
+        )
+
+    return calculate_technical_confluence(
+        candles=records, symbol=clean_symbol, timeframe=tf
+    )
 
 
 @router.get("/{symbol:path}", response_model=IndicatorAnalysisResponse)

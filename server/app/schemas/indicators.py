@@ -39,7 +39,7 @@ class EMASnapshot(BaseModel):
     ema_slow: Optional[float] = Field(default=None, description="Slow EMA (default 200)")
     ema_trend: str = Field(
         default="NEUTRAL",
-        description="BULLISH_STACK (Price > 20 > 50 > 200), BEARISH_STACK, or NEUTRAL",
+        description="BULLISH_STACK (EMA20 > EMA50 AND price > EMA20), BEARISH_STACK (inverse), BIAS variants, or NEUTRAL",
     )
     golden_cross: bool = Field(default=False, description="EMA 50 crossed above EMA 200")
     death_cross: bool = Field(default=False, description="EMA 50 crossed below EMA 200")
